@@ -145,7 +145,13 @@ export class Roads {
   stops(e, dir) { return !e.twin && this.nodes[this.endNode(e, dir)].e.length >= 3; }
   // is (x, y) within `margin` metres of a travel lane of any road (between junctions)?
   inLane(x, y, margin = 0) {
-    for (const e of this.edges) {
+    // perf lane, Nov 14: the same test on the few edges whose box (grown by 40 m) covers the point's 64 m grid cell, not on every edge of the city: the
+    // load asked this 2.3 s worth on an M1 Pro (shop fronts, parked cars, trees). A margin over 40 m, or ?lanegrid=0, walks them all as before.
+    let L = this.edges; if (margin <= 40 && !Roads.noGrid) { let g = this._lg; if (!g || g.n !== L.length) { g = this._lg = { n: L.length, m: new Map() };
+        for (const e of L) { const b = e.box || (e.box = e.pts.reduce((a, p) => [Math.min(a[0], p[0]), Math.min(a[1], p[1]), Math.max(a[2], p[0]), Math.max(a[3], p[1])], [1e9, 1e9, -1e9, -1e9])), h = (e.lanes * e.lw) / 2 + 40;
+          for (let i = Math.floor((b[0] - h) / 64); i <= Math.floor((b[2] + h) / 64); i++) for (let j = Math.floor((b[1] - h) / 64); j <= Math.floor((b[3] + h) / 64); j++) { const k = i * 65536 + j; let l = g.m.get(k); if (!l) g.m.set(k, l = []); l.push(e); } } }
+      L = g.m.get(Math.floor(x / 64) * 65536 + Math.floor(y / 64)); if (!L) return false; }
+    for (const e of L) {
       const b = e.box || (e.box = e.pts.reduce((a, p) => [Math.min(a[0], p[0]), Math.min(a[1], p[1]), Math.max(a[2], p[0]), Math.max(a[3], p[1])], [1e9, 1e9, -1e9, -1e9]));
       const half = (e.lanes * e.lw) / 2 + margin; if (x < b[0] - half || x > b[2] + half || y < b[1] - half || y > b[3] + half) continue;
       const pr = e.line.project(x, y); if (pr.d < half && pr.s > 0.5 && pr.s < e.len - 0.5) return true;
@@ -220,3 +226,5 @@ export class Roads {
     path.push({ e: e0, dir: dir0 }); path.reverse(); return path;
   }
 }
+
+try { Roads.noGrid = typeof location !== 'undefined' && new URLSearchParams(location.search).get('lanegrid') === '0'; } catch (e) {}     /* perf lane */

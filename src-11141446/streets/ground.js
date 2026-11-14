@@ -10,6 +10,7 @@
 // Replaces at load: the materials of road_* and grass_*; hides sidewalk_*, curb_*, marks_* of the lead's city (they are rebuilt here).
 import * as THREE from 'three';
 import { BAKE_LIGHT_GLSL } from '../facade.js';
+import { WET_DECL, WET_MAIN } from '../sky/wet.glsl.js';     /* progress/night: wet roads in the rain */
 
 const CURB = 0.15, FLAG = 1.22, D2R = Math.PI / 180;
 const RAMP_HW = 0.9, RAMP_FL = 0.5, RAMP_DEP = 1.35, RAMP_LOW = 0.022, KERB_W = 0.18, BAND_W = 1.1;
@@ -40,8 +41,11 @@ class SegGrid {
   near(x, y, cb) { const i = Math.floor(x / this.c), j = Math.floor(y / this.c); for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) { const l = this.m.get((i + a) * 100003 + j + b); if (l) for (const r of l) cb(r); } }
 }
 // accumulators: one set of attribute arrays per (mesh type, map tile)
+// perf lane, Nov 14: the tile was 200 m, which made hundreds of draw calls a frame for a few hundred triangles each (from the street nearly every tile of every
+// kind is in view, and a call costs far more than its triangles). One mesh per kind per map area now: same triangles, same materials. ?gtile=200 is the old state.
+const GTILE = +(new URLSearchParams(location.search).get('gtile')) || 1e5;
 class Acc {
-  constructor(spec, tile = 200) { this.spec = spec; this.tile = tile; this.t = new Map(); this.n = 0; }
+  constructor(spec, tile = GTILE) { this.spec = spec; this.tile = tile; this.t = new Map(); this.n = 0; }
   get(x, y) { const k = Math.floor((x + 4000) / this.tile) * 1000 + Math.floor((y + 4000) / this.tile); let a = this.t.get(k); if (!a) { a = {}; for (const s in this.spec) a[s] = []; this.t.set(k, a); } return a; }
   meshes(material, setup) {
     const out = [];
@@ -752,7 +756,7 @@ function buildDecals(C, sample, hist) {
 // block the sidewalk (15 cm higher) covers it and keeps its own flags.
 const PLAZA_Y = 0.03;
 function buildPlazas(plazas) {
-  const acc = new Acc({ position: 3, aZ: 4 }, 400); let count = 0;
+  const acc = new Acc({ position: 3, aZ: 4 }, GTILE > 1e4 ? GTILE : 400); let count = 0;
   plazas.forEach((pz, pi) => {
     const sh = plazaShape(pz); if (!sh) return; const { pts, kind } = sh, sd = rnd(pi, 5) * 50, a = acc.get(pts[0][0], pts[0][1]);
     for (const [p, q, r] of sh.tris) { a.position.push(p.x, PLAZA_Y, -p.y, q.x, PLAZA_Y, -q.y, r.x, PLAZA_Y, -r.y); for (let k = 0; k < 3; k++) a.aZ.push(kind, 0, sd, 0); }
@@ -785,7 +789,7 @@ function markShared(C, ways) {
   return n;
 }
 function buildShared(C) {
-  const acc = new Acc({ position: 3, aZ: 4 }, 400);
+  const acc = new Acc({ position: 3, aZ: 4 }, GTILE > 1e4 ? GTILE : 400);
   for (const ed of C.E) {
     if (!ed.shared || ed.W / 2 < SHARED_LANE / 2 + 0.8) continue;
     const sA = ed.ra, sB = ed.L - ed.rb; if (sB - sA < 2) continue;
@@ -906,7 +910,7 @@ function mkMat(shared, U, o) {
         if (gNs > 0.0) { vec3 nw = normalize(vec3(gNrm.x * gNs, gNrm.z, -gNrm.y * gNs)); normal = normalize((viewMatrix * vec4(nw, 0.0)).xyz); }`)
       .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n roughnessFactor = clamp(gRough, 0.08, 1.0);')
       .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\n metalnessFactor = clamp(gMetal, 0.0, 1.0);')
-      .replace('#include <aomap_fragment>', BAKE_LIGHT_GLSL + '\n reflectedLight.directSpecular *= gSpec; reflectedLight.indirectSpecular *= gSpec;');
+      .replace('#include <aomap_fragment>', BAKE_LIGHT_GLSL + '\n reflectedLight.directSpecular *= gSpec; reflectedLight.indirectSpecular *= gSpec;' + WET_MAIN).replace('void main() {', WET_DECL + '\nvoid main() {');
   };
   m.customProgramCacheKey = () => 'stground77-' + o.name + (o.graze || '');
   return m;

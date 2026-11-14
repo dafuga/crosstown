@@ -6,7 +6,9 @@
 //   distance, and it stops a few metres away
 //   volume: with the menu in, the radio plays into game.sound.bus.radio, which already follows the 'audio.radio' slider, the M key and the pause;
 //   without it, into game.sound.out at game.settings 'audio.radio' if there are settings, else 0.8. The last station is kept in 'radio.station'.
-// ?radio=0: this file is never fetched. ?radio=off: starts on Off. Costs one comparison a frame while the radio is off.
+// ?radio=0: this file is never fetched. ?radio=off: starts on Off whatever is stored. ?radio=on: on when you get in (as DEFAULT_ON = true), for tests.
+// Costs one comparison a frame while the radio is off.
+export const DEFAULT_ON = !(typeof window !== 'undefined' && window.__CFG && window.__CFG.public);      /* lead, Nov 14 (CHIEF 15:42Z, 16:15Z): On when you get in on Matt's private link so he hears it; Off on the public build until he says. */ //      // the lead's switch. false: a first-time player hears nothing until he picks a station (menu, Audio page, or . in a car). true: the radio is on when he gets in
 const NEAR = 14, HOLD = 4.2;
 
 export function install(game) {
@@ -14,9 +16,10 @@ export function install(game) {
   const g = game, P = g.P || new URLSearchParams(location.search), S = () => g.settings || null;
   const get = (k, d) => { try { const s = S(); if (s && s.get) { const v = s.get(k, d); return v === undefined || v === null ? d : v; } } catch (e) {} return d; };
   const set = (k, v) => { try { const s = S(); if (s && s.set) s.set(k, v); } catch (e) {} };
-  const R = (g.radio = { on: true, station: -1, want: P.get('radio') === 'on' ? 0 : -1 /* lead, Nov 14 (CHIEF 15:42Z): starts on Off until Matt has heard it; . or , switches it on and the choice is kept; ?radio=on = on when you get in */, tuner: null, loading: null, car: null, inCar: false, vol: 0.8, level: 0, chain: null, names: ['Curbside 88.2', 'Night Bus 96.6', 'Uptown After Hours 91.4', 'The Stoop 104.4', 'Reservoir 99.0'], chosen: false, fails: 0 });
+  const R = (g.radio = { on: true, station: -1, want: -1, auto: (DEFAULT_ON || P.get('radio') === 'on') && P.get('radio') !== 'off', hinted: false, tuner: null, loading: null, car: null, inCar: false, vol: 0.8, level: 0, chain: null, names: ['Curbside 88.2', 'Night Bus 96.6', 'Uptown After Hours 91.4', 'The Stoop 104.4', 'Reservoir 99.0'], chosen: false, fails: 0 });
   const fail = (w, e) => { if (R.fails++ < 4) console.warn('[radio] ' + w + ': ' + String((e && e.stack) || e).slice(0, 300)); };
-  { const w = get('radio.station', null); if (typeof w === 'number' && w >= -1 && w < R.names.length && P.get('radio') !== 'off') { R.want = w; R.chosen = true; } }
+  const valid = (w) => typeof w === 'number' && w >= -1 && w < R.names.length && Math.floor(w) === w;
+  { const w = get('radio.station', null); if (valid(w) && P.get('radio') !== 'off' && P.get('radio') !== 'on') { R.want = w; R.chosen = true; } }      // the player's own choice, once made, is kept
   const dest = () => { const s = g.sound; return (s.bus && s.bus.radio) || s.out; };
   const volNow = () => (g.sound.bus && g.sound.bus.radio ? 1 : Math.max(0, Math.min(1, +get('audio.radio', 0.8))));      // the bus already carries the slider: never applied twice
   R.vol = 0.8;
@@ -53,21 +56,26 @@ export function install(game) {
     R.tuner.tune(i, (st) => { if (R.station !== i && !first) return; const line = def.lines[(st.trackN + i) % def.lines.length]; if (first) { first = false; if (!quiet) show(def.name, '“' + st.nowTitle + '” · ' + st.nowAct, def.tag); } else if (R.inCar) show(def.name, '“' + st.nowTitle + '” · ' + st.nowAct, line); });
     R.station = i; return true; };
   const stopNow = () => { if (R.tuner) R.tuner.stop(); R.station = -1; if (R.chain) R.chain.out.gain.setTargetAtTime(0, R.chain.ac.currentTime, 0.05); };
-  const step = (d) => { if (!R.on || !R.inCar) return; const n = R.names.length; let i = R.want + d; if (i >= n) i = -1; if (i < -1) i = n - 1; R.chosen = true; set('radio.station', i); play(i).catch((e) => fail('play', e)); };
+  const step = (d) => { if (!R.on || !R.inCar) return; const n = R.names.length; let i = R.want + d; if (i >= n) i = -1; if (i < -1) i = n - 1; R.chosen = true; R.want = i; set('radio.station', i); if (!R.busy) { R.busy = true; play(i).catch((e) => fail('play', e)).finally(() => { R.busy = false; }); } };
   R.next = () => step(1); R.prev = () => step(-1); R.set = (i) => { R.chosen = true; return play(i); }; R.setVolume = () => { R.vol = volNow(); };
   R.info = () => ({ on: R.on, inCar: R.inCar, station: R.station, want: R.want, name: R.station >= 0 ? R.names[R.station] : 'Off', level: +R.level.toFixed(3), vol: R.vol, into: R.chain ? (g.sound.bus && R.chain.to === g.sound.bus.radio ? 'bus.radio' : 'sound.out') : null, loaded: !!R.tuner, now: R.tuner ? R.tuner.now() : null });
 
   const ok = () => !g.paused && !window.__startScreen && !(g.fly && g.fly.on) && !g.demo;
   addEventListener('keydown', (e) => { if (e.repeat || !R.on || !R.inCar || !ok()) return; if (e.target && e.target.closest && e.target.closest('input,textarea,#fbbox')) return; if (e.code === 'Period') step(1); else if (e.code === 'Comma') step(-1); });
-  try { const m = g.menu; if (m && m.addKey) { m.addKey({ code: 'Period', label: 'Radio: next station', group: 'Radio' }); m.addKey({ code: 'Comma', label: 'Radio: previous station', group: 'Radio' }); } } catch (e) {}
+  try { const m = g.menu; if (m && m.addKey) { m.addKey({ code: 'Period', label: 'Radio: next station', group: 'Radio' }); m.addKey({ code: 'Comma', label: 'Radio: previous station', group: 'Radio' }); }
+    // the menu's Audio page: Off or one of the stations. Chosen while paused, it is taken up on the first frame after (upd below: the station follows R.want)
+    if (m && m.addSetting) m.addSetting('audio', { key: 'radio.station', label: 'Car radio', type: 'choice', options: [[-1, 'Off']].concat(R.names.map((n, i) => [i, n.replace(/ [\d.]+$/, '').replace(' After Hours', '')])), dflt: -1, hint: 'Plays in a car. In the car: . next station, , previous' });
+    const st = S(); if (st && st.on) st.on('radio.station', (v) => { if (v === undefined || v === null) v = -1; v = +v; if (!valid(v)) return; R.want = v; R.chosen = true; }); } catch (e) { fail('menu', e); }
 
   // ---------------------------------------------------------------- once a frame (inside the game's own sound update)
   let padL = false, padR = false, pauseT = null, lastSet = 0;
   const upd = (dt) => { const pl = g.player, v = pl.vehicle || null, s = g.sound;
     if (!s.on) return;
-    if (v && !R.inCar) { R.inCar = true; R.car = v; if (!R.chosen && P.get('radio') === 'on') { let h = 7; for (const ch of String(v.color) + (v.type || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0; R.want = h % R.names.length; }      // a car nobody has tuned yet is on whatever its last driver left on
-      if (R.want >= 0 && R.station !== R.want) play(R.want).catch((e) => fail('play', e)); else if (R.station >= 0) show(R.names[R.station]); }
+    if (v && !R.inCar) { R.inCar = true; R.car = v; if (!R.chosen && R.auto) { let h = 7; for (const ch of String(v.color) + (v.type || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0; R.want = h % R.names.length; }      // (radio on by default) a car nobody has tuned yet is on whatever its last driver left on
+      if (R.want < 0 && !R.hinted && !g.demo) { R.hinted = true; show('Radio off', 'Press ' + (g.menu && g.menu.keyName ? g.menu.keyName('Period') : '.') + ' to turn it on'); }      // said once a session
+      else if (R.station >= 0 && R.station === R.want) show(R.names[R.station]); }
     else if (!v && R.inCar) R.inCar = false;
+    if (v && R.station !== R.want && !R.busy) { R.busy = true; play(R.want, R.want < 0).catch((e) => fail('play', e)).finally(() => { R.busy = false; }); }      // the station follows what is wanted: the keys, the menu row, getting in
     if (R.station < 0 && !chipT) return;
     hideLater(); if (R.station < 0) return;
     if (v) { const now = performance.now(); if (now - lastSet > 200) { lastSet = now; rewire(); R.vol = volNow(); setLevel(true, 1); }

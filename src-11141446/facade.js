@@ -71,7 +71,7 @@ const WIN_BODY = /* glsl */`
               if (st3.z > 0.02) { float l3; fsh = 1.0 - 0.9 * winFr(wc + clamp(spar, -3.0, 3.0) * (zU - (upH ? zG : 0.0)), half_, fb, wk, ap * 2.0 + 0.004, l3); }
               vec2 id = vec2(bi * 2.0 + half_id, fi) + floor(seed * 512.0) * vec2(3.0, 1.0); float hsh = hash21(id);
               bool office = style > 2.5 || (style > 0.5 && (bigWin > 0.5 || H > 40.0));
-              float lit = step(office ? 0.86 : 0.93, hash21(id + 5.0));
+              float lit = step((office ? 0.86 : 0.93) - uNightK.z, hash21(id + 5.0));
               vec3 d = normalize(vec3(-par, 1.0));
               vec3 room = roomColor(wc, d, half_ * 2.0, 4.5, id, lit) * (1.0 + 1.2 * lit);
               // the building's glass and its tenants' habits
@@ -83,7 +83,7 @@ const WIN_BODY = /* glsl */`
               vec2 bid = id, bp = wc, bh = half_;
               if (style > 3.5) { float li = step(-half_.x * 0.36, wc.x) + step(half_.x * 0.36, wc.x); bid += li * 17.0; bh.x = li == 1.0 ? half_.x * 0.36 : half_.x * 0.32; bp.x = wc.x - (li - 1.0) * half_.x * 0.68; }
               bp -= parW * 0.07; vec4 bc = blindColor(bp, bh, bid, habit, h4.y, bcol, fPx);
-              room = room * (1.0 - bc.a) + bc.rgb * bc.a * lit * 0.06;
+              room = room * (1.0 - bc.a) + bc.rgb * bc.a * lit * (0.06 + 0.9 * uNightK.y);
               fPane = bc.rgb * bc.a * mix(vec3(1.0), gT, 0.7) * (st3.z > 0.02 ? 0.62 : 0.45) * (1.0 - (st3.z > 0.02 ? 0.0 : 0.3) * fFlat) * (1.0 - 0.08 * fFlat * (0.5 + 0.5 * sin(bp.y * 52.0)) * smoothstep(0.03, 0.008, fPx)) * (1.0 - 0.25 * fFlat * smoothstep(0.35, 0.75, vnoise(bp * vec2(1.6, 4.0) + bid)));      // glass60: on flats a shade is a mid-tone cloth with bands and blotches (lit white it read as a blank card)
               // an air conditioner in some of the old sash windows
               bool acHere = (style < 0.5 && !secondary) ? mod(bi * 7.0 + fi * 13.0 + floor(seed * 512.0) * 3.0, 11.0) < 1.5 : (secondary && hsh > 0.84);
@@ -158,7 +158,7 @@ const WIN_BODY_X6 = /* glsl */`
               bool fcG = !(fr >= 1.0 && fcGl0); vec3 room = vec3(0.0); vec3 gT = vec3(0.78, 0.82, 0.80); vec4 bc = vec4(0.0); bool office = false; fPane = vec3(0.0);
               if (fcG) {
               office = style > 2.5 || (style > 0.5 && (bigWin > 0.5 || H > 40.0));
-              float lit = step(office ? 0.86 : 0.93, hash21(id + 5.0));
+              float lit = step((office ? 0.86 : 0.93) - uNightK.z, hash21(id + 5.0));
               vec3 d = normalize(vec3(-par, 1.0));
               
               // the building's glass and its tenants' habits
@@ -171,7 +171,7 @@ const WIN_BODY_X6 = /* glsl */`
               if (style > 3.5) { float li = step(-half_.x * 0.36, wc.x) + step(half_.x * 0.36, wc.x); bid += li * 17.0; bh.x = li == 1.0 ? half_.x * 0.36 : half_.x * 0.32; bp.x = wc.x - (li - 1.0) * half_.x * 0.68; }
               bp -= parW * 0.07; bc = blindColor(bp, bh, bid, habit, h4.y, bcol, fPx);
               if (bc.a < 1.0) room = roomColor(wc, d, half_ * 2.0, 4.5, id, lit) * (1.0 + 1.2 * lit);
-              room = room * (1.0 - bc.a) + bc.rgb * bc.a * lit * 0.06;
+              room = room * (1.0 - bc.a) + bc.rgb * bc.a * lit * (0.06 + 0.9 * uNightK.y);
               fPane = bc.rgb * bc.a * mix(vec3(1.0), gT, 0.7) * (st3.z > 0.02 ? 0.62 : 0.45) * (1.0 - (st3.z > 0.02 ? 0.0 : 0.3) * fFlat) * (1.0 - 0.08 * fFlat * (0.5 + 0.5 * sin(bp.y * 52.0)) * smoothstep(0.03, 0.008, fPx)) * (1.0 - 0.25 * fFlat * smoothstep(0.35, 0.75, vnoise(bp * vec2(1.6, 4.0) + bid)));      // glass60: on flats a shade is a mid-tone cloth with bands and blotches (lit white it read as a blank card)
               }
               // an air conditioner in some of the old sash windows
@@ -250,7 +250,7 @@ export function makeFacadeMaterial(shared, defs) {
 ${fcDefs}
         varying vec2 vFuv; varying vec2 vFst; varying vec2 vLay; varying vec2 vLay2; varying vec3 vWPos; varying vec3 vWNrm; varying vec3 vBake;
         uniform sampler2DArray tWallA; uniform sampler2DArray tWallN; uniform sampler2D tSign; uniform samplerCube tStreet; uniform sampler2DArray tPanel; uniform sampler2DArray tPanelR; uniform sampler2DArray tPanelH; uniform float uPanelH[32]; uniform vec4 uPanel[32]; uniform vec2 uStyleP[5];
-        uniform vec3 uSunColor; uniform vec3 uSunDir; uniform float uShadowFar; uniform vec3 uShadowCenter; uniform float uTime;
+        uniform vec3 uSunColor; uniform vec3 uSunDir; uniform float uShadowFar; uniform vec3 uShadowCenter; uniform float uTime; uniform vec3 uNightK;
 #ifdef FC_X9
  uniform float uFcLod;
 #endif
@@ -304,7 +304,7 @@ ${fcDefs}
           else col = wallc * 0.65;
           float fall = exp(-t * 0.35);
           float day = 0.018 + 0.07 * fall;                         // daylight falling off into the room
-          return col * (day + lit * 0.03) + glow;
+          return col * (day * uNightK.x + lit * (0.03 + uNightK.y * mix(vec3(1.0, 0.74, 0.46), vec3(0.80, 0.90, 1.0), step(0.62, hs.z)))) + glow * (1.0 + 6.0 * uNightK.y);     // progress/night: uNightK = (1, 0, 0) by day
         }
 
         // what hangs just behind the glass: p = metres in the light (origin its centre), hf = its half size, px = metres a pixel.

@@ -120,7 +120,7 @@ export class World {
     this.camera = new THREE.PerspectiveCamera(55, 16 / 9, 0.25, 6000); this.fixedNear = +Q.get('near') || 0; this.zK = +Q.get('zk') || 6; this.zN = 0;     /* ?near=0.25 pins the near plane (the old state) */
     this.shared = {
       uSunColor: { value: new THREE.Color() }, uSunDir: { value: new THREE.Vector3() }, uShadowFar: { value: LIGHT.shadowR }, uShadowCenter: { value: new THREE.Vector3() },
-      ...panelUniforms(), uTime: { value: 0 }, tStreet: { value: null }, tWallA: { value: null }, tWallN: { value: null }, tSign: { value: null }, tLight: { value: null }, uHalf: { value: new THREE.Vector2() },
+      ...panelUniforms(), uTime: { value: 0 }, uWetK: { value: new THREE.Vector4(0, 0, 0, 0) },     /* progress/night: wet roads (sky/rain.js) */ uNightK: { value: new THREE.Vector3(1, 0, 0) },     /* progress/night: lit windows (sky/nightkit.js) */ tStreet: { value: null }, tWallA: { value: null }, tWallN: { value: null }, tSign: { value: null }, tLight: { value: null }, uHalf: { value: new THREE.Vector2() },
     };
     installSunShadows();
     this.q = { shadow: LIGHT.shadowMap, gtao: true, bloom: true, msaa: Q.has('msaa') ? +Q.get('msaa') : 4 };

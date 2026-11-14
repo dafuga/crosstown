@@ -39,7 +39,7 @@ export async function install(game) {
     for (const s of [-1, 1]) { add(lO + CW / 2 - 0.04, lO + CW / 2 + 0.04, zW + 1.12, zW + 2.75, s * zr - 0.04, s * zr + 0.04, green); const gl = new THREE.SphereGeometry(0.15, 12, 8); gl.translate(lO + CW / 2, zW + 2.9, s * zr); const c = new Float32Array(gl.attributes.position.count * 3); for (let i = 0; i < c.length; i += 3) { const up = gl.attributes.position.getY(i / 3) > zW + 2.9; c[i] = up ? 0.10 : 0.85; c[i + 1] = up ? 0.55 : 0.85; c[i + 2] = up ? 0.22 : 0.8; } gl.setAttribute('color', new THREE.BufferAttribute(c, 3)); parts.push(gl.toNonIndexed ? gl : gl); }
     return mergeGeos(parts); })();
   const kitMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.62, metalness: 0.1 });
-  const boardGeo = new THREE.PlaneGeometry(1, 1), streetGroup = new THREE.Group(); streetGroup.name = 'subway_street';
+  const boardGeo = new THREE.PlaneGeometry(1, 1), streetGroup = new THREE.Group(); streetGroup.name = 'dressing_subway';      /* the name puts it under the game's draw budget (budget.js: small street things lose their sun shadow past 55 m and are not drawn past 280 m) */
   const signTex = (st) => { const c = document.createElement('canvas'); c.width = 1024; c.height = 256; const q = c.getContext('2d'); q.fillStyle = '#0d0f10'; q.fillRect(0, 0, 1024, 256); q.fillStyle = '#f3f1ea'; q.textBaseline = 'middle';
     let fs = 84; q.font = '700 ' + fs + 'px Helvetica, Arial, sans-serif'; while (q.measureText(st.name).width > 960 && fs > 40) { fs -= 4; q.font = '700 ' + fs + 'px Helvetica, Arial, sans-serif'; } q.fillText(st.name, 32, 80);
     const R = st.routes.slice(0, 12), sz = Math.min(96, (960 - (R.length - 1) * 10) / R.length); let x = 32; for (const r of R) { q.fillStyle = ROUTE_COL[r] || '#666'; rr(q, x, 150, sz, Math.min(sz, 92), 14); q.fill(); q.fillStyle = /[NQRW]/.test(r) ? '#111' : '#fff'; q.font = '800 ' + Math.round(sz * 0.68) + 'px Helvetica, Arial, sans-serif'; q.textAlign = 'center'; q.fillText(r, x + sz / 2, 150 + Math.min(sz, 92) / 2 + 3); q.textAlign = 'left'; x += sz + 10; }
@@ -82,7 +82,7 @@ export async function install(game) {
   const manage = (dt) => { scanT -= dt; const px = pl.x, py = pl.y;
     if (scanT <= 0) { scanT = 0.4; for (const st of data.stations) { if (st.cx === undefined) continue; const d = Math.hypot(px - st.cx, py - st.cy) - st.rad, u = S.units.get(st.id);
         if (d < NEAR && (!u || u.state === 'none')) { let near = false; for (const i of st.ent) if (Math.hypot(px - EN[i].x, py - EN[i].y) < NEAR) { near = true; break; } if (near) startUnit(unitOf(st)); }
-        else if (u && u.state === 'ready' && u !== S.unit && d > FAR) dropUnit(u); } }
+        else if (u && u.state === 'ready' && u !== S.unit && u !== S.keep && d > FAR) dropUnit(u); } }
     for (const u of S.units.values()) if (u.state === 'building') { const t0 = performance.now(), budget = S.own || window.__subFast ? 30 : 3.5; try { let r; do { r = u.gen.next(); } while (!r.done && performance.now() - t0 < budget); u.ms += performance.now() - t0; if (r.done) finishUnit(u, r.value); } catch (e) { fail('build ' + u.st.id, e); u.state = 'failed'; } break; } };
 
   // ---------------------------------------------------------------- trains
@@ -106,8 +106,8 @@ export async function install(game) {
       if (t.state === 'wait') { t.t -= dt; if (t.t <= 0) { t.state = 'in'; t.c = -t.far; t.v = VMAX; tr.group.visible = true; try { tr.setDoors(0, 0); tr.setLights({ front: 1, interior: K * 1.15 }); const r = t.T.routes[t.routeI++ % t.T.routes.length]; tr.setRoute({ label: r, color: ROUTE_COL[r] || '#888' }); } catch (e) { fail('train', e); } S.sound && S.sound('arrive', t); } }
       else if (t.state === 'in') { const stop = Math.sqrt(Math.max(0, 2 * DEC * -t.c)); t.v = Math.min(VMAX, Math.max(0.35, stop)); t.c += t.v * dt; if (t.c >= 0) { t.c = 0; t.v = 0; t.state = 'dwell'; t.t = 0; } }
       else if (t.state === 'dwell') { t.t += dt; const f = t.t < 1.2 ? 0 : t.t < 2.8 ? (t.t - 1.2) / 1.6 : t.t < 13.5 ? 1 : t.t < 15.1 ? 1 - (t.t - 13.5) / 1.6 : 0; if (f !== t.doors) { if ((t.doors === 0 && f > 0) || (t.doors === 1 && f < 1)) S.sound && S.sound('doors', t); t.doors = f; try { tr.setDoors(t.side, f * f * (3 - 2 * f)); } catch (e) { fail('doors', e); } } if (S.ride && S.ride.t === t && !nextStation(u.st, t.T.dir) && t.t > 4) t.t = Math.min(t.t, 12);      /* last stop in our map: the doors stay open until he gets off */
-        if (t.t > 16.6) { t.state = 'out'; S.sound && S.sound('leave', t); if (S.ride && S.ride.t === t) { const N = nextStation(u.st, t.T.dir); if (N) { const nu = unitOf(N); if (nu.state === 'none') startUnit(nu); } } } }
-      else if (t.state === 'out') { t.v = Math.min(VMAX + 2, t.v + ACC * dt); t.c += t.v * dt; if (S.ride && S.ride.t === t && t.c > u.st.plen / 2 + tr.length / 2 + 45) { if (hop(u, t)) return; t.c = Math.min(t.c, t.far - 2); }
+        if (t.t > 16.6) { t.state = 'out'; S.sound && S.sound('leave', t); if (S.ride && S.ride.t === t) { const N = nextStation(u.st, t.T.dir); if (N) { const nu = unitOf(N); S.keep = nu; if (nu.state === 'none') startUnit(nu); } } } }
+      else if (t.state === 'out') { t.v = Math.min(VMAX + 2, t.v + ACC * dt); t.c += t.v * dt; if (S.ride && S.ride.t === t && t.c > Math.min(t.far - 12, u.st.plen / 2 + tr.length / 2 + 30)) { if (hop(u, t)) return; t.c = Math.min(t.c, t.far - 2); }      /* the whole train is in the dark of the tunnel: change stations */
         if (t.c > t.far) { t.state = 'wait'; t.t = 28 + ((t.T.id * 37 + S.stats.built * 11 + Math.floor(g.t)) % 30); tr.group.visible = false; } }
       if (tr.group.visible) { tr.group.position.set(t.mx + t.ux * t.c, t.T.z, -(t.my + t.uy * t.c)); const inSt = clamp(1 - (Math.abs(t.c) - (u.st.plen / 2 - tr.length / 2)) / tr.length, 0, 1); scaleTrain(tr, 0.07 + 0.93 * inSt); tr.group.updateMatrixWorld(true); } } };
 
@@ -122,7 +122,7 @@ export async function install(game) {
     else if (saved) { w.camera.layers.mask = saved.mask; w.scene.environmentIntensity = saved.env; w.streetOff = saved.off; saved = null; } };
   const enter = (u, e) => { S.own = true; S.unit = u; pos.x = pl.x; pos.y = pl.y; const f = u.st.floors.find((q) => q.k === 'street' && q.ent === e.id), uu = clamp(Walk.u(f, pl.x, pl.y), -f.l / 2 + 0.06, f.l / 2), vv = clamp(Walk.v(f, pl.x, pl.y), -f.w / 2 + R_BODY + 0.02, f.w / 2 - R_BODY - 0.02);
     pos.x = f.x + f.ca * uu - f.sa * vv; pos.y = f.y + f.sa * uu + f.ca * vv; pos.z = Walk.zAt(f, uu); visZ = zW; S.floor = f; pl.roof = null; if (g.jump) { jumpWas = g.jump.on; g.jump.on = false; } u.res.core.visible = true; figureLayers(); if (window.__mark) window.__mark('subway-in'); };
-  const leave = (x, y) => { S.own = false; setDeep(false); setOrder(0); pl.x = x; pl.y = y; pl.alt = 0; if (g.jump) g.jump.on = jumpWas; if (S.unit) S.unit.res.core.visible = false; S.unit = null; S.floor = null; if (window.__mark) window.__mark('subway-out'); };
+  const leave = (x, y) => { S.own = false; S.ride = null; S.keep = null; setDeep(false); setOrder(0); pl.x = x; pl.y = y; pl.alt = 0; if (g.jump) g.jump.on = jumpWas; if (S.unit) S.unit.res.core.visible = false; S.unit = null; S.floor = null; if (window.__mark) window.__mark('subway-out'); };
   S.leave = () => { if (S.own) leave(pl.x, pl.y); };
   const stairZ = (f, x, y) => { const u = Walk.u(f, x, y), n = f.n || 1, dn = f.z0 > f.z1 ? 1 : -1, d = clamp(dn * u + f.l / 2, 0, f.l - 1e-6), i = Math.floor(d / (f.l / n)); return Math.max(f.z0, f.z1) - (i + 1) * meta.rise; };
 
@@ -142,10 +142,10 @@ export async function install(game) {
         if (inCar(t, nx, nz, open)) { R.lx = nx; R.lz = nz; break; } } }
     const [x, y] = tMap(t, R.lx, R.lz); pos.x = x; pos.y = y; pos.z = t.T.z + tr.floorY; };
   // deep in the dark of the tunnel the ride changes stations: the same train, now coming in to the next station of the line (its neighbourhood is built while the train pulls out)
-  const hop = (u, t) => { const N = nextStation(u.st, t.T.dir); if (!N) return false; const nu = unitOf(N); if (nu.state !== 'ready' || !nu.trains.length) { if (nu.state === 'none') startUnit(nu); return false; }
+  const hop = (u, t) => { const N = nextStation(u.st, t.T.dir); if (!N) return false; const nu = unitOf(N); S.keep = nu; if (nu.state !== 'ready' || !nu.trains.length) { if (nu.state === 'none') startUnit(nu); return false; }
     const nt = nu.trains.find((q) => q.T.id === t.T.id); if (!nt) return false; const R = S.ride, tr = nt.train;
-    const lead = Math.max(125, Math.min(nt.far - 2, t.far - t.c + 70)), ph = (v) => ((v % 4.6) + 4.6) % 4.6; let c1 = -lead; c1 -= ph(c1 - nt.far) - ph(t.c - t.far) > 0 ? ph(c1 - nt.far) - ph(t.c - t.far) : ph(c1 - nt.far) - ph(t.c - t.far) + 4.6;      // keep the columns' beat past the windows
-    nt.state = 'in'; nt.c = Math.max(-nt.far, c1); nt.v = t.v; nt.doors = 0; nt.t = 0; tr.group.visible = true; try { tr.setDoors(0, 0); tr.setLights({ front: 1, interior: K * 1.15 }); const r = t.T.routes[(t.routeI + t.T.routes.length - 1) % t.T.routes.length]; tr.setRoute({ label: r, color: ROUTE_COL[r] || '#888' }); } catch (e) {}
+    const c1 = -Math.min(nt.far, N.plen / 2 + tr.length / 2 + 25);      // it comes in from the dark, the whole train still in the tunnel
+    nt.state = 'in'; nt.c = c1; nt.v = t.v; S.keep = null; nt.doors = 0; nt.t = 0; tr.group.visible = true; try { tr.setDoors(0, 0); tr.setLights({ front: 1, interior: K * 1.15 }); const r = t.T.routes[(t.routeI + t.T.routes.length - 1) % t.T.routes.length]; tr.setRoute({ label: r, color: ROUTE_COL[r] || '#888' }); } catch (e) {}
     t.state = 'wait'; t.t = 40; t.train.group.visible = false; const da = Math.atan2(nt.uy, nt.ux) - Math.atan2(t.uy, t.ux); pl.h += da; g.cam.yaw += da;
     R.t = nt; u.res.core.visible = false; nu.res.core.visible = true; S.unit = nu; const [x, y] = tMap(nt, R.lx, R.lz); pos.x = x; pos.y = y; pl.x = x; pl.y = y; g.cam.tx = x; g.cam.ty = y; S._clip = undefined; S.stats.hops = (S.stats.hops || 0) + 1; if (window.__mark) window.__mark('subway-hop');
     console.log('[subway] riding ' + u.st.name + ' -> ' + N.name); return true; };
@@ -181,8 +181,9 @@ export async function install(game) {
   const placeCam = function () { if (!S.own || S.camFree || !S.unit || !S.unit.walk) return; const now = performance.now(), dt = Math.min(0.1, (now - camT) / 1000) || 0.016; camT = now;
     const C = g.cam, cam = w.camera, pitch = clamp(C.pitch, -0.7, 1.0), d0 = Math.min(C.dist, 3.1), bx = -Math.cos(C.yaw), by = -Math.sin(C.yaw);
     tgt[0] = C.tx; tgt[1] = C.ty; tgt[2] = C.tz; want[0] = C.tx + bx * d0 * Math.cos(pitch); want[1] = C.ty + by * d0 * Math.cos(pitch); want[2] = C.tz + (C.h || 0.35) + d0 * Math.sin(pitch);
-    let f; if (S.ride) { const t = S.ride.t, tr = t.train, [ax, az] = tLocal(t, tgt[0], tgt[1]), [bx2, bz2] = tLocal(t, want[0], want[1]), y0 = t.T.z + tr.floorY, w = tr.walk.find((q) => S.ride.lz >= q.z0 - 0.3 && S.ride.lz <= q.z1 + 0.3) || tr.walk[0], hx = tr.width / 2 - 0.32; f = 0;
-      for (let i = 1; i <= 24; i++) { const q = i / 24, x = ax + (bx2 - ax) * q, z = az + (bz2 - az) * q, y = tgt[2] + (want[2] - tgt[2]) * q; if (Math.abs(x) > hx || z < w.z0 - 0.1 || z > w.z1 + 0.1 || y < y0 + 0.25 || y > y0 + (tr.ceilingY ? tr.ceilingY - tr.floorY : 2.05) - 0.12) break; f = q; } }
+    let f; if (S.ride) { // inside the car: the camera is kept inside the car's box (clamped, not pulled into his head)
+      const t = S.ride.t, tr = t.train, y0 = t.T.z + tr.floorY, w = tr.walk.find((q) => S.ride.lz >= q.z0 - 0.3 && S.ride.lz <= q.z1 + 0.3) || tr.walk[0], hx = tr.width / 2 - 0.3, top = y0 + (tr.ceilingY ? tr.ceilingY - tr.floorY : 2.05) - 0.15;
+      let [bx2, bz2] = tLocal(t, want[0], want[1]); bx2 = clamp(bx2, -hx, hx); bz2 = clamp(bz2, w.z0 + 0.15, w.z1 - 0.15); const m = tMap(t, bx2, bz2); want[0] = m[0]; want[1] = m[1]; want[2] = clamp(want[2], y0 + 0.5, top); tgt[2] = Math.min(tgt[2], top - 0.1); f = 1; S._clip = 1; }
     else f = S.unit.walk.sight(tgt, want); const k = Math.max(0.12, f - 0.2 / Math.max(d0, 0.5)); let cl = S._clip === undefined ? k : S._clip + (k - S._clip) * Math.min(1, (dt || 1) * (k < S._clip ? 30 : 3)); S._clip = cl = Math.min(cl, k + 0.001);
     cam.position.set(tgt[0] + (want[0] - tgt[0]) * cl, tgt[2] + (want[2] - tgt[2]) * cl, -(tgt[1] + (want[1] - tgt[1]) * cl));
     const la = Math.max(0.6, 2.2 * cl); cam.lookAt(C.tx + Math.cos(C.yaw) * la, C.tz + 0.1 - Math.sin(Math.min(pitch, 0)) * 2.0, -(C.ty + Math.sin(C.yaw) * la));

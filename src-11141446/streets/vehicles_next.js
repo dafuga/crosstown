@@ -16,7 +16,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { BAKE_LIGHT_GLSL, NOISE_GLSL } from '../facade.js';
-import { applyAll, variant, N_LIVERY } from './vehicles_rules.js';
+import { applyAll, variant, N_LIVERY, KIND, TAXI_YELLOW } from './vehicles_rules.js';
 
 const LOD_NEAR = 22, LOD_MID = 110, FAR = 260, CAP = [10, 110, 260], CAP_BUS = [5, 12, 16];
 const _m = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _m3 = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _v = new THREE.Vector3(), _one = new THREE.Vector3(1, 1, 1), _c = new THREE.Color(), _s = new THREE.Sphere(), _fr = new THREE.Frustum();
@@ -37,7 +37,7 @@ function groupOf(name, lod) {
   return 'misc';
 }
 // roughness, metalness, glow, plate flag carried per vertex in the merged groups
-const OVER = { light_head: [0.2, 1, 0.0, 0], lamp_housing: [0.28, 0.35, 0.10, 0], plate: [0.4, 0, 0, 1], taxi_light: [0.35, 0, 0.55, 0], amber: [0.1, 0, 0.0, 0], light_white: [0.15, 0.6, 0.05, 0], glass: [0.04, 0, 0, 0], glass_dark: [0.04, 0, 0, 0], tire: [0.86, 0, 0, 0], trim_gloss: [0.3, 0, 0, 0] };
+const OVER = { drl: [0.2, 0, 0.35, 0], light_head: [0.06, 0.0, 0.0, 0], lamp_housing: [0.14, 1.0, 0.0, 0], plate: [0.4, 0, 0, 1], taxi_light: [0.35, 0, 0.55, 0], amber: [0.1, 0, 0.0, 0], light_white: [0.15, 0.6, 0.05, 0], glass: [0.04, 0, 0, 0], glass_dark: [0.04, 0, 0, 0], tire: [0.86, 0, 0, 0], trim_gloss: [0.3, 0, 0, 0] };
 function prepGeo(mesh, inv, group) {
   const g = mesh.geometry.clone(); g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, mesh.matrixWorld));
   for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal' && !(k === 'uv' && group === 'livery')) g.deleteAttribute(k);
@@ -50,10 +50,11 @@ function prepGeo(mesh, inv, group) {
   }
   const n = g.attributes.position.count, m = mesh.material, col = new Float32Array(n * 3), am = new Float32Array(n * 4);
   const o = OVER[m.name] || [m.roughness, m.metalness, 0, 0]; let c = m.color;
-  if (m.name === 'light_head') c = new THREE.Color(0.34, 0.34, 0.36); if (m.name === 'amber') c = new THREE.Color(0.2, 0.065, 0.01); if (m.name === 'lamp_housing') c = new THREE.Color(0.62, 0.63, 0.66);
+  if (m.name === 'light_head') c = new THREE.Color(0.035, 0.037, 0.04);      // projector lenses: dark glass with the sky in them, not grey balls
+  if (m.name === 'amber') c = new THREE.Color(0.2, 0.065, 0.01); if (m.name === 'lamp_housing') c = new THREE.Color(0.62, 0.63, 0.66);
   if (m.name === 'glass' || m.name === 'glass_dark') c = new THREE.Color(0.012, 0.016, 0.018);
   if (m.name === 'tire') c = new THREE.Color(0.032, 0.032, 0.034);
-  if (m.name === 'interior_Body') c = new THREE.Color(0.035, 0.035, 0.037); else if (/^interior_(Light_Grey_Plastic|Headliner|Interior)$/.test(m.name)) c = c.clone().multiplyScalar(0.35);
+  if (m.name === 'interior_Body') c = new THREE.Color(0.07, 0.07, 0.075); else if (/^interior_(Light_Grey_Plastic|Headliner|Interior)$/.test(m.name)) c = c.clone().multiplyScalar(0.6);
   for (let i = 0; i < n; i++) { col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b; am.set(o, i * 4); }
   g.setAttribute('color', new THREE.BufferAttribute(col, 3)); g.setAttribute('aMat', new THREE.BufferAttribute(am, 4));
   return g;
@@ -65,15 +66,15 @@ function plateAtlas() {
   const c = document.createElement('canvas'); c.width = 1024; c.height = 1024; const g = c.getContext('2d'), L = 'ABCDEFGHJKLMNPRSTUVWXYZ';
   let s = 91; const r = () => ((s = (s * 16807) % 2147483647) / 2147483647);
   for (let i = 0; i < 8; i++) {
-    const x0 = (i % 2) * 512, y0 = Math.floor(i / 2) * 256, white = i === 2 || i === 5 || i === 7;
+    const x0 = (i % 2) * 512, y0 = Math.floor(i / 2) * 256, white = i < 7;      // the eighth is a cab's: gold, its medallion number (invented)      // most plates on the street now are the white 'Excelsior' issue
     g.fillStyle = '#121212'; g.fillRect(x0, y0, 512, 256);
     const grd = g.createLinearGradient(0, y0, 0, y0 + 256); if (white) { grd.addColorStop(0, '#e9eef2'); grd.addColorStop(0.55, '#f4f4ef'); grd.addColorStop(1, '#f1c95a'); } else { grd.addColorStop(0, '#f6c437'); grd.addColorStop(1, '#e19d16'); }
     g.fillStyle = grd; g.beginPath(); g.roundRect ? g.roundRect(x0 + 14, y0 + 12, 484, 232, 14) : g.rect(x0 + 14, y0 + 12, 484, 232); g.fill();
     g.fillStyle = '#1a2a5e'; g.textAlign = 'center'; g.textBaseline = 'middle';
     g.font = 'bold 40px "Arial Narrow", Arial, sans-serif'; g.fillText('NEW YORK', x0 + 256, y0 + 46);
-    const num = L[Math.floor(r() * L.length)] + L[Math.floor(r() * L.length)] + L[Math.floor(r() * L.length)] + '-' + String(1000 + Math.floor(r() * 9000));
+    const num = white ? L[Math.floor(r() * L.length)] + L[Math.floor(r() * L.length)] + L[Math.floor(r() * L.length)] + '-' + String(1000 + Math.floor(r() * 9000)) : '7K42';
     g.save(); g.translate(x0 + 256, y0 + 138); g.scale(0.82, 1); g.font = 'bold 112px "Arial Narrow", "Helvetica Neue", Arial, sans-serif'; g.fillText(num, 0, 0); g.restore();
-    g.font = 'bold 26px Arial, sans-serif'; g.fillText(white ? 'EXCELSIOR' : 'THE EMPIRE STATE', x0 + 256, y0 + 214);
+    g.font = 'bold 26px Arial, sans-serif'; g.fillText(white ? 'EXCELSIOR' : 'TAXI', x0 + 256, y0 + 214);
     for (const bx of [118, 394]) { g.fillStyle = '#8c8c86'; g.beginPath(); g.arc(x0 + bx, y0 + 30, 9, 0, 7); g.fill(); g.fillStyle = '#3a3a36'; g.fillRect(x0 + bx - 6, y0 + 29, 12, 2); }
     const dg = g.createLinearGradient(0, y0 + 150, 0, y0 + 256); dg.addColorStop(0, 'rgba(60,50,35,0)'); dg.addColorStop(1, 'rgba(60,50,35,0.22)'); g.fillStyle = dg; g.fillRect(x0 + 14, y0 + 150, 484, 94);
   }
@@ -100,15 +101,20 @@ function liveryAtlas() {
 }
 
 export async function add(game, ctx) {
-  // vehicles_next.js is what draws (since r16); this file is the fallback (?vnext=0, or if the next module throws)
-  if (!(game.P && game.P.get('vnext') === '0')) {      /* r16: vehicles_next.js is the default (closeness 30 vs 22, 24 vs 15; drew cleanly on the M2 Pro and the M2 Max); ?vnext=0 = the r5 state below */ try { return await (await import(game.P && game.P.get('vwip') === '1' ? './vehicles_wip.js' : './vehicles_next.js')).add(game, ctx); }      /* ?vwip=1: the loop's work in progress (vehicles_wip.js), copied over vehicles_next.js once it has drawn cleanly */ catch (e) { console.log('[streets] vehicles: vnext failed: ' + (e && e.message)); } }
   const world = game.world, scene = world.scene, shared = world.shared, A = ctx.A + 'vehicles/';
   const draco = new DRACOLoader().setDecoderPath('node_modules/three/examples/jsm/libs/draco/gltf/');
   const [meta, gltf] = await Promise.all([fetch(A + 'vehicles.json', { cache: 'no-store' }).then((r) => r.json()), new GLTFLoader().setDRACOLoader(draco).loadAsync(A + 'vehicles.glb')]);
   // the openx-assets models (CC-BY, see ATTRIBUTION.md), on unless ?vopenx=0: same kit conventions, so they are more kinds of the same
-  let oxMeta = null, oxScene = null;
-  if (!(game.P && (game.P.get('vopenx') === '0' || (window.__CFG && window.__CFG.public && game.P.get('vopenx') !== '1')))) try {   /* public build: hand-built cars only until the openx bodies are reshaped (CHIEF 02:37 Nov 12); ?vopenx=1 to test */ oxMeta = await fetch(A + 'openx.json', { cache: 'no-store' }).then((r) => r.json()); oxScene = (await new GLTFLoader().setDRACOLoader(draco).loadAsync(A + 'openx.glb')).scene; oxScene.updateMatrixWorld(true); } catch (e) { console.log('[streets] vehicles: openx models not loaded: ' + (e && e.message)); oxMeta = null; }
-  const allMeta = Object.assign({}, meta, oxMeta || {}), findNode = (n) => gltf.scene.getObjectByName(n) || (oxScene && oxScene.getObjectByName(n));
+  let oxMeta = null, oxScene = null, oxPrev = null; const prevKinds = [];
+  if (!(game.P && (game.P.get('vopenx') === '0' || (window.__CFG && window.__CFG.public && game.P.get('vopenx') !== '1')))) try {   /* public build: hand-built cars only until the openx bodies are reshaped (CHIEF 02:37 Nov 12); ?vopenx=1 to test */ let ox = 'openx'; if (!(game.P && game.P.get('vox2') === '0')) { const r2 = await fetch(A + 'openx_next.json', { cache: 'no-store' }); if (r2.ok) { oxMeta = await r2.json(); ox = 'openx_next'; } }
+      if (ox === 'openx') oxMeta = await fetch(A + 'openx.json', { cache: 'no-store' }).then((r) => r.json());
+      oxScene = (await new GLTFLoader().setDRACOLoader(draco).loadAsync(A + ox + '.glb')).scene; oxScene.updateMatrixWorld(true);
+      if (oxMeta.ox_cab) { oxMeta.ox_cab.base = ['taxi']; if (oxMeta.ox_corolla) oxMeta.ox_corolla.base = ['sedan']; }      // cabs are the cab model; same length, so the kerbs fill as before
+      // kinds whose newest build is not fit to show are taken from the build before (openx_next.prev.glb): the sprinter's nose shows a
+      // chevron left of its maker's star in the 13:45 build
+      if (ox === 'openx_next') for (const t of String(game.P && game.P.has('vprev') ? game.P.get('vprev') : '').split(',').filter(Boolean)) { if (!oxPrev) { oxPrev = (await new GLTFLoader().setDRACOLoader(draco).loadAsync(A + 'openx_next.prev.glb')).scene; oxPrev.updateMatrixWorld(true); } prevKinds.push(t); }
+      console.log('[streets] vehicles: ' + ox + ' models' + (prevKinds.length ? ', from the build before: ' + prevKinds : '')); } catch (e) { console.log('[streets] vehicles: openx models not loaded: ' + (e && e.message)); oxMeta = null; }
+  const allMeta = Object.assign({}, meta, oxMeta || {}), findNode = (n) => gltf.scene.getObjectByName(n) || (oxPrev && prevKinds.some((t) => n.indexOf(t) > 0) && oxPrev.getObjectByName(n)) || (oxScene && oxScene.getObjectByName(n));
   draco.dispose();
   const P = game.P, opt = (k, d) => (P && P.has(k) ? P.get(k) : d);
   VB = { plate: opt('vb_plate', '1') !== '0', tyre: opt('vb_tyre', '1') !== '0', sink: opt('vb_sink', '1') !== '0', blob: opt('vb_blob', '1') !== '0' }; const SINK = VB.sink ? 0.012 : 0;
@@ -116,14 +122,17 @@ export async function add(game, ctx) {
   // never drawn into, and a sampler left on it trips ANGLE ("two textures of different types use the same sampler location") on some Macs
   const vehCube0 = new THREE.WebGLCubeRenderTarget(2); { const R = world.renderer, old = R.getRenderTarget(); for (let f = 0; f < 6; f++) { R.setRenderTarget(vehCube0, f); R.clear(); } R.setRenderTarget(old); }
   const VEH_CUBE = { value: vehCube0.texture };
-  const VEH_DBG = { value: +opt('vdbg', '0') };
+  const VEH_DBG = { value: +opt('vdbg', '0') }, VEH_CPOS = { value: new THREE.Vector3() }, VEH_PAR = { value: +opt('vpar', '11') };
+  // the lead's street cube is 256 px a face in live play: lacquer and glass mirror it, so near cars show its texels. ?vcube=512 redraws it finer.
+  { const cs = +opt('vcube', '512'); if (world.streetRT && cs > world.streetRT.width && cs <= 1024) world.streetRT.setSize(cs, cs); }
+  const VEH_GRIME = { value: await new THREE.TextureLoader().loadAsync(A + 'grime.webp') }; VEH_GRIME.value.wrapS = VEH_GRIME.value.wrapT = THREE.RepeatWrapping; VEH_GRIME.value.anisotropy = 4;
   const VEH_STREET = { value: 0 }, streetOn = opt('vstreet', '1') !== '0';
   const dense = opt('vdense', '1') !== '0';
 
   // ---------------------------------------------------------------- materials (shared by every kind)
   function patch(m, o) {
     m.onBeforeCompile = (sh) => {
-      Object.assign(sh.uniforms, shared); sh.uniforms.uVehStreet = VEH_STREET; sh.uniforms.uVehDbg = VEH_DBG; sh.uniforms.tVehStreet = VEH_CUBE;
+      Object.assign(sh.uniforms, shared); sh.uniforms.uVehStreet = VEH_STREET; sh.uniforms.uVehDbg = VEH_DBG; sh.uniforms.tVehStreet = VEH_CUBE; sh.uniforms.uVehCubePos = VEH_CPOS; sh.uniforms.tVehGrime = VEH_GRIME; sh.uniforms.uVehPar = VEH_PAR;
       sh.vertexShader = sh.vertexShader
         .replace('#include <common>', `#include <common>
           attribute vec4 aVar; attribute vec4 aMat; varying vec4 vVar; varying vec4 vMat; varying vec3 vOPos; varying vec3 vWPos; varying vec3 vWNrm; varying vec3 vCrown;`)
@@ -138,9 +147,18 @@ export async function add(game, ctx) {
           vCrown = mat3(vehM) * vec3(position.x * 0.05, 0.0, position.z * 0.22);     // bonnets and roofs are crowned: their mirror image sweeps across the sky`);
       if (o.plate) sh.vertexShader = sh.vertexShader.replace('#include <uv_vertex>', `#include <uv_vertex>
           #ifdef USE_MAP
-            float fi = floor(fract(aVar.y * 7.31) * 8.0);
+            float fi = aVar.z > 0.5 ? 7.0 : floor(fract(aVar.y * 7.31) * 7.0);
             vMapUv = vec2((mod(fi, 2.0) + uv.x) / 2.0, (3.0 - floor(fi / 2.0) + uv.y) / 4.0);
           #endif`);
+      // the sun's shadow map is ~7 cm a texel here: on a car's curved panels it falls as blotches (the body shadowing itself a texel
+      // off). Bodies look it up 12 cm out along the normal: shade from buildings, trees and other cars stays, the self-blotching goes.
+      sh.vertexShader = sh.vertexShader.replace('#include <shadowmap_vertex>', THREE.ShaderChunk.shadowmap_vertex.split('directionalLightShadows[ i ].shadowNormalBias').join('( directionalLightShadows[ i ].shadowNormalBias + ' + (o.wheel || o.scan ? '0.04' : '0.12') + ' )'));
+      if (o.scan || o.wheel) sh.vertexShader = sh.vertexShader.replace('#include <project_vertex>', `
+          vec4 vehW = vehM * vec4(transformed, 1.0); vec3 vehAx = normalize(mat3(vehM) * vec3(0.0, 0.0, 1.0));
+          float vehLow = smoothstep(0.075, 0.0, vehW.y);
+          vehW.xyz += vehAx * sign(position.z) * 0.011 * vehLow * step(abs(position.z), 1e3);      // the sidewall bulges over the contact
+          vehW.y = max(vehW.y, 0.002);                                                              // and the tread lies flat on the road
+          vec4 mvPosition = viewMatrix * vehW; gl_Position = projectionMatrix * mvPosition;`);
       if (o.livery) sh.vertexShader = sh.vertexShader.replace('#include <uv_vertex>', `#include <uv_vertex>
           #ifdef USE_MAP
             vMapUv = vec2((mod(aVar.z, 2.0) + uv.x) / 2.0, (floor(aVar.z / 2.0) + 1.0 - uv.y) / 8.0);   // glTF's v runs down, the canvas's up
@@ -149,9 +167,9 @@ export async function add(game, ctx) {
         .replace('#include <common>', `#include <common>
           varying vec4 vVar; varying vec4 vMat; varying vec3 vOPos; varying vec3 vWPos; varying vec3 vWNrm; varying vec3 vCrown;
           uniform sampler2D tLight; uniform vec2 uHalf; uniform vec3 uSunColor; uniform float uShadowFar; uniform vec3 uShadowCenter;
-          uniform vec3 uSunDir; uniform samplerCube tVehStreet; uniform float uVehStreet; uniform float uVehDbg;
+          uniform vec3 uSunDir; uniform samplerCube tVehStreet; uniform float uVehStreet; uniform float uVehDbg; uniform vec3 uVehCubePos; uniform float uVehPar; uniform sampler2D tVehGrime;
           ${NOISE_GLSL}
-          vec3 bakeV; vec3 bakeN; float vehDirt; float vehSky; float vehSun;
+          vec3 bakeV; vec3 bakeN; float vehDirt; float vehOcc = 1.0; float vehSky; float vehSun;
           // What a car's lacquer and glass mirror. The scene has only the sky to reflect, so the street is made here: above the
           // roofline (higher where the baked sky light says the canyon is deep, ragged along the block) the real sky; below it
           // walls with rows of windows, lit by where the sun stands; a dark band of street life at their foot; the road below.
@@ -175,16 +193,27 @@ export async function add(game, ctx) {
             vehSky = clamp(bakeV.r, 0.0, 1.0); vehSun = bakeV.g;
             bakeV.r *= 0.5 + 0.5 * bakeN.y;          // the bake is the ground's: a wall of the car sees half that sky
             ${o.misc ? 'if (vMat.w > 0.5) diffuseColor.rgb = mix(vec3(0.88, 0.62, 0.12), vec3(0.86, 0.86, 0.83), step(0.62, fract(vVar.y * 7.31)));' : ''}
-            float hh = ${o.wheel ? '0.22' : 'vOPos.y'};
+            float hh = ${o.wheel ? '0.22' : 'vOPos.y'}; const float DUSTK = ${(+opt('vdust', '0.45')).toFixed(3)}; const float GRIMEK = ${(+opt('vgrime', '1')).toFixed(3)};
             float n1 = fbm(vec2(vOPos.x * 1.3 + vVar.y * 37.0, vOPos.z * 1.3 + vOPos.y * 0.8)), n2 = vnoise(vOPos.xz * 9.0 + vVar.y * 11.0);
-            float spray = smoothstep(0.80, 0.08, hh) * (0.35 + 1.0 * n1) + 0.02 + 0.03 * n2 * n1;     // low on the body and soft; nothing on bonnet or roof
-            vehDirt = clamp(vVar.x * spray * ${o.inner ? '0.0' : o.glass ? '0.35' : o.wheel ? '0.3' : o.misc ? '0.5' : o.plate ? '0.4' : '1.1'}, 0.0, 0.88);
-            diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.115, 0.10, 0.085), vehDirt);
+            float n3 = vnoise(vec2(vOPos.x * 7.0 + vVar.y * 13.0, vOPos.y * 21.0));      // fine streaks, not blotches
+            float spray = smoothstep(0.7, 0.05, hh) * (0.75 + 0.25 * n1 + 0.25 * n3) + 0.02 + 0.02 * n2;     // low on the body and soft; nothing on bonnet or roof
+            vehDirt = clamp(vVar.x * spray * ${o.inner || o.scan ? '0.0' : o.glass ? '0.35' : o.wheel ? '0.3' : o.misc ? '0.5' : o.plate ? '0.4' : '1.1'}, 0.0, 0.88);
+            diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.19, 0.17, 0.14), vehDirt * 0.85);
+            // what the body hides from the sky: surfaces facing the road and the bottom 40 cm sit in the car's own shade
+            ${o.inner || o.wheel || o.scan ? '' : 'vehOcc = mix(0.22, 1.0, smoothstep(-0.65, 0.3, bakeN.y)) * mix(0.45, 1.0, smoothstep(0.06, 0.42, vOPos.y)); diffuseColor.rgb *= vehOcc;'}
             // a parked city car carries a film of dust on everything that faces up: patchy, streaked where rain ran off, thinner on glass
-            ${o.inner || o.wheel ? '' : `{ float up = smoothstep(0.35, 0.85, bakeN.y), streak = vnoise(vec2(vOPos.x * 0.7 + vVar.y * 5.0, vOPos.z * 9.0));
-              float dust = clamp(vVar.x * 1.25 - 0.08, 0.0, 1.0) * up * (0.30 + 0.70 * fbm(vOPos.xz * 2.1 + vVar.y * 23.0)) * (0.65 + 0.35 * streak) * ${o.glass ? '0.7' : '1.15'};
-              diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.40, 0.37, 0.32), clamp(dust, 0.0, 0.85)); vehDirt = clamp(vehDirt + dust * 0.9, 0.0, 0.92); }`}
-            ${o.inner ? 'diffuseColor.rgb *= 0.42;' : ''}
+            ${o.inner || o.wheel || o.scan ? '' : `{ float up = smoothstep(0.35, 0.85, bakeN.y), streak = vnoise(vec2(vOPos.x * 0.7 + vVar.y * 5.0, vOPos.z * 9.0));
+              float dust = clamp(vVar.x * 1.25 - 0.08, 0.0, 1.0) * up * (0.72 + 0.28 * fbm(vOPos.xz * 6.0 + vVar.y * 23.0)) * (0.8 + 0.2 * streak) * ${o.glass ? '0.5' : '0.75'};
+              diffuseColor.rgb = mix(diffuseColor.rgb, max(diffuseColor.rgb, vec3(0.42, 0.40, 0.36)), clamp(dust, 0.0, 0.6) * DUSTK); vehDirt = clamp(vehDirt + dust * 0.9 * DUSTK, 0.0, 0.92); }`}
+            // photographed grime (ambientCG, CC0): rain streaks hanging from the shoulder line and the roof edge, road film thrown up from
+            // the sills and behind the wheels, a mottle in the dust on top
+            ${o.inner || o.wheel || o.scan || o.plate ? '' : `{ float gs = 1.0 - smoothstep(0.55, 0.9, abs(bakeN.y)), gu = (vOPos.x + vOPos.z * 0.7) * 0.42 + vVar.y * 7.0;
+              float gR = texture2D(tVehGrime, vec2(gu, 1.0 - clamp((0.99 - vOPos.y) / 0.6, 0.02, 0.98))).r * step(vOPos.y, 0.99);
+              float gF = texture2D(tVehGrime, vec2(gu * 1.37 + 0.4, clamp((vOPos.y - 0.13) / 0.62, 0.02, 0.98))).g;
+              float gM = texture2D(tVehGrime, vOPos.xz * 0.8 + vVar.y * 3.0).b;
+              float gr = clamp(vVar.x * GRIMEK * ${o.glass ? '0.4' : '1.0'} * (gs * (0.3 * gR + 1.25 * gF) + (1.0 - gs) * max(bakeN.y, 0.0) * 0.2 * gM), 0.0, 0.8);
+              diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.15, 0.135, 0.115), gr); vehDirt = clamp(vehDirt + gr * 0.8, 0.0, 0.95); }`}
+            ${o.inner ? 'diffuseColor.rgb *= 0.85;' : ''}
             ${o.wheel ? `if (vMat.x > 0.85) {      // the tyre: grooved tread, rings on the sidewall (aVar.z = its radius)
               float wr = length(vOPos.xy), tr = step(vVar.z - 0.016, wr), ang = atan(vOPos.y, vOPos.x);
               float blockT = step(0.3, fract(vOPos.z * 42.0)) * step(0.22, fract(ang * 14.0 + vOPos.z * 9.0));
@@ -210,7 +239,7 @@ export async function add(game, ctx) {
           // a door is curved top to bottom: low down it mirrors the road, then the dark foot of the street, then walls, and the sky along the shoulder
           ${o.paint && !o.real ? 'Nw = normalize(Nw + vec3(0.0, (vOPos.y - 0.70) * 0.75 * (1.0 - abs(Nw.y)), 0.0));' : ''}
           vec3 Vw = normalize(cameraPosition - vWPos), Rw = reflect(-Vw, Nw);
-          float Fc = 0.06 + 0.94 * pow(1.0 - clamp(dot(Nw, Vw), 0.0, 1.0), 5.0);
+          float Fc = ${o.paint ? '0.085' : '0.06'} + 0.94 * pow(1.0 - clamp(dot(Nw, Vw), 0.0, 1.0), 5.0);
           #ifdef USE_ENVMAP
             vec3 skyR = getIBLRadiance(geometryViewDir, geometryNormal, ${o.paint ? '0.3' : '0.12'}), amb = getIBLRadiance(geometryViewDir, geometryNormal, 1.0);
           #else
@@ -218,22 +247,38 @@ export async function add(game, ctx) {
           #endif
           vec3 env = vehEnv(Rw, skyR, amb, vehSky, vehSun);
           // the live picture of the street at the eye (world.js, one face a frame): real walls, trees and sky in lacquer and glass
-          if (uVehStreet > 0.5) env = mix(env, min(texture(tVehStreet, Rw).rgb, vec3(3.0)), ${o.paint ? '0.9' : '1.0'});
-          env *= ${o.real ? '0.55' : o.paint ? '1.15' : '1.0'};
+          if (uVehStreet > 0.5) {
+            // the cube is drawn at the eye, the car stands metres from it: follow the mirrored ray to the road (y = 0) or to the street's
+            // far side and look up the cube toward THAT point, so the kerb, the lane paint and the walls land where a mirror would put them
+            float tg = Rw.y < -0.01 ? max(vWPos.y, 0.0) / -Rw.y : 1e4, tw = uVehPar / max(length(Rw.xz), 0.2);
+            vec3 Rl = mix(Rw, normalize(vWPos + Rw * min(tg, tw) - uVehCubePos), step(0.5, uVehPar));
+            vec3 st = min(texture(tVehStreet, Rl).rgb, vec3(4.0));
+            ${o.paint ? `{ // lacquer is not a mirror: five taps over a small cone take the stair-steps of the 256 px cube out of bright edges
+              vec3 ta = normalize(cross(Rl, vec3(0.0, 1.0, 0.0)) + 1e-4), tb = cross(Rl, ta); float cr = 0.009;
+              st = (st * 2.0 + min(texture(tVehStreet, Rl + ta * cr).rgb, vec3(4.0)) + min(texture(tVehStreet, Rl - ta * cr).rgb, vec3(4.0)) + min(texture(tVehStreet, Rl + tb * cr).rgb, vec3(4.0)) + min(texture(tVehStreet, Rl - tb * cr).rgb, vec3(4.0))) / 6.0;
+              // bonnet, roof and boot are broad shallow curves: what they mirror is stretched and soft, a sweep of wall tone and sky rather
+              // than a readable window grid (critics r18: 'a crisp, tiled grid of bright window rectangles ... stamped on')
+              float upK = smoothstep(0.45, 0.9, Nw.y) * ${(+opt('vsoft', '0.75')).toFixed(2)}; if (upK > 0.01) { float cw = 0.085;
+                vec3 wd = (min(texture(tVehStreet, Rl + (ta + tb) * cw).rgb, vec3(4.0)) + min(texture(tVehStreet, Rl - (ta + tb) * cw).rgb, vec3(4.0)) + min(texture(tVehStreet, Rl + (ta - tb) * cw).rgb, vec3(4.0)) + min(texture(tVehStreet, Rl - (ta - tb) * cw).rgb, vec3(4.0))
+                  + min(texture(tVehStreet, Rl + ta * cw * 2.0).rgb, vec3(4.0)) + min(texture(tVehStreet, Rl - ta * cw * 2.0).rgb, vec3(4.0))) / 6.0;
+                st = mix(st, wd, upK); } }` : ''}
+            if (tg < tw) st *= mix(0.25, 1.0, smoothstep(0.0, 0.5, tg * length(Rw.xz)));      // the road right beside the car lies in the car's own shade
+            env = mix(env, st, ${o.paint ? '0.95' : '1.0'}); }
+          env *= ${o.real ? '0.55' : o.paint ? '1.45' : '1.0'};
           env += uSunColor * 7.0 * pow(max(dot(Rw, normalize(uSunDir)), 0.0), 500.0) * clamp(reflectedLight.directDiffuse.g * 6.0, 0.0, 1.0);     // the sun's glint, where the sun reaches
-          ${o.paint ? 'float cc = (1.0 - vehDirt) * (1.0 - 0.65 * step(0.82, fract(vVar.y * 3.71)));' : 'float cc = 1.0 - 0.6 * vehDirt;'}
-          ${o.seethru ? 'float gk = cc * mix(0.6, 1.4, smoothstep(0.95, 1.6, vOPos.y)); float ga = clamp(0.6 + Fc * 1.6 * gk + vehDirt * 0.4, 0.0, 1.0); outgoingLight = (outgoingLight * 0.6 + env * Fc * 1.9 * gk) / ga; diffuseColor.a = ga;   // strong at the top of the screen and toward grazing, clearer low down'
+          ${o.paint ? 'float cc = (1.0 - 0.55 * vehDirt) * (1.0 - 0.65 * step(0.82, fract(vVar.y * 3.71))) * vehOcc;' : 'float cc = 1.0 - 0.6 * vehDirt;'}
+          ${o.seethru ? 'float gk = cc * mix(0.6, 1.4, smoothstep(0.95, 1.6, vOPos.y)); float ga = clamp(0.30 + Fc * 1.6 * gk + vehDirt * 0.4, 0.0, 1.0); outgoingLight = (outgoingLight * 0.30 + env * Fc * 1.9 * gk) / ga; diffuseColor.a = ga;   // strong at the top of the screen and toward grazing, clearer low down'
             : 'outgoingLight = outgoingLight * (1.0 - Fc * cc) + env * Fc * cc;'}
           if (uVehDbg > 0.5) outgoingLight = uVehDbg > 1.5 ? vec3(Fc) : env;      // ?vdbg=1: what the lacquer mirrors; 2: how much of it
         }
         #include <opaque_fragment>`);
       sh.fragmentShader = f;
     };
-    m.customProgramCacheKey = () => 'veh16' + JSON.stringify(o);
+    m.customProgramCacheKey = () => 'veh29' + JSON.stringify(o);
     return m;
   }
   const MAT = {
-    paint0: patch(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3, metalness: 0.22, envMapIntensity: 1.0 }), { paint: 1 }),
+    paint0: patch(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.22, metalness: 0.22, envMapIntensity: 1.0 }), { paint: 1 }),
     paint: patch(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.32, metalness: 0.22, envMapIntensity: 1.0 }), { paint: 1, far: 1 }),
     misc: patch(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, metalness: 1, vertexColors: true }), { misc: 1 }),
     wheel: patch(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, metalness: 1, vertexColors: true }), { misc: 1, wheel: 1 }),
@@ -241,17 +286,30 @@ export async function add(game, ctx) {
     glass: patch(new THREE.MeshStandardMaterial({ color: new THREE.Color(0.012, 0.016, 0.018), roughness: 0.04, metalness: 0, envMapIntensity: 1.6 }), { glass: 1 }),
     tail: patch(new THREE.MeshStandardMaterial({ color: new THREE.Color(0.30, 0.004, 0.004), roughness: 0.16, metalness: 0, emissive: 0xffffff }), { tail: 1 }),
     lens: patch(new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.03, metalness: 0, envMapIntensity: 1.8, transparent: true, opacity: 0.22, depthWrite: false }), { lens: 1, glass: 1 }),
-    plate: patch(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.42, metalness: 0, map: plateAtlas() }), { plate: 1 }),
+    plate: patch(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.62, metalness: 0, map: plateAtlas() }), { plate: 1 }),
     livery: patch(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5, metalness: 0, map: liveryAtlas(), alphaTest: 0.42 }), { livery: 1 }),
   };
   MAT.rack = MAT.misc;
   MAT.int = patch(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, metalness: 1, vertexColors: true, envMapIntensity: 0.3 }), { misc: 1, inner: 1 });
 
+  // Poly Haven 'Old Tyre' (CC0, a photo-scanned tyre; SOURCES.md): the near band's tyres are this scan, sized to each model's wheel,
+  // in place of the models' plain black rubber. ?vb_scan=0 keeps the models' own.
+  let tyreScan = null;
+  if (opt('vb_scan', '0') !== '0') try {      /* off since r17: the scan is fatter than the models' rims (it cut into the spokes) and read as 'fuzzy black blobs'; the models' own tyres are pressed flat instead */
+    const gt = await new GLTFLoader().loadAsync(A + 'old_tyre/old_tyre_1k.gltf'); gt.scene.updateMatrixWorld(true); let mesh = null; gt.scene.traverse((o) => { if (o.isMesh && !mesh) mesh = o; });
+    const g = mesh.geometry.clone(); g.applyMatrix4(mesh.matrixWorld); g.computeBoundingBox(); const bb = g.boundingBox;
+    const m = mesh.material; for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap']) if (m[k]) m[k].anisotropy = 8;
+    m.metalness = 0; m.metalnessMap = null; m.envMapIntensity = 0.5; patch(m, { scan: 1 });
+    tyreScan = { geo: g, mat: m, r: Math.max(bb.max.x, bb.max.y), w: bb.max.z - bb.min.z };
+  } catch (e) { console.log('[streets] vehicles: tyre scan not loaded: ' + (e && e.message)); }
+  const _ts = new THREE.Vector3(), _m4 = new THREE.Matrix4();
+
   // ---------------------------------------------------------------- geometry: one merged geometry per kind, level and group
   gltf.scene.updateMatrixWorld(true);
   const group = new THREE.Group(); group.name = 'streets_vehicles'; scene.add(group);
   const types = {}; let draws = 0;
-  const mkMesh = (geo, mat, cap, cast) => { const im = new THREE.InstancedMesh(geo, mat, cap); im.frustumCulled = false; im.castShadow = cast; im.receiveShadow = true; im.count = 0; im.visible = false; im.matrixAutoUpdate = false; group.add(im); draws++; return im; };
+  const RS = opt('vb_rs', '1') !== '0';      // ?vb_rs=0: bodies take no shadow (to tell shadow-map blotches from reflection)
+  const mkMesh = (geo, mat, cap, cast) => { const im = new THREE.InstancedMesh(geo, mat, cap); im.frustumCulled = false; im.castShadow = cast; im.receiveShadow = RS || !(mat === MAT.paint0 || mat === MAT.paint); im.count = 0; im.visible = false; im.matrixAutoUpdate = false; group.add(im); draws++; return im; };
   const attr = (n, size) => { const a = new THREE.InstancedBufferAttribute(new Float32Array(n * size), size); a.setUsage(THREE.DynamicDrawUsage); return a; };
   class Set_ {                                    // instances that share matrices and variation: the meshes of one group list
     constructor(cap, withColor) { this.cap = cap; this.n = 0; this.mat = attr(cap, 16); this.va = attr(cap, 4); this.col = withColor ? attr(cap, 3) : null; this.meshes = []; }
@@ -278,9 +336,10 @@ export async function add(game, ctx) {
       }
       if (lod === 0) {
         const wn = findNode('vwheel_' + t);
-        if (wn) { const winv = new THREE.Matrix4().copy(wn.matrixWorld).invert(), gs = []; wn.traverse((o) => { if (o.isMesh) gs.push(prepGeo(o, winv, 'misc')); });
+        if (wn) { const winv = new THREE.Matrix4().copy(wn.matrixWorld).invert(), gs = []; wn.traverse((o) => { if (o.isMesh && !(tyreScan && o.material.name === 'tire')) gs.push(prepGeo(o, winv, 'misc')); });
           const geo = gs.length > 1 ? mergeGeometries(gs) : gs[0]; tris += 4 * (geo.index ? geo.index.count : geo.attributes.position.count) / 3;
           L.wheels = new Set_(caps[0] * 4, false); L.wheels.addMesh(geo, MAT.wheel, true, false);
+          if (tyreScan) { L.tyres = new Set_(caps[0] * 4, false); L.tyres.addMesh(tyreScan.geo.clone(), tyreScan.mat, true, false); const mm = allMeta[t]; L.tyreScale = new THREE.Vector3(mm.radius / tyreScan.r, mm.radius / tyreScan.r, Math.max(0.16, (mm.tw || 0.22) * 1.05) / tyreScan.w); tris += 4 * 2880; }
           const m = allMeta[t]; L.wpos = [[m.ax_f, -m.ywl, true, false], [m.ax_f, m.ywl, true, true], [m.ax_r, -m.ywl, false, false], [m.ax_r, m.ywl, false, true]].map((w) => ({ pos: new THREE.Vector3(w[0], m.radius, w[1]), front: w[2], flip: w[3] })); }
       }
       T.lods[lod] = L; trisOf[t][lod] = Math.round(tris);
@@ -326,30 +385,30 @@ export async function add(game, ctx) {
   // the soft dark patch on the road under every car
   const blobGeo = new THREE.PlaneGeometry(2, 2); blobGeo.rotateX(-Math.PI / 2);
   // multiply-blended: the car's own footprint with rounded corners, near black right under the body, gone within 10 cm past the sills
-  const blobMat = new THREE.MeshBasicMaterial({ color: 0xffffff, blending: THREE.MultiplyBlending, transparent: true, depthWrite: false, fog: false, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6 });
+  const blobMat = new THREE.MeshBasicMaterial({ color: 0xffffff, blending: THREE.MultiplyBlending, transparent: true, depthWrite: false, fog: false, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -12 });
   blobMat.onBeforeCompile = (sh) => {
     sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\n varying vec2 vQ; varying vec2 vH;').replace('#include <begin_vertex>', '#include <begin_vertex>\n vH = vec2(length(instanceMatrix[0].xyz), length(instanceMatrix[2].xyz)); vQ = position.xz * vH;');
     sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\n varying vec2 vQ; varying vec2 vH;')
       .replace('#include <opaque_fragment>', `{ vec2 hf = vH - 0.16; vec2 dq = abs(vQ) - (hf - 0.22); float outd = length(max(dq, 0.0)) - 0.22;
-          float k = outd <= 0.0 ? 1.0 : exp(-outd * outd / (2.0 * 0.05 * 0.05));
-          k *= 0.80 + 0.10 * clamp(-outd / 0.5, 0.0, 1.0);
+          float k = outd <= 0.0 ? 1.0 : 0.75 * exp(-outd * outd / (2.0 * 0.04 * 0.04)) + 0.25 * exp(-outd * outd / (2.0 * 0.22 * 0.22));      // a tight core and a soft skirt
+          k *= 0.93 + 0.05 * clamp(-outd / 0.4, 0.0, 1.0);
           outgoingLight = vec3(1.0 - k); diffuseColor.a = 1.0; }
         #include <opaque_fragment>`);
   };
-  const BLOB_CAP = 700, blob = new THREE.InstancedMesh(blobGeo, blobMat, BLOB_CAP); blob.frustumCulled = false; blob.count = 0; blob.renderOrder = 1; blob.matrixAutoUpdate = false; group.add(blob);
+  const BLOB_CAP = 700, blob = new THREE.InstancedMesh(blobGeo, blobMat, BLOB_CAP); blob.frustumCulled = false; blob.count = 0; blob.renderOrder = 5;      /* after the road's own patch and decal layers (ground.js draws some at 2 and 3 since 15:25: they covered this shade) */ blob.matrixAutoUpdate = false; group.add(blob);
   const blobS = new THREE.Vector3();
   // where each tyre presses on the road: a small, nearly black patch fading out over a hand's width (the body's patch is too broad for it)
-  const tyreMat = new THREE.MeshBasicMaterial({ color: 0xffffff, blending: THREE.MultiplyBlending, transparent: true, depthWrite: false, fog: false, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
+  const tyreMat = new THREE.MeshBasicMaterial({ color: 0xffffff, blending: THREE.MultiplyBlending, transparent: true, depthWrite: false, fog: false, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -7, polygonOffsetUnits: -14 });
   tyreMat.onBeforeCompile = (sh) => {
     sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\n varying vec2 vQ;').replace('#include <begin_vertex>', '#include <begin_vertex>\n vQ = position.xz;');
     sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\n varying vec2 vQ;')
-      .replace('#include <opaque_fragment>', '{ float q2 = dot(vQ, vQ); float k = 0.62 * exp(-9.0 * q2) + 0.33 * exp(-2.2 * q2); outgoingLight = vec3(1.0 - k); diffuseColor.a = 1.0; }\n #include <opaque_fragment>');
+      .replace('#include <opaque_fragment>', '{ float q2 = dot(vQ, vQ); float k = max(0.92 * exp(-vQ.x * vQ.x * 9.0 - vQ.y * vQ.y * 1.2) * step(abs(vQ.y), 0.95), 0.7 * exp(-7.0 * q2) + 0.27 * exp(-1.6 * q2));      /* a hard dark line across the tread where it meets the road */ outgoingLight = vec3(1.0 - k); diffuseColor.a = 1.0; }\n #include <opaque_fragment>');
   };
-  const TYRE_CAP = 400, tyreBlob = new THREE.InstancedMesh(blobGeo, tyreMat, TYRE_CAP); tyreBlob.frustumCulled = false; tyreBlob.count = 0; tyreBlob.renderOrder = 1; tyreBlob.matrixAutoUpdate = false; group.add(tyreBlob);
+  const TYRE_CAP = 400, tyreBlob = new THREE.InstancedMesh(blobGeo, tyreMat, TYRE_CAP); tyreBlob.frustumCulled = false; tyreBlob.count = 0; tyreBlob.renderOrder = 5.1; tyreBlob.matrixAutoUpdate = false; group.add(tyreBlob);
   const tyreS = new THREE.Vector3();
   function tyres(M, x, y, z, h) {
     if (tyreBlob.count + 4 > TYRE_CAP || !M.ax_f) return; const hw = (M.ywl || M.wid * 0.42), r = M.radius || 0.33;
-    _e.set(0, h, 0); _q.setFromEuler(_e); tyreS.set(r * 0.85, 1, (M.tw || 0.22) * 0.9 + 0.08);
+    _e.set(0, h, 0); _q.setFromEuler(_e); tyreS.set(r * 1.05, 1, (M.tw || 0.22) * 1.0 + 0.12);
     for (const ax of [M.ax_f, M.ax_r]) for (const sd of [-hw, hw]) { _v.set(ax, 0, sd).applyQuaternion(_q); _v.x += x; _v.y = z + 0.014; _v.z += -y; _m2.compose(_v, _q, tyreS); tyreBlob.setMatrixAt(tyreBlob.count++, _m2); }
   }
 
@@ -360,12 +419,23 @@ export async function add(game, ctx) {
   let plazas = []; try { const r = await fetch(ctx.A + 'ground/plazas.json', { cache: 'no-store' }); if (r.ok) plazas = await r.json(); } catch (e) {}
   let sharedWays = []; try { const r = await fetch(ctx.A + 'ground/shared_streets.json', { cache: 'no-store' }); if (r.ok) sharedWays = await r.json(); } catch (e) {}
   const trees = []; { const seen = new Set(); for (const im of game.propMeshes || []) { const k = im.userData.kind, it = im.userData.items; if ((k === 'tree' || k === 'tree2') && it && !seen.has(it)) { seen.add(it); for (const p of it) trees.push(p); } } }
-  const rules = applyAll(game, meta, { openx: oxMeta || undefined, plazas, shared: sharedWays, real: realMeta, realOn: opt('vreal', '0') === '1', trees: trees.length ? trees : undefined, double: opt('vdouble', '1') !== '0', occupancy: dense ? undefined : 0.5, target: +opt('vtraffic', 130) });
+  // tiles lane: on a map of more than one area the parked cars of the area the player does not start in are laid after the game is ready (streets.js runs game.streets.later)
+  const lateS = game.city.meta.sets ? (await import('../sets.js')).lateSets(game) : null;
+  const rules = applyAll(game, meta, { only: lateS ? lateS.edgeHere : undefined, openx: oxMeta || undefined, plazas, shared: sharedWays, real: realMeta, realOn: opt('vreal', '0') === '1', trees: trees.length ? trees : undefined, double: opt('vdouble', '1') !== '0', occupancy: dense ? undefined : 0.5, target: +opt('vtraffic', 130) });
+  if (lateS && game.streets) (game.streets.later = game.streets.later || []).push({ part: 'parked cars', set: lateS.far.join('+'), run: async () => { const t1 = performance.now(); const { buildSlots } = await import('./vehicles_rules.js'); const o = Object.assign({  openx: oxMeta || undefined, plazas, shared: sharedWays, real: realMeta, realOn: opt('vreal', '0') === '1', trees: trees.length ? trees : undefined, double: opt('vdouble', '1') !== '0', occupancy: dense ? undefined : 0.5, target: +opt('vtraffic', 130) }, { only: lateS.edgeFar, append: true, slice: 5 }); const r = await buildSlots(game, o); console.log('[streets] parked cars of ' + lateS.far.join('+') + ': ' + r.slots + ' slots'); return Math.round(performance.now() - t1); } });
 
+  // hero blocks, by hand: the car at the head of the W 22nd St north row is a yellow cab (the sedan model in cab dress); ?vcab=x,y;x,y
+  // names other parked cars to turn into cabs, ?vcab=0 none
+  const CABT = types.ox_cab ? 'ox_cab' : 'ox_corolla';
+  for (const pt of String(opt('vcab', '-298.9,-413.4')).split(';').filter((v) => v && v !== '0')) { const [px, py] = pt.split(',').map(Number); let best = null, bd = 6;
+    for (const s of game.parked.slots) { const d = Math.hypot(s.x - px, s.y - py); if (d < bd && s.def && s.def.len < 5.4) { bd = d; best = s; } }
+    if (best && types[CABT] && game.kit.cars[CABT]) { best.type = CABT; best.def = game.kit.cars[CABT]; best.color = TAXI_YELLOW; best._vv = null;
+      best.x += -Math.sin(best.h) * +opt('vcabin', '0.4'); best.y += Math.cos(best.h) * +opt('vcabin', '0.4'); }      /* in to the kerb on its left (critics: 'sitting in the travel lane') */ else console.log('[streets] vehicles: no car near ' + pt + ' to make a cab of'); }
   // ---------------------------------------------------------------- placing the instances (each render, from the rendering camera)
   const cam = world.camera, st = { near: 0, mid: 0, far: 0, tris: 0 };
   let camX = 0, camZ = 0, kLens = 1;
   function draw(o, type, x, y, z, h, roll, pitch, color, spin, steer, brake, seed) {
+    if (type === 'moto') return;      // gameplay lane: motorcycles are drawn by src/moto/moto.js (an unknown kind would be drawn here as a saloon)
     const SK = statics[type], RK = reals[type];
     const T = types[type] || types.sedan, M = SK || RK ? game.kit.cars[type] : T.meta;
     const dx = x - camX, dz = -y - camZ, d0 = Math.hypot(dx, dz), d = d0 * kLens;
@@ -386,15 +456,16 @@ export async function add(game, ctx) {
     let lod = d < LOD_NEAR ? 0 : d < LOD_MID ? 1 : 2; while (lod < 2 && T.lods[lod].main.n >= T.lods[lod].main.cap) lod++;
     const L = T.lods[lod];
     _e.set(roll, h, pitch, 'YZX'); _q.setFromEuler(_e); _v.set(x, z + vv.ride - SINK, -y); _m.compose(_v, _q, _one);
-    const i = L.main.put(_m, vv.dirt, vv.seed01, 0, brake ? 1 : 0); if (i < 0) return;
+    const i = L.main.put(_m, type === 'ox_cab' ? Math.max(vv.dirt, 0.42) : vv.dirt, vv.seed01, color === TAXI_YELLOW ? 1 : 0, brake ? 1 : 0); if (i < 0) return;
     L.main.color(i, color);
     if (vv.livery >= 0 && L.livery) { const j = L.livery.put(_m, vv.dirt, vv.seed01, vv.livery, 0); if (j >= 0) L.livery.color(j, vv.ink); }
-    if (vv.rack && L.rack) L.rack.put(_m, vv.dirt * 0.6, vv.seed01, 0, 0);
+    if (vv.rack && L.rack && type !== 'ox_cab') L.rack.put(_m, vv.dirt * 0.6, vv.seed01, 0, 0);
     if (L.wheels) {
       _v.y = z - SINK; _m3.compose(_v, _q, _one);
       for (const w of L.wpos) {
         _e.set(0, (w.front ? steer : 0) + (w.flip ? Math.PI : 0), w.flip ? spin : -spin, 'YZX'); _q.setFromEuler(_e); _m2.compose(w.pos, _q, _one); _m2.premultiply(_m3);
         L.wheels.put(_m2, Math.min(1, vv.dirt * 1.3 + 0.2), vv.seed01, M.radius, 0);
+        if (L.tyres) { _m4.makeScale(L.tyreScale.x, L.tyreScale.y, L.tyreScale.z); _m4.premultiply(_m2); L.tyres.put(_m4, vv.dirt, vv.seed01, M.radius, 0); }
       }
     }
     if (d0 < 170 && blob.count < BLOB_CAP) { _e.set(0, h, 0); _q.setFromEuler(_e); _v.set(x, z + 0.012, -y); blobS.set(M.len * 0.5 + 0.12, 1, M.wid * 0.5 + 0.12); _m2.compose(_v, _q, blobS); blob.setMatrixAt(blob.count++, _m2); }
@@ -405,21 +476,21 @@ export async function add(game, ctx) {
   function place() {
     cam.updateMatrixWorld(); _m.multiplyMatrices(cam.projectionMatrix, _m2.copy(cam.matrixWorld).invert()); _fr.setFromProjectionMatrix(_m);
     camX = cam.position.x; camZ = cam.position.z; kLens = Math.tan((cam.fov * Math.PI) / 360) / Math.tan((55 * Math.PI) / 360);
-    for (const t in types) for (const L of types[t].lods) { if (!L) continue; L.main.n = 0; if (L.livery) L.livery.n = 0; if (L.rack) L.rack.n = 0; if (L.wheels) L.wheels.n = 0; }
+    for (const t in types) for (const L of types[t].lods) { if (!L) continue; L.main.n = 0; if (L.livery) L.livery.n = 0; if (L.rack) L.rack.n = 0; if (L.wheels) L.wheels.n = 0; if (L.tyres) L.tyres.n = 0; }
     blob.count = 0; tyreBlob.count = 0; st.near = st.mid = st.far = st.tris = 0; for (const k in statics) statics[k].n = 0; for (const k in reals) { reals[k].body.n = 0; reals[k].wheels.n = 0; }
     const tt = game.t;
     for (const c of game.traffic.cars) draw(c, c.type, c.x, c.y, 0, c.h, 0, 0, c.color, c.spin, c.steer, c.dbl ? (tt % 1.1) < 0.5 : c.brake, c.id);
     for (const v of game.vehicles) draw(v, v.type, v.x, v.y, v.z, v.h, v.roll, v.pitch, v.color, v.spin, v.steer, v.braking, v.vseed);
     for (const s of game.parked.near(camX, -camZ, FAR, near)) draw(s, s.type, s.x, s.y, 0, s.h, 0, 0, s.color, 0, 0, false, s.vseed);
-    for (const t in types) for (const L of types[t].lods) { if (!L) continue; L.main.end(); if (L.livery) L.livery.end(); if (L.rack) L.rack.end(); if (L.wheels) L.wheels.end(); }
+    for (const t in types) for (const L of types[t].lods) { if (!L) continue; L.main.end(); if (L.livery) L.livery.end(); if (L.rack) L.rack.end(); if (L.wheels) L.wheels.end(); if (L.tyres) L.tyres.end(); }
     for (const k in statics) statics[k].end(); for (const k in reals) { reals[k].body.end(); reals[k].wheels.end(); }
     blob.visible = blob.count > 0; blob.instanceMatrix.needsUpdate = true; tyreBlob.visible = tyreBlob.count > 0; tyreBlob.instanceMatrix.needsUpdate = true;
   }
   const render0 = world.render.bind(world);
-  world.render = function (...a) { if (group.visible) place(); const tv = shared.tStreet && shared.tStreet.value; VEH_STREET.value = streetOn && tv && world.streetRT && tv === world.streetRT.texture && (world.streetN || 0) > 24 ? 1 : 0; VEH_CUBE.value = VEH_STREET.value ? world.streetRT.texture : vehCube0.texture; return render0(...a); };
+  world.render = function (...a) { if (group.visible) place(); const tv = shared.tStreet && shared.tStreet.value; VEH_STREET.value = streetOn && tv && world.streetRT && tv === world.streetRT.texture && (world.streetN || 0) > 24 ? 1 : 0; VEH_CUBE.value = VEH_STREET.value ? world.streetRT.texture : vehCube0.texture; if (world.streetCam) VEH_CPOS.value.copy(world.streetCam.position); return render0(...a); };
   place();
   for (const t in trisOf) ktris += trisOf[t][0] / 1000;
-  const self = { group, types, stats: st, rules, place };
+  const self = { group, types, stats: st, rules, place, vstreet: VEH_STREET, vcube: VEH_CUBE };
   game.streetVehicles = self;
   return { group, report: { kinds: Object.keys(types).length, draws, parked: rules.park.slots, traffic: game.traffic.cars.length, double: rules.double ? rules.double.spots : 0, plazas: plazas.length, off_plaza: rules.park.plaza, off_shared: rules.park.shared, off_kerb: rules.park.offKerb, drawn: st.near + '/' + st.mid + '/' + st.far, ktris: Math.round(st.tris / 1000), tris_per_kind: trisOf } };
 }

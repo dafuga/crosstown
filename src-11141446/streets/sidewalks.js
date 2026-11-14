@@ -10,6 +10,7 @@
 // At load: removes ground.js's sidewalk / kerb-band / kerb triangles inside the hero blocks; wraps its sidewalk material's shader.
 import * as THREE from 'three';
 import { BAKE_LIGHT_GLSL } from '../facade.js';
+import { WET_DECL, WET_MAIN } from '../sky/wet.glsl.js';     /* progress/night: wet roads in the rain */
 
 const CURB = 0.15, KW = 0.18, D2R = Math.PI / 180, NS = 24;
 const RAMP_HW = 0.9, RAMP_FL = 0.5, RAMP_DEP = 1.35, RAMP_LOW = 0.022;        // as ground.js lays its ramps (its notches are reused)
@@ -554,7 +555,7 @@ function mkMat(shared, U, o) {
         if (gNrm.y > 0.0) normal = normalize((viewMatrix * vec4(gNrm, 0.0)).xyz);`)
       .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n roughnessFactor = clamp(gRough, 0.08, 1.0);')
       .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\n metalnessFactor = clamp(gMetal, 0.0, 1.0);')
-      .replace('#include <aomap_fragment>', BAKE_LIGHT_GLSL + '\n reflectedLight.directSpecular *= gSpec; reflectedLight.indirectSpecular *= gSpec;');
+      .replace('#include <aomap_fragment>', BAKE_LIGHT_GLSL + '\n reflectedLight.directSpecular *= gSpec; reflectedLight.indirectSpecular *= gSpec;' + WET_MAIN).replace('void main() {', WET_DECL + '\nvoid main() {');
   };
   m.customProgramCacheKey = () => 'stwalkD40-' + SWK + o.name;
   return m;
