@@ -22,7 +22,7 @@ export function install(game) {
   { const q = P.get('rain'); if (q !== null && q !== '' && isFinite(+q)) R.want = Math.min(1, Math.max(0, +q)); else if (q === '' ) R.want = 1; else R.want = Math.min(1, Math.max(0, +get('world.rain', 0) || 0)); }
   if (!R.patched) console.log('[rain] ground shader patch not there: roads stay dry');
   R.set = (v) => { R.want = Math.min(1, Math.max(0, +v || 0)); return R.want; };
-  R.info = () => ({ want: R.want, falling: +R.amt.toFixed(3), wet: +R.wet.toFixed(3), streaks: !!R.mesh, splashes: !!R.splash, lights: R.lights || 0, sound: !!R.snd, roads: R.patched });
+  R.info = () => ({ want: R.want, falling: +R.amt.toFixed(3), wet: +R.wet.toFixed(3), streaks: !!R.mesh, splashes: !!R.splash, lights: R.lights || 0, low: R.low || 0, sound: !!R.snd, roads: R.patched });
   let chip = null, chipT = 0;
   const say = (txt) => { try { if (!chip) { chip = document.createElement('div'); chip.style.cssText = 'position:fixed;left:50%;top:104px;transform:translateX(-50%);z-index:54;pointer-events:none;font:600 14px system-ui,sans-serif;color:#fff;background:rgba(14,16,20,.78);padding:6px 14px;border-radius:8px;transition:opacity .5s;opacity:0'; document.body.appendChild(chip); } chip.textContent = txt; chip.style.opacity = 1; clearTimeout(chipT); chipT = setTimeout(() => { chip.style.opacity = 0; }, 2200); } catch (e) {} };
   addEventListener('keydown', (e) => { if (e.code !== 'KeyY' || e.repeat || e.ctrlKey || e.metaKey || e.altKey || R.key === false) return; if (e.target && e.target.closest && e.target.closest('input,textarea,#fbbox')) return; if (window.__startScreen) return; R.set(R.want > 0 ? 0 : 1); say(R.want ? 'Rain' : 'Rain stops'); try { const s = g.settings; if (s && s.set) s.set('world.rain', R.want > 0); } catch (e2) {} });
@@ -33,7 +33,7 @@ export function install(game) {
      night it shows only inside lamp and headlight light. So: three depth layers of short streaks (a shutter's length of fall, slanted by the camera's
      own speed), about a pixel wide with the brightness of a 2 mm drop spread over that pixel (far rain fades into a veil), ADDED to the picture and lit
      by the grey sky, by the night kit's street-lamp map and by the nearest headlight cones. And small splashes where drops land (one more draw). */
-  const TU = (R.tune = { day: 0.22, lamp: 0.6, head: 2.2, splash: 0.6, shut: 0.028, lampS: 0.8, headS: 0.9, tailS: 0.38, dark: 0.62 }); for (const k in TU) if (P.has('R' + k)) TU[k] = +P.get('R' + k);
+  const TU = (R.tune = { day: 0.22, lamp: 0.6, head: 2.2, splash: 0.6, shut: 0.028, lampS: 0.8, headS: 0.9, tailS: 0.38, dark: 0.62, cap: -1, lowN: 3, floorN: 3 }); for (const k in TU) if (P.has('R' + k)) TU[k] = +P.get('R' + k);
   const LIT = `uniform sampler2D tLamp; uniform vec4 uMap; uniform vec3 uAmb; uniform float uLampK, uHeadK; uniform vec4 uSpotP[4]; uniform vec4 uSpotD[4]; uniform float uSpotN;
     vec3 rnLit(vec3 wp, vec3 view){ vec3 L = uAmb;
       if (uLampK > 0.0) { vec3 lm = texture2D(tLamp, (wp.xz - uMap.xy) * uMap.zw).rgb; L += lm * lm * (uLampK * (1.0 - smoothstep(6.0, 10.5, wp.y)) * (0.45 + 0.55 * smoothstep(0.0, 8.0, wp.y))); }
@@ -74,7 +74,7 @@ export function install(game) {
     mat.blending = THREE.CustomBlending; mat.blendEquation = THREE.AddEquation; mat.blendSrc = THREE.OneFactor; mat.blendDst = THREE.OneFactor;
     const m = new THREE.Mesh(geo, mat); m.frustumCulled = false; m.renderOrder = 7; m.matrixAutoUpdate = false; m.name = 'rain_splash'; w.scene.add(m); return m; };
   // the lamps the wet ground draws streaks from (sky/wet.glsl.js WET_U): the nearest street-lamp heads and car lamps in front of the camera
-  const cam0 = new THREE.Vector3(), camV = new THREE.Vector3(), fwd = new THREE.Vector3(), near = []; let lampT = -1e9, lampNear = [], camOk = false;
+  const cam0 = new THREE.Vector3(), camV = new THREE.Vector3(), fwd = new THREE.Vector3(), near = []; let lampT = -1e9, lampNear = [], camOk = false, lobeF = WET_NL, lobeT = 0;
   const wetLights = (N, now) => { const LP = WET_U.uWetLP.value, LC = WET_U.uWetLC.value, cp = w.camera.position; w.camera.getWorldDirection(fwd); near.length = 0;
     const add = (x, y, z, r, gg, b, rad, wt) => { const dx = x - cp.x, dz = z - cp.z, d = Math.hypot(dx, dz); if (d > 150 || d < 0.5) return; const c = (dx * fwd.x + dz * fwd.z) / d; if (c < 0.15) return; near.push([d * (1 + 2.2 * (1 - c)) * wt, x, y, z, r, gg, b, rad]); };
     const kit = N && N.kit, lampOn = N ? N.lampOn || 0 : 0, headOn = N ? N.headOn || 0 : 0;
@@ -85,7 +85,16 @@ export function install(game) {
       for (const c of g.traffic.cars) one(c); if (g.player.vehicle) one(g.player.vehicle); } catch (e) {}
     near.sort((a, b) => a[0] - b[0]); const n = Math.min(WET_NL, near.length);
     for (let i = 0; i < n; i++) { const q = near[i]; LP[i * 4] = q[1]; LP[i * 4 + 1] = q[2]; LP[i * 4 + 2] = q[3]; LP[i * 4 + 3] = q[7]; LC[i * 4] = q[4]; LC[i * 4 + 1] = q[5]; LC[i * 4 + 2] = q[6]; }
-    WET_U.uWetLN.value = n; R.lights = n; };
+    /* light, Nov 15 (the weak-GPU check, laptop 3 at 4.67 megapixels where the GPU is the limit: this rain cost 2.8-3.7 ms a frame against about 1 ms
+       for the rain before, and the lobes are half of it: 0 lobes 1.6 ms, 1-3 lobes 2.4 ms, 10 lobes 3.5 ms). Once the game's own governor has given up
+       picture size or detail to hold the frame rate (world.liveScale under 0.8, or detail under 1: the Safari start too) only the TU.lowN nearest lamps
+       draw a streak and the splashes are not drawn; at the governor's floor (detail 0.5 or less: the weak-card start too) TU.floorN lamps do (3; ?RfloorN=0 = none).
+       A machine at the full picture keeps all WET_NL. The count moves 6 lamps a second and the last lobe fades by the fraction, so nothing pops.
+       ?Rcap=0 never caps, ?Rcap=1 holds the low step, ?Rcap=2 the floor step; ?RlowN=n ?RfloorN=n the counts. */
+    const det = w.detail || 1, step = TU.cap === 0 ? 0 : TU.cap === 1 || TU.cap === 2 ? TU.cap : det <= 0.5 ? 2 : ((w.liveScale || 1) < 0.8 || det < 1) ? 1 : 0;
+    const want = Math.max(0, Math.min(WET_NL, step === 2 ? TU.floorN : step === 1 ? TU.lowN : WET_NL)), dl = Math.min(0.25, Math.max(0, (now - lobeT) / 1000)) * 6; lobeT = now;
+    lobeF += Math.max(-dl, Math.min(dl, want - lobeF)); R.low = step;
+    const nf = Math.min(n, lobeF); WET_U.uWetLN.value = nf; R.lights = Math.ceil(nf); };
   const lit = (u, N, dt) => { const kit = N && N.kit, n = N ? N.n || 0 : 0, fc = w.scene.fog.color, cv = w.renderer.domElement, cam = w.camera;
     u.uT.value = R.t; u.uAmt.value = R.amt; u.uPix.value = 2 * Math.tan((cam.fov || 50) * Math.PI / 360) / Math.max(200, cv.clientHeight || cv.height);
     u.uAmb.value.set(fc.r, fc.g, fc.b).multiplyScalar(TU.day);      // the fog colour is the overcast sky's grey, already turned down for the night
@@ -112,7 +121,7 @@ export function install(game) {
     { const k1 = N && N.kit; if (k1 && k1.pass) k1.pass.u.uWet.value = R.wet; }      // the night kit's lamp pass: a wet road throws lamp light on, away from the eye
     if (R.amt > 0) { if (!R.mesh) { R.mesh = mkMesh(); try { R.splash = mkSplash(); } catch (e) { fail('splash', e); } }
       const u = R.mesh.material.uniforms; R.mesh.visible = true; lit(u, N, dt); u.uCamV.value.copy(camV); u.uShut.value = TU.shut;
-      if (R.splash) { R.splash.visible = TU.splash > 0; const u2 = R.splash.material.uniforms; lit(u2, N, dt); u2.uGain.value = TU.splash; } }
+      if (R.splash) { R.splash.visible = TU.splash > 0 && !R.low; const u2 = R.splash.material.uniforms; lit(u2, N, dt); u2.uGain.value = TU.splash; } }
     else { if (R.mesh) R.mesh.visible = false; if (R.splash) R.splash.visible = false; }
     if (!R.snd && R.amt > 0 && now - sndT > 1000) { sndT = now; try { R.snd = mkSound(); } catch (e) { fail('sound', e); } }
     if (R.snd) { const S = R.snd, tt = S.a.currentTime, car = !!g.player.vehicle, quiet = g.paused || document.hidden; S.out.gain.setTargetAtTime(quiet ? 0 : R.amt * 0.55, tt, 0.25); S.hg.gain.setTargetAtTime(car ? 0.05 : 0.16, tt, 0.2); S.hiss.frequency.setTargetAtTime(car ? 2200 : 4200, tt, 0.2); S.rg.gain.setTargetAtTime(car ? 0.3 : 0, tt, 0.2); }

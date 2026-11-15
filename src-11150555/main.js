@@ -115,6 +115,7 @@ try {
     window.shot(P.get('shot').split(',').map(Number));
     document.getElementById('boot').remove(); window.__ready = true; if (window.__mark) window.__mark('ready'); window.__readyAt = +(performance.now() / 1000).toFixed(1);
   } else {
+    let warm = null; if (P.get('warmup') !== '0' && !P.has('nocompile')) try { warm = (await import('./warmup.js')).startWarmup(world, renderer, P); } catch (e) { console.log('[game] warm-up ahead not loaded: ' + (e && e.message)); }     /* light lane, Nov 15: on a first visit the street mirror's and the picture passes' shader programs are linked as one batch before the first frame, not one by one in the first drawn frames (src/warmup.js; ?warmup=0 = the old way) */
     const { Game } = await import('./game.js');
     const game = new Game(world, P); window.game = game; await game.init(); if (window.__mark) window.__mark('init'); window.__heroGo = true;     /* lead: the landmarks' files may start coming down now, while the shaders compile (hero.js fetchBytes) */
     // Start screen (Matt, Nov 11): before play, a short note that this is an early preview, how to give feedback, a Play button and a tiny credits
@@ -124,8 +125,10 @@ try {
     // The figures a struck person turns into (pedhit.js) are part of this: they sit hidden in the scene, and compiled only on the first hit, in the
     // wrong render state, they cost that hit a 120-150 ms hitch ("when i hit someone in a car it freezes the game", Nov 11).
     const figs = []; try { if (game.__pedhit && game.__pedhit.warm) for (const o of game.__pedhit.warm()) { let r0 = o; while (r0.parent && r0.parent !== world.scene) r0 = r0.parent; if (!figs.includes(r0)) figs.push(r0); } for (const f of figs) f.visible = true; } catch (e) {}
+    if (warm) try { warm.begin(); } catch (e) {}     /* light lane: the street mirror's and the picture passes' programs join the batch below (see the line above new Game) */
     if (!P.has('nocompile')) { try { const r = renderer, old = r.getRenderTarget(); r.setRenderTarget(world.composer.readBuffer); const t0c = performance.now();
         await Promise.race([r.compileAsync(world.scene, world.camera), new Promise((res) => setTimeout(res, 60000))]); r.setRenderTarget(old); console.log('[game] shaders compiled ahead in ' + ((performance.now() - t0c) / 1000).toFixed(1) + ' s'); } catch (e) { console.log('[game] compile ahead skipped: ' + (e && e.message)); } }
+    if (warm) try { await Promise.race([warm.finish(), new Promise((res) => setTimeout(res, 90000))]); } catch (e) {}     /* light lane: wait for the rest of that batch */
     // ... and they stay in the first drawn frames (they stand 50 m under the street), so their meshes are already on the graphics card at the first hit
     { let n = 0; const iv = setInterval(() => { if (++n > 40 || (!game.paused && n > 8)) { for (const f of figs) f.visible = false; clearInterval(iv); } }, 100); }
     if (window.__load) window.__load.stage = 'compiled'; if (window.__mark) window.__mark('compiled');
@@ -138,9 +141,11 @@ try {
       // texture and mesh sent to the graphics card, in the first frames of play. The game now really draws behind this screen, and Play goes live
       // only once the frames run short and no new program has appeared for a second (at most 150 s; ?warm=0 the old way).
       const arm = () => { window.__warming = false; game.paused = true; pb.disabled = false; pb.style.opacity = 1; pb.textContent = 'PLAY'; window.__startScreen = true; if (window.__mark) window.__mark('warm'); };
-      window.__armPlay = () => { if (P.get('warm') === '0') { setTimeout(arm, 400); return; } const t0w = performance.now(); let lastT = t0w, n = 0, okN = 0, progN = -1, progT = t0w;
+      window.__armPlay = () => { if (P.get('warm') === '0') { setTimeout(arm, 400); return; } const t0w = performance.now(); let lastT = t0w, n = 0, okN = 0, progN = -1, progT = t0w, baseT = 0;
         const tick = (now) => { const dt = now - lastT; lastT = now; n++; okN = dt < 120 ? okN + 1 : 0; const pn = renderer.info.programs ? renderer.info.programs.length : 0; if (pn !== progN) { progN = pn; progT = now; }
-          if ((n >= 45 && okN >= 20 && now - progT > 1000) || now - t0w > 150000) { console.log('[game] warm-up: ' + n + ' frames in ' + ((now - t0w) / 1000).toFixed(1) + ' s, ' + pn + ' programs'); arm(); } else requestAnimationFrame(tick); };
+          /* light lane, Nov 15: with the street mirror's programs linked ahead (src/warmup.js) the rule below is met BEFORE the landmark buildings arrive (they load after ready), and their programs would then be built in the first seconds of play. Until now the mirror's own stream of new programs happened to bridge that gap. So Play also waits for the landmarks, at most 12 s past the old rule; ?warmhero=0 or ?warmup=0 = the old rule alone */
+          const base = n >= 45 && okN >= 20 && now - progT > 1000; if (base && !baseT) baseT = now; const hs = world.heroState, hold = warm && P.get('warmhero') !== '0' && baseT && hs && hs.late && !hs.done && now - baseT < 12000;
+          if ((base && !hold) || now - t0w > 150000) { console.log('[game] warm-up: ' + n + ' frames in ' + ((now - t0w) / 1000).toFixed(1) + ' s, ' + pn + ' programs'); arm(); } else requestAnimationFrame(tick); };
         requestAnimationFrame(tick); };
       const go = () => { if (!window.__startScreen) return; window.__startScreen = false; if (window.__mark) window.__mark('play'); game.paused = false; for (const h of window.__hudEls || []) h.style.visibility = ''; boot.style.opacity = 0; setTimeout(() => boot.remove(), 500); try { game.sound.unlock(); } catch (e) {} try { game.look.ask('play'); } catch (e) {} };
       pb.addEventListener('click', go); { const pv = setInterval(() => { if (!window.__startScreen) { clearInterval(pv); return; } try { for (const q of navigator.getGamepads ? navigator.getGamepads() : []) if (q && q.connected && q.buttons.some((b, i) => (i === 0 || i === 9) && b.pressed)) { go(); break; } } catch (e) {} }, 120); }     /* a controller's A or Start presses Play */ addEventListener('keydown', (e) => { if (window.__startScreen && (e.code === 'Enter' || e.code === 'Space')) { e.stopPropagation(); go(); } }, true); }

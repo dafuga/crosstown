@@ -76,7 +76,8 @@ export async function addHero(world, dir) {
   const warm = async (scene) => {     // late order only: textures to the card a few a frame, programs built off the frame, so the swap frame itself is short
     const r = world.renderer; if (!r) return; const tex = new Set(); scene.traverse((o) => { if (o.isMesh) for (const m of [].concat(o.material)) for (const k in m) { const t = m[k]; if (t && t.isTexture && !t.isRenderTargetTexture && !t.isCubeTexture) tex.add(t); } });
     for (const t of tex) { try { r.initTexture(t); } catch (e) {} await frame(); }
-    try { if (r.compileAsync && world.composer) { const old = r.getRenderTarget(); r.setRenderTarget(world.composer.readBuffer); const p = r.compileAsync(scene, world.camera, world.scene); r.setRenderTarget(old); await Promise.race([p, sleep(20000)]); } } catch (e) {} };
+    try { if (r.compileAsync && world.composer) { const old = r.getRenderTarget(); r.setRenderTarget(world.composer.readBuffer); const p = r.compileAsync(scene, world.camera, world.scene); r.setRenderTarget(old); await Promise.race([p, sleep(20000)]); } } catch (e) {}
+    try { if (world.warmup && world.warmup.late) await Promise.race([world.warmup.late(scene), sleep(20000)]); } catch (e) {} };     /* light lane, Nov 15: the street mirror's variants of these programs too, as one batch (src/warmup.js; ?warmup=0 off) */
   let glassTimer = 0; const pruned = [];     // footprints whose street-floor instances are to go (heroPrune's loop reads it)
   const bring = async (g) => { note(g, 'loading'); const got = [];
     try { for (const h of g.members) { if (!h.glb) continue; const gl = await loadPacked(dir + h.glb);     /* lead: served gzip-packed like the city, unpacked in the page */

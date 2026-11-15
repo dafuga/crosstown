@@ -1,4 +1,4 @@
-// combat/heatunder.js (gameplay u1 + u2 + u3, Nov 15; u2 = the way to the stair round street furniture, ?heatway=0, and who rides on at a change of stations; u3 = an officer below has his own people-in-the-line test and one aboard closes in, ?heataboard=0): the police follow the player down. This is the SUBWAY lane's parked part (lanes/subway/src/subway/police.js, Nov 14), ported:
+// combat/heatunder.js (gameplay u1 + u2 + u3 + u4, Nov 15; u4 = an officer on his way aboard gets round a platform column that stands on his door place, ?heatdoor=0; u2 = the way to the stair round street furniture, ?heatway=0, and who rides on at a change of stations; u3 = an officer below has his own people-in-the-line test and one aboard closes in, ?heataboard=0): the police follow the player down. This is the SUBWAY lane's parked part (lanes/subway/src/subway/police.js, Nov 14), ported:
 // install(game, S) is called by heatcore.js once the police body runs (?heatunder=0 = never). Taken out of the port, because combat.js and heatcore.js now do it themselves:
 // the wrapper on combat.cast (rounds stopped by the station: combat.js subSolids / slabOpen) and the lifted frame round copShoot (heatcore.js plZ). heatcore.js knows an
 // officer who is below by k.sub.phase === 'under' (its und(k)). The subway lane's files are read, never edited: ../subway/nav.js for the ways, S.on(...) for its events.
@@ -26,6 +26,7 @@ export async function install(game, S) {
   const K3 = { x: 0, y: 0, z: 0 }, B = { n: 1, paths: 0, ms: 0 }, doomed = [], deadUnder = [];
   const under = (k) => !!k.sub && k.sub.phase === 'under';
   const ABOARD = P.get('heataboard') !== '0';      /* u3: an officer below has his own people-in-the-line test, and one aboard walks up the aisle when his bursts are refused (?heataboard=0 = as u2) */
+  const DOORP = P.get('heatdoor') !== '0';      /* u4: a door whose place on the platform is taken by a column: to the doorway's threshold along a line that can be walked (?heatdoor=0 = as u3) */
   const WAYS = P.get('heatway') !== '0'; let wayN = 1, plT = null;      /* u2: ways on the street (one found a game step at most); the train he boarded */
   const SW = (u) => PN.strict(u.walk);      // the station's collision as the officers use it (police-nav.js: the whole body kept off a stair's sides)
   const streetZ = (x, y) => (g.statics.onSidewalk(x, y) ? 0.15 : 0);
@@ -196,7 +197,14 @@ export async function install(game, S) {
       if (G.ride && !s.ride && G.ride.t.state !== 'dwell') { k.post = { x: k.x, y: k.y }; s.path = null; N.watch = (N.watch || 0) + 1; return 0; }
       let m; if (s.ride) m = rideWalk(k, G, v, dt) * dt;
       else { let T = G; if (G.ride) { const t = G.ride.t, zP = zPof(t), d = doorOf(t, G.ride.lz), q = S.tMap(t, t.side * (t.train.width / 2 + 0.8), d.z); T = { x: q[0], y: q[1], z: zP };
-          if (tOpen(t) && Math.hypot(s.p.x - q[0], s.p.y - q[1]) < 0.6 && Math.abs(s.p.z - zP) < 0.5) { s.ride = { t, lx: t.side * (t.train.width / 2 + 0.8), lz: d.z, in: false }; s.path = null; N.board++; say('officer ' + k.n + ' steps aboard after him'); return 1.5; } }
+          if (tOpen(t) && Math.hypot(s.p.x - q[0], s.p.y - q[1]) < 0.6 && Math.abs(s.p.z - zP) < 0.5) { s.ride = { t, lx: t.side * (t.train.width / 2 + 0.8), lz: d.z, in: false }; s.path = null; N.board++; say('officer ' + k.n + ' steps aboard after him'); return 1.5; }
+          /* u4: the door place (0.8 m outside the car at the door's middle) is where a platform column stands at about one door in five (traced: lanes/gameplay/heat-state/handover-u4/PLAYED.txt):
+             the way found ends beside the column, 0.6 to 0.9 m from the place, and he stood there to the end of the stop. Within 1.8 m of such a place: straight to the doorway's
+             threshold (0.5 m outside the car, the door's middle or 0.3 m either side) when that line can be walked, and aboard from there; with the column in that line, first
+             straight to the platform's edge strip beside the door. */
+          if (DOORP && tOpen(t) && Math.abs(s.p.z - zP) < 0.5 && Math.hypot(s.p.x - q[0], s.p.y - q[1]) < 1.8 && !walk.free(q[0], q[1], zP, PN.R)) for (const dz of [0, 0.3, -0.3, 1.0, -1.0, 1.5, -1.5]) { const lx = t.side * (t.train.width / 2 + 0.5), c2 = S.tMap(t, lx, d.z + dz); if (!walk.free(c2[0], c2[1], zP, PN.R) || !PN.straight(walk, s.p, [c2[0], c2[1], zP])) continue;
+            const ex = c2[0] - s.p.x, ey = c2[1] - s.p.y, dd = Math.hypot(ex, ey); if (dd < 0.3) { if (Math.abs(dz) > 0.5) continue; s.ride = { t, lx, lz: d.z + dz, in: false }; s.path = null; N.board++; N.doorRound = (N.doorRound || 0) + 1; say('officer ' + k.n + ' steps aboard after him (round a column at the door)'); return 1.5; }
+            const stp = Math.min(dd, v * dt); walk.move(s.p, (ex / dd) * stp, (ey / dd) * stp, PN.R); k.x = s.p.x; k.y = s.p.y; s.h = Math.atan2(ey, ex); s.path = null; if (!k.see || v > 1.9) k.h += clamp(wrapPi(s.h - k.h), -dt * 9, dt * 9); return stp / dt; } }
         // a mate a few steps ahead who is going to the same place: his way is taken, not found again
         if (!s.path || s.pathT <= 0) for (const q of h.cops) { const qs = q.sub; if (q === k || q.hp <= 0 || !under(q) || qs.u !== s.u || qs.ride || !qs.path || !qs.pg || qs.pi >= qs.path.length || !(qs.pathT > 0.2)) continue; if (Math.hypot(qs.pg.x - T.x, qs.pg.y - T.y) > 1.2 || Math.abs(qs.pg.z - T.z) > 0.5 || Math.hypot(q.x - k.x, q.y - k.y) > 3 || Math.abs(qs.p.z - s.p.z) > 0.6) continue; const j = Math.max(0, qs.pi - 1); if (!PN.straight(walk, s.p, qs.path[j])) continue; s.path = qs.path.slice(j); s.pi = 0; s.pg = { x: qs.pg.x, y: qs.pg.y, z: qs.pg.z }; s.short = qs.short; s.pathT = 1.0; s.redo = false; N.shared = (N.shared || 0) + 1; break; }
         m = PN.underStep(walk, NAV.findPath, s, T, v, dt, B); k.x = s.p.x; k.y = s.p.y;

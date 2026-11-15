@@ -48,7 +48,7 @@ if (uWetK.x > 0.0) {
     for (int i = 0; i < ${WET_NL}; i++) { if (float(i) >= uWetLN) break;
       vec3 Lv = uWetLP[i].xyz - vWPos; Lv.y = abs(Lv.y) + 0.05; float ld = length(Lv); vec3 l = Lv / ld; float lh = length(l.xz); vec2 hl = l.xz / max(lh, 1e-4);
       float az = (hR.x * hl.y - hR.y * hl.x) * lh, el = l.y - R0.y, wsz = min(uWetLP[i].w / ld, 0.012), sA = sa + wsz, sE = (el < 0.0 ? seN : seF) + wsz;
-      acc += uWetLC[i].rgb * (exp(-az * az / (sA * sA) - el * el / (sE * sE)) * step(0.0, dot(hR, hl)) / (1.0 + ld * ld * 0.0004)); }
+      acc += uWetLC[i].rgb * (exp(-az * az / (sA * sA) - el * el / (sE * sE)) * step(0.0, dot(hR, hl)) * min(uWetLN - float(i), 1.0) / (1.0 + ld * ld * 0.0004)); }      /* uWetLN may be a fraction: the last lobe fades as sky/rain.js moves the count (the low-tier cap) */
     acc /= 1.0 + 0.8 * max(acc.r, max(acc.g, acc.b));      /* pass 7, 8 (0.45 -> 0.8): no blown solid spear right under a headlamp; the road's grain shows through the brightest part */
     wS += acc * wF0 * mix((0.10 + 1.9 * glint) * (0.12 + 1.25 * wbk) * (0.5 + 0.5 * wvar), 0.8, pud);
   }
