@@ -66,11 +66,15 @@ export class Tiles {
     this.material = material; const sx = start[0], sz = -start[1];
     const man = await fetch(this.dir + 'tiles.json').then((r) => { if (!r.ok) throw new Error('no tiles.json'); return r.json(); });
     const sets = await Promise.all(man.sets.map((s) => fetch(this.dir + s.dir + 'set.json').then((r) => r.json()).then((j) => Object.assign(j, { dir: this.dir + s.dir, origin: s.origin || j.origin || [0, 0] }))));
-    const jobs = []; this.sets = sets;
+    const jobs = []; this.sets = sets; const cm = this.world && this.world.city && this.world.city.meta, own = cm && Array.isArray(cm.sets) && cm.sets.length ? new Set(cm.sets.map((q) => q.set)) : null;     /* the areas of this map, when it names them */
     for (const S of sets) {
       this.stats.sets++; S.state = 0; const o = S.origin; S.wbox = [S.box[0] + o[0], S.box[1] + o[1], S.box[2] + o[0], S.box[3] + o[1]];
       for (const t of S.tiles) { const T = { id: S.set + '/' + t.id, name: t.id, set: S, url: S.dir + t.file, bytes: t.bytes, box: [t.box[0] + o[0], t.box[1] + o[1], t.box[2] + o[0], t.box[3] + o[1]], h: t.h, shell: null, full: null, state: 0, failT: 0, pin: !!(S.pin && S.pin.includes(t.id)) }; this.tiles.push(T); this.byId.set(T.id, T); }
-      if (this.all || this.dist({ box: S.wbox }, sx, sz) <= this.rset) jobs.push(this.loadSet(S).then(() => { this.stats.firstBytes += S.ground.bytes + (S.state === 2 && S.hasShells ? S.shells.bytes : 0); }));
+      // tiles lane, Nov 15: a set of the tile folder that is NOT one of this map's areas (the east column's sets under the three-area map: they hold the buildings beyond
+      // the map's east edge) is no part of the first load: it comes in right after the game is ready, as a far area does during play (update() below). 9 MB less before
+      // ready on the three-area map. ?tout=1 = with the first load, as before.
+      S.outside = !!own && !own.has(S.set) && Q.get('tout') !== '1';
+      if (this.all || (!S.outside && this.dist({ box: S.wbox }, sx, sz) <= this.rset)) jobs.push(this.loadSet(S).then(() => { this.stats.firstBytes += S.ground.bytes + (S.state === 2 && S.hasShells ? S.shells.bytes : 0); }));
     }
     this.stats.tiles = this.tiles.length;
     const near = this.tiles.filter((T) => T.set.state > 0 && (this.all || T.pin || this.dist(T, sx, sz) <= this.first));

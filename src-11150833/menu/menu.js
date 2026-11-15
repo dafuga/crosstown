@@ -257,6 +257,7 @@ export function install(g) {
   // ------------------------------------------------------------------ open and close
   const canvas = g.world && g.world.renderer && g.world.renderer.domElement;
   const fbOpen = () => { const b = document.getElementById('fbbox'); return !!(b && b.style.display !== 'none'); };
+  const mapUp = () => { try { return P.get('maptab') !== '0' && document.body.classList.contains('gpsmap'); } catch (e) { return false; } };      // gameplay/input i2: the full map (Tab) is up with the mouse free (gps.js sets the class on the next drawn frame, so it still says up on the Esc that shuts the map, whichever listener hears the key first)
   const canOpen = () => !st.open && !!window.__ready && !window.__startScreen && !window.__warming;
   const dropInput = () => { try { g.keys.clear(); if (g.look && g.look.keys) g.look.keys.clear(); const I = g.input; I.lookX = I.lookY = 0; I.use = false; const ci = g.combat && g.combat.inp; if (ci) ci.fire = ci.aim = ci.mfire = ci.maim = false; } catch (e) {} };
   function open(id, how) {
@@ -310,7 +311,7 @@ export function install(g) {
     if (st.open) {
       if (down) { const cap = !!st.capture; menuKey(e, pc, lc); if (cap || !PASS.has(lc) || e.metaKey || e.ctrlKey) { e.stopImmediatePropagation(); return; } }
     } else if (down && (pc === 'Escape' || lc === 'KeyP') && !e.metaKey && !e.ctrlKey && !e.altKey) {
-      if (pc === 'Escape' && fbOpen()) { /* the feedback form is up: Esc is its own */ }
+      if (pc === 'Escape' && (fbOpen() || mapUp())) { /* the feedback form is up: Esc is its own; so is it with the full map up (i2: Esc shuts the map and the game goes on; ?maptab=0 = it pauses) */ }
       else { if (!e.repeat && open()) e.preventDefault(); if (lc === 'KeyP' || st.open) { e.stopImmediatePropagation(); return; } }      // P never reaches game.js's own pause switch
     }
     if (lc !== pc) setCode(e, lc);
