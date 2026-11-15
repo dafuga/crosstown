@@ -21,7 +21,11 @@ const EXTRA = ['riders', 'clocks', 'voice'];      // shipped parts of the lane b
 export async function install(game) {
   if (game.subway) return game.subway;
   const g = game, w = g.world, pl = g.player, P = g.P;
-  const data = await (await fetch('assets/subway/subway.json')).json(), meta = data.meta, EN = data.entrances;
+  // the map with the east column (city.json's set 'east') has its own data set, assets/subway/east/ (entrances placed against THAT map's streets, and the east stations);
+  // every other map keeps assets/subway/ untouched. ?subeast=0, or the folder missing, falls back to it (the play-area filter below then drops what lies outside).
+  let DIR = 'assets/subway/', data = null; const cm = (g.city && g.city.meta) || (w.city && w.city.meta) || {};
+  if ((cm.sets || []).some((q) => q && q.set === 'east') && P.get('subeast') !== '0') try { const r = await fetch(DIR + 'east/subway.json'); if (r.ok) { data = await r.json(); DIR += 'east/'; } else console.log('[subway] no east data (' + r.status + '): the smaller set is used'); } catch (e) { data = null; }
+  if (!data) data = await (await fetch(DIR + 'subway.json')).json(); const meta = data.meta, EN = data.entrances; console.log('[subway] data: ' + DIR);
   const S = (g.subway = { data, units: new Map(), own: false, deep: false, z: 0, floor: null, unit: null, fails: 0, stats: { built: 0, dropped: 0, buildMs: 0 }, K });
   // other parts of the lane (riders, voice, police) listen here: S.on(name, fn). Names: unit (u), drop (u), enter (u, entrance), leave, deep (on), board (t), alight (t), hop (from unit, to unit, t),
   // train (kind 'arrive' | 'stop' | 'doors-open' | 'doors-close' | 'leave' | 'gone', t, u), step (dt, u) every game step while the player is underground
@@ -84,7 +88,7 @@ export async function install(game) {
   const skyMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.9, 2.25, 2.7), fog: false, toneMapped: false, side: THREE.DoubleSide });
   const glowMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false, side: THREE.DoubleSide }); glowMat.name = 'railglow';
   const unitOf = (st) => { let u = S.units.get(st.id); if (!u) S.units.set(st.id, (u = { st, state: 'none', gen: null, res: null, group: null, trains: [] })); return u; };
-  const startUnit = async (u) => { u.state = 'look'; try { if (!u.st.floors) { const r = await fetch('assets/subway/st/' + u.st.id + '.json'); if (!r.ok) throw new Error('station file ' + r.status); Object.assign(u.st, await r.json()); }      /* a station's underground is its own small file, fetched when he first comes near */
+  const startUnit = async (u) => { u.state = 'look'; try { if (!u.st.floors) { const r = await fetch(DIR + 'st/' + u.st.id + '.json'); if (!r.ok) throw new Error('station file ' + r.status); Object.assign(u.st, await r.json()); }      /* a station's underground is its own small file, fetched when he first comes near */
       const L = await getLook(); u.gen = buildStation(THREE, u.st, meta, L, { glowMat }); u.state = 'building'; u.t0 = performance.now(); u.ms = 0; } catch (e) { fail('start ' + u.st.id, e); u.state = 'failed'; } };
   const finishUnit = (u, res) => { u.res = res; u.walk = res.walk; u.group = res.group; u.gen = null;
     // caps over the stair openings (depth only) and, for the view from below once the city is not drawn, a bright card of sky in each opening

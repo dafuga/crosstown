@@ -81,6 +81,9 @@ export function install(g) {
   if (g.menu || g.capture || typeof document === 'undefined') return;
   const S = (g.settings = g.settings || new Settings()); for (const k in DEFAULTS) S.def(k, DEFAULTS[k]);
   const K = new Keys(S), P = g.P || { has: () => false, get: () => null };
+  // gameplay/input i3 (player report 03cbfd, "I want to open the game map": five Esc, no Tab; he looked for the map in this menu). A Map entry under RESUME that closes the menu and opens the full map, and the map's key in the Controls list, after "Pause and menu". ?menumap=0 = before
+  const MM = P.get('menumap') !== '0', mapOf = () => { try { return (g.hud && g.hud.cmap) || (g.gps && g.gps.fallbackMap) || null; } catch (e) { return null; } };
+  if (MM) { K.add({ code: 'Tab', group: 'Camera and system', label: 'Map', also: 'the full map: click sets a waypoint · Esc closes it too' }); const a = K.actions, i = a.findIndex((q) => q.code === 'Tab'), j = a.findIndex((q) => q.code === 'KeyP'); if (j >= 0 && i > j + 1) a.splice(j + 1, 0, a.splice(i, 1)[0]); }
   const st = { open: false, page: 'graphics', rows: [], capture: null, keyMsg: null, closing: false, padUsed: false, padMode: 'foot', lockHeld: false, selfExit: false, escAt: -1e9, resetArm: 0, fpsBy: {}, fpsS: [], liveAt: performance.now(), hintWas: null, applied: false };
   const pages = [], extra = {};
 
@@ -138,7 +141,9 @@ export function install(g) {
   document.head.appendChild(h('style', { textContent: STYLE })); document.body.appendChild(chip);
   const el = h('div', { id: 'ctmenu' }), nav = h('div', { className: 'nav' }), head = h('div', { className: 'head' }), page = h('div', { className: 'page' }), foot = h('div', { className: 'foot' }), navPages = h('div');
   const resumeBtn = h('button', { className: 'nbtn go', textContent: 'RESUME' }), fbBtn = h('button', { className: 'nbtn low', textContent: 'Feedback' }), resetBtn = h('button', { className: 'nbtn low', textContent: 'Reset settings' });
-  nav.append(h('div', { className: 'brand' }, h('b', { textContent: 'PAUSED' }), h('span', { textContent: 'CROSSTOWN' })), resumeBtn, navPages, h('div', { className: 'grow' }), fbBtn, resetBtn);
+  const mapBtn = h('button', { className: 'nbtn', style: 'display:none' });      // i3: shown by open() when there is a full map to open
+  mapBtn.addEventListener('click', () => { st.mapGo = true; close(st.padUsed ? 'pad' : 'map'); });
+  nav.append(h('div', { className: 'brand' }, h('b', { textContent: 'PAUSED' }), h('span', { textContent: 'CROSSTOWN' })), resumeBtn, mapBtn, navPages, h('div', { className: 'grow' }), fbBtn, resetBtn);
   el.append(h('div', { className: 'box' }, nav, h('div', { className: 'main' }, head, page, foot))); document.body.appendChild(el);
   for (const ev of ['mousedown', 'mouseup', 'click', 'wheel', 'contextmenu', 'dblclick']) el.addEventListener(ev, (e) => e.stopPropagation());      // clicks in the menu are not clicks on the game
   el.addEventListener('mousemove', (e) => e.stopPropagation(), true);
@@ -264,6 +269,7 @@ export function install(g) {
     if (!canOpen()) return false; st.open = true; st.openAt = performance.now(); st.closing = false; st.padUsed = how === 'pad'; st.wasPaused = !!g.paused; g.paused = true; dropInput();
     try { if (document.pointerLockElement) { st.selfExit = true; document.exitPointerLock(); } } catch (e) {}
     try { if (g.look) { st.hintWas = g.look.hintOn; g.look.hintOn = false; g.look._hint(); } } catch (e) {}
+    st.mapGo = false; try { const m = MM && !g.demo ? mapOf() : null; mapBtn.style.display = m ? '' : 'none'; mapBtn.textContent = ''; mapBtn.append(m && m.full ? 'Close map' : 'Map', h('span', { style: 'float:right;font-size:12.5px;font-weight:700;letter-spacing:.04em;color:#ffb82e', textContent: K.keyName('Tab') })); } catch (e) { mapBtn.style.display = 'none'; }      // i3: the key's name in the footer's own style
     fbBtn.style.display = document.getElementById('fblink') ? '' : 'none'; buildNav(); el.classList.add('open'); showPage(id || st.page); focus(how === 'pad' || id ? navBtn(st.page) || resumeBtn : resumeBtn);
     applyAudio(); fpsChip(); try { g.hud.draw(); } catch (e) {}
     return true;
@@ -271,9 +277,10 @@ export function install(g) {
   function doClose(how) {
     if (!st.open) return; st.open = false; st.closing = false; st.capture = null; st.keyMsg = null; el.classList.remove('open'); try { if (document.activeElement && el.contains(document.activeElement)) document.activeElement.blur(); } catch (e) {}
     dropInput(); g.paused = false; st.liveAt = performance.now(); st.fpsS.length = 0; applyAudio();
+    let toMap = false; if (st.mapGo) { st.mapGo = false; try { const m = mapOf(); if (m) { if (m.full) m.full = false; else { m.full = true; m.zoomF = 0; toMap = true; st.mapLock = how !== 'pad' && !!(g.look && g.look.everHeld) && !g.demo; } } } catch (e) {} }      // i3: the Map entry. st.mapLock: this player had the mouse, so gps.js takes it back when the map shuts
     try { if (g.look && st.hintWas !== null) { g.look.hintOn = st.hintWas; st.hintWas = null; g.look._hint(); } } catch (e) {}
     // the mouse again, for a player who had it: Chrome refuses a capture for 1.25 s after the player's own Esc, so the request waits that out (look.js then asks)
-    if (how !== 'pad' && g.look && g.look.everHeld && !g.demo && !fbOpen()) { const wait = Math.max(0, st.escAt + 1320 - performance.now()), ask = () => { try { if (!st.open && !document.pointerLockElement && !fbOpen()) g.look.ask('play'); } catch (e) {} }; if (wait > 0) setTimeout(ask, wait); else ask(); }
+    if (!toMap && how !== 'pad' && g.look && g.look.everHeld && !g.demo && !fbOpen()) { const wait = Math.max(0, st.escAt + 1320 - performance.now()), ask = () => { try { if (!st.open && !document.pointerLockElement && !fbOpen()) g.look.ask('play'); } catch (e) {} }; if (wait > 0) setTimeout(ask, wait); else ask(); }
   }
   function close(how) { if (!st.open) return; if (how === 'pad') { st.closing = true; return; } doClose(how); }      // a controller press closes on release, so the game does not also see the button (A jumps)
   document.addEventListener('pointerlockchange', () => {

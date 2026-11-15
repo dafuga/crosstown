@@ -65,7 +65,7 @@ class Combat {
     /* players, Nov 14: ?ghz=0 = the old upright cylinder for people and head shots that only count four times; ?gacc=0 = the old spread (pistol 1.5 degrees from the hip, 0.3 aimed) */
     this.HZ = game.P.get('ghz') !== '0'; this.ACC = game.P.get('gacc') !== '0'; this._zp = new Float64Array(8);
     /* ?gl2=0 = car glass that needs three rounds and stickers on the two-box stand-in; ?gpad2=0 = the controller's stick as game.js reads it and the hint for 12 s only; ?gdmg=0 = flat tyres that do not slow the car, lamps that cannot be shot out */
-    this.GL2 = game.P.get('gl2') !== '0'; this.PAD2 = game.P.get('gpad2') !== '0'; this.DMG = game.P.get('gdmg') !== '0'; this.kbT = -1;
+    this.GL2 = game.P.get('gl2') !== '0'; this.PAD2 = game.P.get('gpad2') !== '0'; this.RELRUN = game.P.get('relrun') !== '0'; this.MAPWHEEL = game.P.get('mapwheel') !== '0';      /* players, Nov 15: sprint while reloading (?relrun=0 as before), the wheel over the open map is the map's (?mapwheel=0 as before) */ this.DMG = game.P.get('gdmg') !== '0'; this.kbT = -1;
     /* ?gt=key:value,key:value overrides a tuning number read through this.T (for trying variants on a laptop; game.combat.tune is live) */
     this.tune = {}; { const q = game.P.get('gt'); if (q) for (const kv of q.split(',')) { const [k, v] = kv.split(':'); if (k && isFinite(+v)) this.tune[k] = +v; } }
   }
@@ -113,7 +113,7 @@ class Combat {
     addEventListener('mousedown', (e) => { if (document.pointerLockElement !== c && !(e.target === c && g.look && g.look.free())) return;     /* input, Nov 13: a player whose browser refuses to capture the mouse still fires and aims, with clicks on the picture */ if (e.button === 0) { I.mfire = true; I.tap = 0.45; } if (e.button === 2) I.maim = true; });      /* tap: a quick click still fires once the gun is up (a 50 ms click used to raise the gun and fire nothing) */
     addEventListener('mouseup', (e) => { if (e.button === 0) I.mfire = false; if (e.button === 2) I.maim = false; });
     addEventListener('contextmenu', (e) => { if (e.target === c || document.pointerLockElement === c) e.preventDefault(); });
-    addEventListener('wheel', (e) => { if (g.fly && g.fly.on || !this.canCarry()) return; I.wheel += Math.sign(e.deltaY); }, { passive: true });
+    addEventListener('wheel', (e) => { if (g.fly && g.fly.on || !this.canCarry() || this.MAPWHEEL && this.mapUp()) return;      /* players, Nov 15 ('zoom on the map also switch weapon at the same time'): with the full map open the wheel zooms the map (citymap.js) and nothing else */ I.wheel += Math.sign(e.deltaY); }, { passive: true });
     addEventListener('keydown', (e) => { if (e.repeat) return; if (e.code === 'KeyR') I.reload = true; if (e.code === 'KeyQ') I.want = this.slot === 'unarmed' ? this.last : 'unarmed'; for (const k in WEAPONS) if (WEAPONS[k].key && WEAPONS[k].key === e.code) I.want = k; });
     addEventListener('blur', () => { I.fire = I.aim = I.mfire = I.maim = false; });
   }
@@ -171,6 +171,7 @@ class Combat {
   }
   /* may a gun be in the hand at all? Not in a car, getting in or out of one, in or boarding the helicopter, or on a roof (v1: the ray casting and the stance know street level only) */
   canCarry() { const g = this.g, pl = g.player, h = g.heli; return !pl.vehicle && !pl.busy && !(h && (h.piloted || h.busy || h.hasCamera)) && !(pl.alt > 2); }
+  mapUp() { const g = this.g; try { return !!(g.gps && g.gps.mapOpen ? g.gps.mapOpen() : g.hud && g.hud.cmap && g.hud.cmap.full); } catch (e) { return false; } }
   armedFoot() { const g = this.g; return this.slot !== 'unarmed' && this.canCarry() && !(g.fly && g.fly.on) && !this.dead; }
   equip(k, now = false) { if (k !== 'unarmed' && !WEAPONS[k]) return; if (k === this.slot) return; if (now) { this.setSlot(k); return; } this.swap = { to: k, t: 0 }; this.rel = null; this.snd(k === 'unarmed' ? 'holster' : 'draw', k); }
   setSlot(k) { if (k !== 'unarmed' && !this.guns[k] && this.mkGun) this.mkGun(k); for (const n in this.guns) this.guns[n].visible = false; if (this.slot !== 'unarmed') this.last = this.slot; this.slot = k; this.bloom = 0; this.pumpT = -1; this.slideT = 0; this.rel = null; }
@@ -187,6 +188,8 @@ class Combat {
       if (I.lookX || I.lookY) { const k = lerp(1, 0.55, sm(this.zoomT || 0)); g.cam.yaw -= I.lookX * 0.0028 * k; g.cam.pitch = clamp(g.cam.pitch + I.lookY * 0.002 * k, -1.2, 1.25); g.cam.lookT = 0; I.lookX = I.lookY = 0; }
       this.stanceT = K.aim || K.fire || K.tap > 0 ? 0 : this.stanceT + dt;
       this.stance = K.aim || this.stanceT < 0.9 || !!this.rel && this.stanceT < 2.5;
+      /* players, Nov 15 ('I can't sprint when I'm reloading'): a reload held him in the firing stance (2.5 m/s at most, the sprint key not read) for up to 1.6 s from its start, 2.5 s after a shot. Now sprint held with a walk key down, not aiming or firing, leaves the stance: the game's own foot code runs him and the reload goes on by its own clock (stepReload does not look at the stance). ?relrun=0 as before */
+      if (this.RELRUN && this.rel && this.stance && this.run && !K.aim && !K.fire && !(K.tap > 0) && Math.hypot(this.mx || 0, this.my || 0) > 0.1) { this.stance = false; this.stanceT = Math.max(this.stanceT, 0.9); }
     } else { this.stance = false; this.stanceT = 9; }
     this.zoomT = clamp((this.zoomT || 0) + (armed && K.aim ? dt / 0.16 : -dt / 0.2), 0, 1);
     this.hipZ = clamp((this.hipZ || 0) + (armed && !K.aim && this.stanceT < 0.9 ? dt / 0.25 : -dt / 0.5), 0, this.T('hipz', 0.7));      /* firing from the hip pulls the camera 70 % of the way in to the aim camera (judged, round 15: hip SMG 93 -> 88) */
@@ -384,6 +387,19 @@ class Combat {
         take(tb, 'sub', nx, ny, nz, null, 'concrete'); break; }
     } catch (e) { if (!this._subErr) { this._subErr = true; console.log('[guns] sub: ' + (e && e.message)); } } }
   slabOpen(x, y) { const S = this.g.subway, EN = S && S.data && S.data.entrances; if (!EN || this.g.P.get('heatsub') === '0') return false; const m = S.data.meta || {}, lo = m.lOpen ?? 4.2, hw = (m.wStair ?? 1.5) / 2; for (const e of EN) { const ex = x - e.x, ey = y - e.y; if (ex > 6 || ex < -6 || ey > 6 || ey < -6) continue; const ca = e.ca ?? Math.cos(e.h), sa = e.sa ?? Math.sin(e.h), u = ex * ca + ey * sa, v = -ex * sa + ey * ca; if (u > 0 && u < lo && Math.abs(v) < hw) return true; } return false; }
+  /* s2 (?railshot=0 = before): a subway entrance's railing and a closed stair's gate are wall lines in the statics (subway.js, set 'subway') and stopped a round at EVERY height, though the
+     railing is drawn as open bars. A round now passes such a line where the drawing is open and stops on what is drawn: the kerb stone (to 0.14 m over the sidewalk), the three 5 cm rails
+     (0.5 / 0.8 / 1.1 m), the four 6 cm posts a side (to 1.12 m), the sign's two posts at the far end (to 2.75 m) and its board (2.17-2.67 m); a closed stair's gate stays solid to its top
+     (1.19 m). Above those: air. Walking is untouched (statics.resolve). true = this point of the line is open. */
+  railOpen(s, x, y, z, dz, den) {
+    let r = s.rl; if (r === undefined) { const S = this.g.subway, EN = S && S.data && S.data.entrances; if (!EN) return false; r = null; const m = S.data.meta || {}, lo = m.lOpen ?? 4.2, zr = (m.wStair ?? 1.5) / 2 + 0.1, mx = (s[0] + s[2]) / 2, my = (s[1] + s[3]) / 2;
+      for (const e of EN) { const ex = mx - e.x, ey = my - e.y; if (ex > 6 || ex < -6 || ey > 6 || ey < -6) continue; const ca = e.ca ?? Math.cos(e.h), sa = e.sa ?? Math.sin(e.h), u = ex * ca + ey * sa, v = -ex * sa + ey * ca; if (u < -0.2 || u > lo + 0.3 || Math.abs(v) > zr + 0.1) continue; r = { e, ca, sa, zr, ue: lo + 0.1, zw: m.zWalk ?? 0.15, k: Math.abs(v) > zr - 0.1 ? 1 : u < 1 ? 0 : 2 }; break; } s.rl = r; }
+    if (!r) return false; const h = z - r.zw; /* the stone is 0.2 m wide round the line: the round's lowest point over it */ if (h - 0.1 * Math.abs(dz) * Math.hypot(s[2] - s[0], s[3] - s[1]) / Math.abs(den) < 0.14) return false; if (r.k === 0) return h > 1.19;
+    if (Math.abs(h - 0.5) <= 0.025 || Math.abs(h - 0.8) <= 0.025 || Math.abs(h - 1.1) <= 0.025) return false;
+    const ex = x - r.e.x, ey = y - r.e.y, u = ex * r.ca + ey * r.sa, v = Math.abs(-ex * r.sa + ey * r.ca);
+    if (r.k === 1) { if (h < 1.12) { const gap = (r.ue - 0.03) / 3, q = (u - 0.03) / gap; if (q > -0.5 && q < 3.5 && Math.abs(q - Math.round(q)) * gap <= 0.03) return false; } return !(h < 2.75 && u >= r.ue - 0.04); }
+    if (v >= r.zr - (h < 1.12 ? 0.03 : 0.04) && h < 2.75) return false; return !(h >= 2.17 && h <= 2.67);
+  }
   cast(ox, oy, oz, dx, dy, dz, tmin, tmax) {
     const g = this.g, st = g.statics, H = { kind: 'none', t: tmax, x: ox + dx * tmax, y: oy + dy * tmax, z: oz + dz * tmax, nx: -dx, ny: -dy, nz: -dz };
     const take = (t, kind, nx, ny, nz, obj, part) => { if (t < tmin || t >= H.t) return; H.t = t; H.kind = kind; H.x = ox + dx * t; H.y = oy + dy * t; H.z = oz + dz * t; H.nx = nx; H.ny = ny; H.nz = nz; H.obj = obj; H.part = part; };
@@ -403,7 +419,7 @@ class Combat {
           if ((Math.abs(s[0] - bcx) > bx && Math.abs(s[2] - bcx) > bx) || (Math.abs(s[1] - bcy) > by && Math.abs(s[3] - bcy) > by)) continue;      // the map's own edge is not a wall
           const sx = s[2] - s[0], sy = s[3] - s[1], den = dx * sy - dy * sx; if (Math.abs(den) < 1e-9) continue;
           const t = ((s[0] - ox) * sy - (s[1] - oy) * sx) / den, u = ((s[0] - ox) * dy - (s[1] - oy) * dx) / den; if (u < 0 || u > 1 || t < tmin || t >= H.t) continue;
-          const z = oz + dz * t; if (z < 0) continue; let nx = sy, ny = -sx; const nl = Math.hypot(nx, ny); nx /= nl; ny /= nl; if (nx * dx + ny * dy > 0) { nx = -nx; ny = -ny; }
+          const z = oz + dz * t; if (z < 0) continue; if (s.set === 'subway' && g.P.get('railshot') !== '0' && this.railOpen(s, ox + dx * t, oy + dy * t, z, dz, den)) continue; let nx = sy, ny = -sx; const nl = Math.hypot(nx, ny); nx /= nl; ny /= nl; if (nx * dx + ny * dy > 0) { nx = -nx; ny = -ny; }
           take(t, 'wall', nx, ny, 0, null, 'concrete');
         }
         const b = st.circ.get(k);

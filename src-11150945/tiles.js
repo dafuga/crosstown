@@ -15,6 +15,7 @@
 // tile of a set that loads later comes with that set.
 // World.buildingMeshes always holds every tile mesh that exists (shell and full); a shell is only hidden (.visible) while its full tile shows.
 import * as THREE from 'three';
+import { stillTick } from './still.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 const Q = new URLSearchParams(location.search), num = (k, d) => (Q.has(k) && isFinite(+Q.get(k)) ? +Q.get(k) : d);
@@ -124,7 +125,7 @@ export class Tiles {
   sync() { const a = (this.world.buildingMeshes || []).filter((m) => !m.userData.tile);     /* hero.js keeps its stand-in meshes in this list too */ for (const T of this.tiles) { if (T.shell) a.push(T.shell); if (T.full) a.push(T.full); } this.world.buildingMeshes = a; this.rev = (this.rev || 0) + 1; }
   // every frame, from World.render()
   update(cam) {
-    this.started = true; const p = cam.position, now = performance.now(); if (this.frozen) return;
+    this.started = true; const p = cam.position, now = performance.now(); stillTick(this.world, now);     /* still.js: the street's unmoving things leave three's per-frame matrix work (?still=0) */ if (this.frozen) return;
     if (this.ready.length) { const [T, mesh] = this.ready.shift(); if (T.state === 1) this.show(T, mesh, this.dist(T, p.x, p.z)); }     // one swap a frame
     if (now - (this.checkT || 0) < 180) return; this.checkT = now;     // five times a second: who is wanted, who can go
     if (this.lastT) { const dt = (now - this.lastT) / 1000; if (dt > 0.02 && dt < 2) this.vel.set((p.x - this.last.x) / dt, 0, (p.z - this.last.z) / dt).clampLength(0, 90); else this.vel.set(0, 0, 0); } this.last.copy(p); this.lastT = now;

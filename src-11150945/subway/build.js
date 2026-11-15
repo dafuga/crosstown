@@ -81,12 +81,16 @@ export function* buildStation(THREE, S, meta, look, opts = {}) {
     for (const up of [0, 1]) { const base = bu.n; for (let i = 0; i < 4; i++) for (const [w, e] of [[-0.42, 0], [0, 1], [0.42, 0]]) { const p = up ? P(f, us[i], 0, z + w * 0.6) : P(f, us[i], w, z - 0.03), c = 0.5 * e * ue[i] * K; bu.v(p[0], p[1], p[2], 0, 0, c, c * 0.97, c * 0.9); } for (let i = 0; i < 3; i++) for (let j = 0; j < 2; j++) { const q = base + i * 3 + j; bu.i.push(q, q + 3, q + 4, q, q + 4, q + 1); } } };
 
   // ---------------------------------------------------------------- what is beyond an edge of a flat floor: open floor, a platform edge, a drop, or nothing (a wall)
+  const PST = S.floors.filter((f) => f.k === 'pstair');      // (all of them, not walk.near: a point just outside a flight can lie in the next cell of the grid)
   const classify = (F, zF, x, y) => { let res = 'wall', top = 0;
     for (const G of walk.near(x, y)) { if (G === F) continue; const u = Walk.u(G, x, y); if (Math.abs(u) > G.l / 2) continue; if (Math.abs(Walk.v(G, x, y)) > G.w / 2) continue; const zG = Walk.zAt(G, u);
       if (F.k === 'pit') { if (G.k === 'pit') return 'open'; if (G.k === 'platform') { res = 'low'; top = zG; } continue; }
       if (G.k === 'pit') { if (F.k === 'platform') return 'edge'; continue; }
       if (Math.abs(zG - zF) <= 0.25 && (!G.stair || Math.abs(u) > G.l / 2 - 0.7)) return 'open';
       if (zG < zF - 0.25 && res === 'wall') res = 'rail'; }
+    // a rail stands only round the opening of a stair down to a platform. Anywhere else a floor ends with only a platform far below (the hole the data cuts in the hall round a street
+    // stair that comes down inside it, wider than a skew stair; the hall's own ends) there is a full wall: over a rail there the nothing beyond showed as a white void (Grand Central, Nov 15)
+    if (res === 'rail' && F.k !== 'platform') { let hole = false; for (const G of PST) if (Math.abs(Walk.u(G, x, y)) <= G.l / 2 + 0.3 && Math.abs(Walk.v(G, x, y)) <= G.w / 2 + 0.3) hole = true; if (!hole) res = 'wall'; }
     return res === 'low' ? 'low:' + top : res; };
   const edgesOf = (F) => { const L = F.l / 2, W = F.w / 2; return [[P(F, -L, -W, 0), P(F, L, -W, 0), [F.sa, -F.ca]], [P(F, L, -W, 0), P(F, L, W, 0), [F.ca, F.sa]], [P(F, L, W, 0), P(F, -L, W, 0), [-F.sa, F.ca]], [P(F, -L, W, 0), P(F, -L, -W, 0), [-F.ca, -F.sa]]]; };
   const spans = (F, zF, a, b, n) => { const dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy); if (L < 1e-3) return []; const ux = dx / L, uy = dy / L, at = (t) => classify(F, zF, a[0] + ux * t + n[0] * 0.06, a[1] + uy * t + n[1] * 0.06);
@@ -118,7 +122,7 @@ export function* buildStation(THREE, S, meta, look, opts = {}) {
         const dx = sp.b[0] - sp.a[0], dy = sp.b[1] - sp.a[1], Ls = Math.hypot(dx, dy) || 1, o2 = [n[1] * 0, 0]; const t = 0.05, a2 = [sp.a[0] + n[0] * t, sp.a[1] + n[1] * t], b2 = [sp.b[0] + n[0] * t, sp.b[1] + n[1] * t]; wallQuad(M.tileDark, a2, b2, z - 0.0, z + 1.05, { amb: 0.085, v0: z });
         quad(M.metal, [sp.a[0], sp.a[1], z + 1.05], [sp.b[0], sp.b[1], z + 1.05], [b2[0], b2[1], z + 1.05], [a2[0], a2[1], z + 1.05], [0, 0], [Ls, 0], [Ls, t], [0, t], { amb: 0.085 }); continue; }
       { const a2 = [sp.a[0] - n[0] * 0.007, sp.a[1] - n[1] * 0.007], b2 = [sp.b[0] - n[0] * 0.007, sp.b[1] - n[1] * 0.007]; wallQuad(TL, a2, b2, z, z + 0.216, { amb: 0.085, v0: z, in: -1, tint: [0.1, 0.105, 0.11], cell: 2.5 }); }
-      if (k === 'platform') { wallQuad(TL, sp.a, sp.b, z, zTile, { amb: 0.085, v0: z, in: -1 }); wallQuad(M.ceiling, sp.a, sp.b, zTile, zP + hP, { amb: 0.085, in: -1, k: 0.48 }); } else wallQuad(TL, sp.a, sp.b, z, z + hM, { amb: 0.085, v0: z, in: -1 }); }
+      if (k === 'platform') { wallQuad(TL, sp.a, sp.b, z, zTile, { amb: 0.085, v0: z, in: -1 }); wallQuad(M.ceiling, sp.a, sp.b, zTile, zP + hP, { amb: 0.085, in: -1, k: 0.48 }); } else wallQuad(TL, sp.a, sp.b, z, z + hM + e, { amb: 0.085, v0: z, in: -1 }); }      // (+ e: up to this floor's own ceiling; a landing's is 9 mm higher and the slit showed as a white line)
     if (++work % 6 === 0) yield; }
   part = 'core';
   for (const C of S.ceils || []) for (const R of C.rects) { R.ca = Math.cos(R.a); R.sa = Math.sin(R.a); flatQuad(M.ceiling, R, -R.l / 2, R.l / 2, -R.w / 2, R.w / 2, R.z0, { amb: 0.05, cell: inStationRect(R) ? CELL : 3, kf: overTrack }); if (++work % 6 === 0) yield; }

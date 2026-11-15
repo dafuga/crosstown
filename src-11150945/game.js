@@ -215,7 +215,7 @@ export class Game {
     // Matt 18:10: the mouse must be clearly free to look. It looks around whether or not the pointer is captured, and the first movement key
     // captures it (before, only a click on the picture did, so with no click the mouse did nothing).
     addEventListener('mousemove', (e) => { const ui = document.getElementById('fbbox'); if (document.pointerLockElement === c || (!this.demo && document.hasFocus() && !(ui && ui.style.display !== 'none') && !window.__startScreen)) {     /* not while the feedback form is open: moving to Send turned the camera (public note, Nov 11) */ const s = this.lookS;     /* progress lane: mouse sensitivity and invert (src/menu/) */ this.input.lookX += e.movementX * (s ? s.x : 1); this.input.lookY += e.movementY * (s ? s.y : 1); } });
-    addEventListener('keydown', (e) => { if (!e.repeat && /^(Key[WASD]|Arrow)/.test(e.code) && !this.demo && document.pointerLockElement !== c && !(e.target && e.target.closest && e.target.closest('#fbbox'))) this.look.ask('key'); });
+    addEventListener('keydown', (e) => { if (!e.repeat && /^(Key[WASD]|Arrow)/.test(e.code) && !this.demo && document.pointerLockElement !== c && !(e.target && e.target.closest && e.target.closest('#fbbox')) && !(this.gps && this.gps.mapOpen && this.gps.mapOpen() && !(this.P && this.P.get('mapwalk') === '0'))) this.look.ask('key'); });     /* gameplay/input i3: not while the full map is up (the cursor is the map's: a walk key took it away until the map was reopened). ?mapwalk=0 = before */
     addEventListener('blur', () => K.clear());
   }
   readInput() {
