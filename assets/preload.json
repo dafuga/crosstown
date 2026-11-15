@@ -1,5 +1,5 @@
 [
-"assets/city-2.json",
+"assets/city.json.gz",
 "assets/panels/walkup_1.jpg",
 "assets/panels/walkup_2.jpg",
 "assets/panels/walkup_3.jpg",
@@ -43,8 +43,8 @@
 "assets/tiles/core/bld_4_2.t.dz.bin",
 "assets/tiles/core/bld_4_3.t.dz.bin",
 "assets/tiles/core/bld_4_4.t.dz.bin",
-"assets/tiles/north/shells.t.dz.bin",
 "assets/tiles/core/shells.t.dz.bin",
+"assets/tiles/north/shells.t.dz.bin",
 "assets/far.glb.dz.bin",
 "assets/hero/madgreen.glb.dz.bin",
 "assets/hero/wunion.glb.dz.bin",

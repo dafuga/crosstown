@@ -1,4 +1,4 @@
-// combat/heatunder.js (gameplay u1 + u2, Nov 15; u2 = the way to the stair round street furniture, ?heatway=0, and who rides on at a change of stations): the police follow the player down. This is the SUBWAY lane's parked part (lanes/subway/src/subway/police.js, Nov 14), ported:
+// combat/heatunder.js (gameplay u1 + u2 + u3, Nov 15; u2 = the way to the stair round street furniture, ?heatway=0, and who rides on at a change of stations; u3 = an officer below has his own people-in-the-line test and one aboard closes in, ?heataboard=0): the police follow the player down. This is the SUBWAY lane's parked part (lanes/subway/src/subway/police.js, Nov 14), ported:
 // install(game, S) is called by heatcore.js once the police body runs (?heatunder=0 = never). Taken out of the port, because combat.js and heatcore.js now do it themselves:
 // the wrapper on combat.cast (rounds stopped by the station: combat.js subSolids / slabOpen) and the lifted frame round copShoot (heatcore.js plZ). heatcore.js knows an
 // officer who is below by k.sub.phase === 'under' (its und(k)). The subway lane's files are read, never edited: ../subway/nav.js for the ways, S.on(...) for its events.
@@ -11,7 +11,7 @@
 //  - Bullets (his and theirs) stop at the station's walls, floors and ceilings (walk.sight), and go down an open stair instead of into the sidewalk over it.
 // THE HEAT CODE IS NOT EDITED (gameplay lane's files): its objects are wrapped from here, the way subway.js wraps the game. Wrapped on the Heat object: step, sight,
 // los, stepCop, walkTo, coverNear, clearFrom, copShoot (and inside it, for the length of the call, muzzleOf, combat.cast, combat.hit, fx.impact, fx.spawn, fx.muzzle),
-// poseCop, downCop, arrest, die. On combat: cast. On combat.bodies.env: ground. Every wrapper passes straight through unless the player is underground or an officer is.
+// poseCop, downCop, arrest, die, inLine (u3). On combat: cast. On combat.bodies.env: ground. Every wrapper passes straight through unless the player is underground or an officer is.
 // Nothing here runs, and nav.js / police-nav.js are not fetched, until the heat code's body is running (it starts on the player's first crime) and the player steps onto a
 // stair. With the police off (?heat=0 / none, ?guns=0) the part does nothing at all.
 export async function install(game, S) {
@@ -25,6 +25,7 @@ export async function install(game, S) {
   let H = null, c = null, NAV = null, PN = null, loading = null, lastEnt = null, cur = null, active = false;
   const K3 = { x: 0, y: 0, z: 0 }, B = { n: 1, paths: 0, ms: 0 }, doomed = [], deadUnder = [];
   const under = (k) => !!k.sub && k.sub.phase === 'under';
+  const ABOARD = P.get('heataboard') !== '0';      /* u3: an officer below has his own people-in-the-line test, and one aboard walks up the aisle when his bursts are refused (?heataboard=0 = as u2) */
   const WAYS = P.get('heatway') !== '0'; let wayN = 1, plT = null;      /* u2: ways on the street (one found a game step at most); the train he boarded */
   const SW = (u) => PN.strict(u.walk);      // the station's collision as the officers use it (police-nav.js: the whole body kept off a stair's sides)
   const streetZ = (x, y) => (g.statics.onSidewalk(x, y) ? 0.15 : 0);
@@ -131,7 +132,10 @@ export async function install(game, S) {
         if (!k.see || k.mode !== 'hold') sendTo(k, s.e.x - s.e.ca * 0.35, s.e.y - s.e.sa * 0.35); return 0; }
       if ((s.lay = (s.lay || 0) - dt) <= 0) { s.lay = 1.5; layers(k); }
       if (s.ride) placeRider(k); k.cover = null; k.z = s.vz;
-      if (k.mode !== 'leave' && !k.see) { const G = goal(k); sendTo(k, G.x, G.y); } else if (k.mode === 'leave' && !k.post) k.post = { x: k.x + 3, y: k.y };
+      if (k.mode !== 'leave' && !k.see) { const G = goal(k); sendTo(k, G.x, G.y); }
+      else if (ABOARD && s.ride && !s.ride.in && k.mode !== 'leave' && S.own && S.ride && S.ride.t === s.ride.t && s.ride.t.state === 'dwell') { sendTo(k, S.pos.x, S.pos.y); N.inDoor = (N.inDoor || 0) + 1; }      /* u3: through the doorway, all the way in */
+      else if (ABOARD && s.ride && k.see && k.mode !== 'leave' && (k._nl || 0) >= 2 && h.t - k._nlT < 2.5 && S.own && S.ride && S.ride.t === s.ride.t && !h.dead) { sendTo(k, S.pos.x, S.pos.y); N.close = (N.close || 0) + 1; }      /* u3: aboard with him and twice refused a shot: up the aisle to him */
+      else if (k.mode === 'leave' && !k.post) k.post = { x: k.x + 3, y: k.y };
       return 0; };
     const post = (k, dt) => { const s = k.sub; if (!s || s.phase !== 'under' || k.hp <= 0 || k.gone) return; if (!s.u.walk) return; const walk = SW(s.u); N.steps++;
       if (s.ride) { placeRider(k); k.z = s.vz = s.p.z; setOrder(k, 0); return; }
@@ -188,7 +192,7 @@ export async function install(game, S) {
       return r; };
     const underWalk = (k, tx, ty, sp, dt) => { const s = k.sub, walk = SW(s.u), G = goal(k), v = k.mode === 'leave' ? 2.4 : k.see ? Math.max(sp, 1.6) : G.search ? 3.0 : 4.4;
       // in his sights: the heat code's own post says how near to come (to arm's length for the cuffs, to the gun's range in a fight)
-      if (G.player && k.see) { const want = Math.hypot(tx - pl.x, ty - pl.y), d3 = Math.hypot(k.x - G.x, k.y - G.y, s.p.z - G.z); if (d3 <= Math.max(want, 1.2)) { k.post = { x: k.x, y: k.y }; return 0; } }
+      if (G.player && k.see && !(ABOARD && s.ride && !s.ride.in)) { const want = Math.hypot(tx - pl.x, ty - pl.y), d3 = Math.hypot(k.x - G.x, k.y - G.y, s.p.z - G.z); if (d3 <= Math.max(want, 1.2)) { k.post = { x: k.x, y: k.y }; return 0; } }
       if (G.ride && !s.ride && G.ride.t.state !== 'dwell') { k.post = { x: k.x, y: k.y }; s.path = null; N.watch = (N.watch || 0) + 1; return 0; }
       let m; if (s.ride) m = rideWalk(k, G, v, dt) * dt;
       else { let T = G; if (G.ride) { const t = G.ride.t, zP = zPof(t), d = doorOf(t, G.ride.lz), q = S.tMap(t, t.side * (t.train.width / 2 + 0.8), d.z); T = { x: q[0], y: q[1], z: zP };
@@ -202,10 +206,25 @@ export async function install(game, S) {
       return m / dt; };
     h.walkTo = function (k, tx, ty, sp, dt, stop) { const s = k.sub; if (!s) return walkTo0(k, tx, ty, sp, dt, stop); try { return s.phase === 'street' ? streetWalk(k, sp, dt) : underWalk(k, tx, ty, sp, dt); } catch (e) { oops('walk', e); return 0; } };
 
+    // ---- u3: who is in the line of fire of an officer who is BELOW (the player below too). The heat code's own test (heatcore.js inLine) is made for the street: it counts
+    // anybody up to 6 m (riders) or 10 m (street people) BEYOND the target in a corridor a metre wide, by place on the map alone. Below that held every burst of an officer
+    // standing at arm's length from an armed man (traced: lanes/gameplay/heat-state/handover-u3/PLAYED.txt): a rider beyond him in another train, behind the car's side or
+    // on the platform counted, and so did the people on the street overhead. Here, for such an officer: another officer below in the line; a rider in the corridor, in front
+    // of the target or beyond him only as far as a round could miss him at that range (0.6 m at arm's length, the heat code's 6 m from 4 m on), and only a rider a round
+    // could reach (nothing of the station or of a train between the muzzle and him: combat.cast). The street's people are not in a line under the street.
+    const inLine0 = h.inLine.bind(h);
+    h.inLine = function (k, ox, oy, tx, ty) { if (!ABOARD || !active || !S.own || !under(k)) return inLine0(k, ox, oy, tx, ty); if (P.get('heatline') === '0') return 0;
+      const ex = tx - ox, ey = ty - oy, d = Math.hypot(ex, ey) || 1, ux = ex / d, uy = ey / d, pz = S.pos.z, oz = (k.z || 0) + 1.4;
+      for (const q of h.cops) { if (q === k || q.hp <= 0 || !under(q) || Math.abs((q.z || 0) - (k.z || 0)) > 1.5) continue; const px = q.x - ox, py = q.y - oy, f = px * ux + py * uy; if (f >= 0.7 && f <= d - 0.4 && Math.abs(px * uy - py * ux) < 0.42 + 0.02 * Math.min(f, d)) return 2; }
+      const far = clamp(2 * (d - 1), 0.6, 6); let Rd = null; try { Rd = c.riders ? c.riders() : null; } catch (e) { Rd = null; } if (!Rd) return 0;
+      for (const r of Rd) { const px = r.x - ox, py = r.y - oy, f = px * ux + py * uy; if (f < 0.7 || f > d + far || Math.abs(px * uy - py * ux) > 0.5 + 0.055 * Math.min(f, d)) continue; const lz = oz + (pz + 1.2 - oz) * (f / d); if (!(lz > r.z - 0.5 && lz < r.z + r.hgt + 0.5)) continue;
+        const rz = r.z + Math.min(1.2, r.hgt * 0.7) - oz, l = Math.hypot(px, py, rz) || 1; let hit = null; h.copFire = true; try { hit = c.cast(ox, oy, oz, px / l, py / l, rz / l, 0.3, l); } catch (e) { hit = null; } finally { h.copFire = false; }
+        if (hit && hit.kind === 'sub' && hit.t < l - 0.35) { N.walled = (N.walled || 0) + 1; continue; } return 1; }
+      return 0; };
     // ---- shots: heatcore.js's own copShoot (it aims at his real height and combat.cast stops the round at the station's solids); here only a train between them
     h.copShoot = function (k) { if (!active) return shoot0(k);
       if (trainBlocks(k)) { k.burst = 0; k.fireCd = 0.6 + Math.random() * 0.5; N.noShot++; return false; }
-      N.shots++; return shoot0(k); };
+      N.shots++; const r = shoot0(k); if (ABOARD && under(k)) { if (r === false) { k._nl = h.t - (k._nlT ?? -99) < 2.5 ? (k._nl || 0) + 1 : 1; k._nlT = h.t; } else k._nl = 0; } return r; };
     // ---- an officer shot underground falls on the station's floor, not up on the street
     const floorY = (walk, x, y, zr) => { const f = walk.floorAt(x, y, zr, 1.3); return f ? Walk.zAt(f, Walk.u(f, x, y)) : zr; };
     const Bd = c.bodies; if (Bd && Bd.env && typeof Bd.env.ground === 'function') { const g0 = Bd.env.ground; Bd.env.ground = function (x, z) { if (deadUnder.length) for (const d of deadUnder) if (Math.abs(d.k.x - x) < 3.5 && Math.abs(d.k.y + z) < 3.5) return floorY(d.walk, x, -z, d.z); return g0(x, z); }; }
