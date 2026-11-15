@@ -115,7 +115,10 @@ export async function install(game) {
   // (15.6 m cars on the numbered lines, 18.4 m on the lettered: ten on the Lexington Av line, eleven on the 7, nine or ten elsewhere); eight cars left 20 to 30 m of
   // platform with no car at each end. A count other than 8 written in the data (the shuttle's five) stands.
   const carsOf = (st) => { const fx = +P.get('subcars'); if (fx >= 2 && fx <= 11) return fx; if (st.cars && st.cars !== 8) return st.cars; const L = (data.lines || []).find((l) => l.id === st.line); let m = st.plen || 150;
-    if (L) for (const id of L.stations) { const q = stOf.get(id); if (q && q.plen) m = Math.min(m, q.plen); } return clamp(Math.floor(m / ((st.div || 'B') === 'A' ? 15.6 : 18.4)), 5, 11); };
+    // (handover-21) lines joined by a route that leaves its line (data.branches: the E, B, D, F, M tie the 8 Av, 6 Av, 53 St and 57 St lines) take ONE length, or a rider
+    // in an end car arrives standing beyond the end of a shorter train (seen: Columbus Circle, ten cars -> 7 Av, nine)
+    const ids = new Set(L ? L.stations : [st.id]); for (let grew = true; grew;) { grew = false; for (const b of BR) if (b.stops.some((q) => ids.has(q[0]))) for (const q of b.stops) { const l2 = (data.lines || []).find((l) => l.id === (stOf.get(q[0]) || {}).line); for (const id of l2 ? l2.stations : [q[0]]) if (!ids.has(id)) { ids.add(id); grew = true; } } }
+    for (const id of ids) { const q = stOf.get(id); if (q && q.plen && (q.div || 'B') === (st.div || 'B') && !(q.cars && q.cars !== 8)) m = Math.min(m, q.plen); } return clamp(Math.floor(m / ((st.div || 'B') === 'A' ? 15.6 : 18.4)), 5, 11); };
   const startTrains = async (u) => { let mod; try { mod = await import('./train.js'); } catch (e) { console.log('[subway] no train.js: ' + (e && e.message)); return; } if (u.state !== 'ready') return;
     const st = u.st; let k = 0;
     for (const T of st.tracks) { const route = T.routes[k % T.routes.length], tr = mod.buildTrain(THREE, { cars: carsOf(st), div: st.div || 'B', route: { label: route, color: ROUTE_COL[route] || '#888' }, seed: 7 + T.id });
@@ -215,7 +218,7 @@ export async function install(game) {
     const [x, y] = tMap(t, R.lx, R.lz); pos.x = x; pos.y = y; pos.z = t.T.z + tr.floorY; };
   // deep in the dark of the tunnel the ride changes stations: the same train, now coming in to the next station of the line (its neighbourhood is built while the train pulls out)
   const hop = (u, t) => { const H = nextHop(u.st, t.T.dir, t.T.key, t.route), N = H && H.N; if (!N) return false; const nu = unitOf(N); S.keep = nu; if (nu.state !== 'ready' || !nu.trains.length) { if (nu.state === 'none') startUnit(nu); else ensureTrains(nu); return false; }
-    const nt = nu.trains.find((q) => q.T.key === H.key) || nu.trains.find((q) => q.T.dir === t.T.dir && q.T.plat >= 0); if (!nt) return false; const R = S.ride, tr = nt.train;
+    const nt = nu.trains.find((q) => q.T.key === H.key) || nu.trains.find((q) => q.T.dir === t.T.dir && q.T.plat >= 0); if (!nt) return false; const R = S.ride, tr = nt.train; { const z0 = Math.min(...tr.walk.map((q) => q.z0)) + 0.3, z1 = Math.max(...tr.walk.map((q) => q.z1)) - 0.3; if (R.lz < z0 || R.lz > z1) { R.lz = clamp(R.lz, z0, z1); if (S.sit) { S.sit = null; hint(null); } } }      /* never beyond the end of the train he arrives in */
     const c1 = -Math.min(nt.far, N.plen / 2 + tr.length / 2 + 25);      // it comes in from the dark, the whole train still in the tunnel
     nt.state = 'in'; nt.c = c1; nt.v = t.v; S.keep = null; nt.doors = 0; nt.t = 0; tr.group.visible = true; try { tr.setDoors(0, 0); tr.setLights({ front: 1, interior: K * 1.15 }); const r = t.route || t.T.routes[(t.routeI + t.T.routes.length - 1) % t.T.routes.length]; nt.route = r; tr.setRoute({ label: r, color: ROUTE_COL[r] || '#888', dest: destOf(nt.T, r) }); } catch (e) {}
     t.state = 'wait'; t.t = 40; t.train.group.visible = false; const da = Math.atan2(nt.uy, nt.ux) - Math.atan2(t.uy, t.ux); pl.h += da; g.cam.yaw += da;

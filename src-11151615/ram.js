@@ -12,7 +12,7 @@
 const RAM = 5, MAXLOOSE = 8, FAR = 90, LOOK = 2 / 60, K3 = [0.3, 0, -0.3];
 export function install(game) {
   if (game.__ram) return game.__ram;
-  const S = (game.__ram = { on: true, rams: 0, converted: 0, loosened: 0, thrown: 0, passed: 0, removed: 0, made: [] });
+  const S = (game.__ram = { on: true, rams: 0, converted: 0, loosened: 0, thrown: 0, passed: 0, removed: 0, boxed: 0, made: [] });
   if (game.P && game.P.get('ram') === '0') { S.on = false; return S; }
   const st = game.statics, _o = {}, N = { x: 0, y: 0, px: 0, py: 0 }, near = [];
   const mass = (d) => 1500 * (d.len * d.wid) / 8.1 * (d.type === 'bus' ? 2.2 : /van|truck/.test(d.type) ? 1.4 : d.type === 'suv' ? 1.15 : 1);
@@ -22,7 +22,20 @@ export function install(game) {
   function pen(a, b) { let best = -9; const ra = a.def.wid * 0.5, rb = b.def.wid * 0.5, ca = Math.cos(a.h), sa = Math.sin(a.h), cb = Math.cos(b.h), sb = Math.sin(b.h), ea = Math.max(a.def.len * 0.3, a.def.len / 2 - ra), eb = Math.max(b.def.len * 0.3, b.def.len / 2 - rb);
     const KA = ea > 1.8 * ra ? [1, 0.5, 0, -0.5, -1] : [1, 0, -1], KB = eb > 1.8 * rb ? [1, 0.5, 0, -0.5, -1] : [1, 0, -1];
     for (const i of KA) for (const j of KB) { const ax = a.x + ca * ea * i, ay = a.y + sa * ea * i, bx = b.x + cb * eb * j, by = b.y + sb * eb * j, dx = bx - ax, dy = by - ay, d = Math.hypot(dx, dy), p = ra + rb - d;
-      if (p > best && d > 1e-4) { best = p; N.x = dx / d; N.y = dy / d; N.px = ax + dx / d * ra; N.py = ay + dy / d * ra; } } return best; }
+      if (p > best && d > 1e-4) { best = p; N.x = dx / d; N.y = dy / d; N.px = ax + dx / d * ra; N.py = ay + dy / d * ra; } } return best > 0 ? best : boxPen(a, b); }
+  // what the circles leave open: a corner in the hollow between two circles (an offset head-on, a corner into a flank). The two bodies as boxes, parted
+  // along the shallowest of their four axes (the game's own box test in collideCars, which stops the player's car dead there and tells nobody: v2, Nov 15,
+  // player e25543's 75 -> 6 km/h on an open road). N as above; the point is the middle of the corners that are inside the other body.
+  function boxPen(a, b) { const ax = Math.cos(a.h), ay = Math.sin(a.h), bx = Math.cos(b.h), by = Math.sin(b.h), dx = b.x - a.x, dy = b.y - a.y, al = a.def.len / 2, aw = a.def.wid / 2, bl = b.def.len / 2, bw = b.def.wid / 2;
+    if (dx * dx + dy * dy > (al + aw + bl + bw) ** 2) return -9; const c = Math.abs(ax * bx + ay * by), s = Math.abs(ax * by - ay * bx); let best, nx, ny;
+    let p = dx * ax + dy * ay, d = al + bl * c + bw * s - Math.abs(p); if (d <= 0) return -9; best = d; nx = p > 0 ? ax : -ax; ny = p > 0 ? ay : -ay;
+    p = -dx * ay + dy * ax; d = aw + bl * s + bw * c - Math.abs(p); if (d <= 0) return -9; if (d < best) { best = d; nx = p > 0 ? -ay : ay; ny = p > 0 ? ax : -ax; }
+    p = dx * bx + dy * by; d = bl + al * c + aw * s - Math.abs(p); if (d <= 0) return -9; if (d < best) { best = d; nx = p > 0 ? bx : -bx; ny = p > 0 ? by : -by; }
+    p = -dx * by + dy * bx; d = bw + al * s + aw * c - Math.abs(p); if (d <= 0) return -9; if (d < best) { best = d; nx = p > 0 ? -by : by; ny = p > 0 ? bx : -bx; }
+    let sx = 0, sy = 0, n = 0; for (const i of [1, -1]) for (const j of [1, -1]) {
+      let qx = a.x + ax * al * i - ay * aw * j, qy = a.y + ay * al * i + ax * aw * j, ex = qx - b.x, ey = qy - b.y; if (Math.abs(ex * bx + ey * by) <= bl + 0.02 && Math.abs(-ex * by + ey * bx) <= bw + 0.02) { sx += qx; sy += qy; n++; }
+      qx = b.x + bx * bl * i - by * bw * j; qy = b.y + by * bl * i + bx * bw * j; ex = qx - a.x; ey = qy - a.y; if (Math.abs(ex * ax + ey * ay) <= al + 0.02 && Math.abs(-ex * ay + ey * ax) <= aw + 0.02) { sx += qx; sy += qy; n++; } }
+    N.x = nx; N.y = ny; if (n) { N.px = sx / n; N.py = sy / n; } else { N.px = (a.x + b.x) / 2; N.py = (a.y + b.y) / 2; } S.boxed++; return Math.min(best, 0.6); }
   // ------------------------------------------------------------ a thrown car: it slides on its tyres until it stands
   function slide(dt, inp, g) {
     if (this === g.player.vehicle) { if (this.ram.loosed) this.loosed = this.ram.loosed; this.ram = null; delete this.step; this.yawV = 0; return this.step(dt, inp, g); }      // the player took it: theirs to drive
@@ -90,6 +103,6 @@ export function install(game) {
         for (const u of game.vehicles) { if (u === o || u === pv || (u.ram && u.ram.t < o.ram.t) || Math.abs(u.x - o.x) > 12 || Math.abs(u.y - o.y) > 12) continue; const d = pen(o, u); if (d <= 0) continue; const cl = (o.vx - u.vx) * N.x + (o.vy - u.vy) * N.y;
           if (cl > 0.4) { const k = { x: N.x, y: N.y, px: N.px, py: N.py }; if (cl > 2.5) { dent(o, k.px, k.py, -k.x, -k.y, cl * 0.8); dent(u, k.px, k.py, k.x, k.y, cl * 0.8); Object.assign(N, k); } blow(o, u, d, cl, false); S.passed++; } else { o.x -= N.x * d * 0.5; o.y -= N.y * d * 0.5; u.x += N.x * d * 0.5; u.y += N.y * d * 0.5; } } }
     } catch (e) { if (!S.err) { S.err = String((e && e.stack) || e).slice(0, 400); console.log('[ram] ' + S.err); } } };
-  S.stats = () => ({ rams: S.rams, converted: S.converted, loosened: S.loosened, thrown: game.vehicles.filter((q) => q.ram).length, passed: S.passed, removed: S.removed, loose: S.made.length, err: S.err || null });
+  S.stats = () => ({ rams: S.rams, converted: S.converted, loosened: S.loosened, thrown: game.vehicles.filter((q) => q.ram).length, passed: S.passed, removed: S.removed, boxed: S.boxed, loose: S.made.length, err: S.err || null });
   return S;
 }
