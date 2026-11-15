@@ -57,21 +57,35 @@ export class Heights {
     const fresh = !this.hf || this.hfTY !== TY || this.hfTX !== TX || this.hfX0 !== X0, hf = fresh ? new Array(TX * TY).fill(null) : this.hf, done = fresh ? new Uint8Array(TX * TY) : this.hfDone, buf = this._hfBuf || (this._hfBuf = new Float32Array(N * N * 4));
     const Tl = w.tiles, sets = Tl && Tl.sets && !Tl.all ? Tl.sets.filter((S) => S.state === 2 && S.wbox) : null;      // wbox = [x0, z0, x1, z1], z = -north
     const reach = (tx, ty) => { if (!sets) return true; const x0 = X0 + tx * SPAN, y0 = -half + ty * SPAN; return sets.some((S) => S.wbox[0] < x0 + SPAN && S.wbox[2] > x0 && -S.wbox[3] < y0 + SPAN && -S.wbox[1] > y0); };
+    const gl = r.getContext(), ppfix = !(this.g.P && this.g.P.get('helipp') === '0');
+    /* tiles lane (helper fix4): a taken square can reach into an area whose buildings are NOT in yet (its set comes when the camera nears it): that part read as street
+       until the set arrived and the square was taken again. Each square now remembers which sets were drawn when it was taken (a bit per set), and top() answers from the
+       map's footprints where a square reads street inside the box of a set that was not (as it does for a square not taken at all). ?helipp=0 = before. */
+    const allS = ppfix && Tl && Tl.sets && !Tl.all ? Tl.sets.filter((S) => S.wbox) : null, inSets = allS ? (fresh || !this.hfIn ? new Uint16Array(TX * TY) : this.hfIn) : null; let inMask = 0;
+    if (allS) { allS.forEach((S, i) => { if (S.state === 2) inMask |= 1 << i; }); this.hfBoxes = allS.map((S, i) => ({ bit: 1 << i, x0: S.wbox[0], x1: S.wbox[2], y0: -S.wbox[3], y1: -S.wbox[1] })); this.hfIn = inSets; }
     const sc = w.scene, old = { rt: r.getRenderTarget(), om: sc.overrideMaterial, bg: sc.background, cc: r.getClearColor(new THREE.Color()), ca: r.getClearAlpha(), sh: r.shadowMap.autoUpdate };
     sc.overrideMaterial = mat; sc.background = null; r.setClearColor(0x000000, 0); r.shadowMap.autoUpdate = false;
     // tiles lane, Nov 15 (east column): bake() takes at once only the squares within 900 m of the player; the others in reach (a wider map has more of them: 25 of 40
     // at the spawn of the six-area map, 15 before) go to the queue below, one every few frames, so neither the load nor a frame of play pays for the whole map. ?helinear=0 = all at once.
-    const pl = this.g.player || { x: -196, y: -214 }, NEAR = this.g.P && this.g.P.get('helinear') === '0' ? 1e9 : 900, later = [];
+    const pl = this.g.player || { x: -196, y: -214 }, NEAR = this.g.P && this.g.P.get('helinear') === '0' ? 1e9 : this.g.P && +this.g.P.get('helinear') > 0 ? +this.g.P.get('helinear') : 500, later = [];     /* tiles lane (helper cost 2), Nov 15: 500 m (the 9 squares round the player; was 900 m = 16 squares on six areas); the others follow from the queue as before, dry 5 - 6 s after ready, 10 s before a helicopter boarded at once can lift off. ?helinear=900 = before */
     const far = (tx, ty) => { const x0 = X0 + tx * SPAN, y0 = -half + ty * SPAN; return Math.hypot(Math.max(x0 - pl.x, 0, pl.x - x0 - SPAN), Math.max(y0 - pl.y, 0, pl.y - y0 - SPAN)) > NEAR; };
     for (let ty = 0; ty < TY; ty++) for (let tx = 0; tx < TX; tx++) {
       if (only ? !only.includes(ty * TX + tx) : !reach(tx, ty)) continue;
       if (!only && far(tx, ty)) { later.push(ty * TX + tx); continue; }
       const cx = X0 + (tx + 0.5) * SPAN, cy = -half + (ty + 0.5) * SPAN;      // map x east, y north
       cam.position.set(cx, 2000, -cy); cam.lookAt(cx, 0, -cy); cam.updateMatrixWorld();
-      r.setRenderTarget(rt); r.clear(); r.render(sc, cam); r.readRenderTargetPixels(rt, 0, 0, N, N, buf);
+      r.setRenderTarget(rt); r.clear(); r.render(sc, cam);
+      /* tiles lane (helper fix4), Nov 15: three's readRenderTargetPixelsAsync (the exposure meter in world.js, a late area's ground field) leaves its PIXEL_PACK buffer BOUND
+         while it waits for the card, and a plain read-back made in that gap is refused by WebGL (INVALID_OPERATION 1282, "PIXEL_PACK buffer should not be bound"): nothing is
+         read, and the square kept the picture of the square taken before it (roofs where streets are, streets where towers are). So: the binding is let go for our read (the
+         waiting read binds its buffer again itself when it is ready), and a read that still brought nothing (the mark in buf stays) is not kept: the square is taken again
+         a little later, three tries at most. ?helipp=0 = before. */
+      if (ppfix) { if (gl.PIXEL_PACK_BUFFER) gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null); buf[3] = -7; }
+      r.readRenderTargetPixels(rt, 0, 0, N, N, buf);
+      if (ppfix && buf[3] === -7) { const k = ty * TX + tx, tr = (this.hfTry = this.hfTry || {}); tr[k] = (tr[k] || 0) + 1; this.hfMiss = (this.hfMiss || 0) + 1; if (tr[k] <= 3) later.push(k); continue; }
       // image x runs east, image y runs north (the camera's up is north)
       const sq = hf[ty * TX + tx] || (hf[ty * TX + tx] = new Uint16Array(N * N)); for (let k = 0, e = N * N; k < e; k++) sq[k] = Math.min(65535, Math.max(0, Math.round(buf[k * 4] * 10)));
-      done[ty * TX + tx] = 1;
+      done[ty * TX + tx] = 1; if (inSets) inSets[ty * TX + tx] = inMask;
     }
     r.setRenderTarget(old.rt); sc.overrideMaterial = old.om; sc.background = old.bg; r.setClearColor(old.cc, old.ca); r.shadowMap.autoUpdate = old.sh; for (const q of marked) q.layers.disable(L); rt.dispose(); mat.dispose();
     this.hf = hf; this.hfDone = done; this.hfTY = TY; this.hfTX = TX; this.hfSq = SPAN; this.hfN = N; this.hfHalf = half; this.hfS = size / (2 * half); this.hfY1 = -half + TY * SPAN; this.hfX0 = X0; this.hfX1 = X0 + TX * SPAN;
@@ -104,11 +118,13 @@ export class Heights {
   }
   // top of the solid at map (x, y) that a point at height zq is in or above; the street otherwise
   top(x, y, zq) {
-    let sq = null; if (this.hf && x > this.hfX0 + 1 && x < this.hfX1 - 1 && y > -this.hfHalf + 1 && y < this.hfY1 - 1) { const k = Math.floor((y + this.hfHalf) / this.hfSq) * this.hfTX + Math.floor((x - this.hfX0) / this.hfSq); if (this.hfDone[k]) sq = this.hf[k]; }
+    let sq = null, k0 = 0; if (this.hf && x > this.hfX0 + 1 && x < this.hfX1 - 1 && y > -this.hfHalf + 1 && y < this.hfY1 - 1) { const k = Math.floor((y + this.hfHalf) / this.hfSq) * this.hfTX + Math.floor((x - this.hfX0) / this.hfSq); if (this.hfDone[k]) { sq = this.hf[k]; k0 = k; } }
     if (sq) {
       const N = this.hfN, h = sq[(Math.floor((y + this.hfHalf) * this.hfS) % N) * N + Math.floor((x - this.hfX0) * this.hfS) % N] * 0.1; this.last = null;
       if (h <= 0.5 && this.solids) for (const o of this.solids) if (Math.abs(x - o.x) < o.radius && Math.abs(y - o.y) < o.radius && Math.hypot(x - o.x, y - o.y) < o.radius) return o.top;     // low things other parts built (the fountain)
-      return h > 0.5 ? h : this.street(x, y);
+      if (h > 0.5) return h;
+      const bx = this.hfBoxes; let out = false; if (bx) { const m = this.hfIn[k0]; for (const b of bx) if (!(m & b.bit) && x > b.x0 && x < b.x1 && y > b.y0 && y < b.y1) { out = true; break; } }     /* street in the picture, but that area was not drawn when the square was taken: the footprints below */
+      if (!out) return this.street(x, y);
     }
     const a = this.map.get(Math.floor(x / this.cell) * 100003 + Math.floor(y / this.cell)); let h = -1, hit = null;
     if (a) for (const r of a) { if (x < r.x0 || x > r.x1 || y < r.y0 || y > r.y1 || r.base > zq || r.top <= h) continue; if (pointInPoly(x, y, r.b.poly)) { let hole = false; if (r.b.holes) for (const q of r.b.holes) if (pointInPoly(x, y, q)) { hole = true; break; } if (!hole) { h = r.top; hit = r; } } }
@@ -175,9 +191,12 @@ class Heli {
     const g = this.g, H = this.heights, sx = -196, sy = -214, h = g.city.meta.grid_deg * Math.PI / 180 + Math.PI / 2, posts = [];
     for (const m of g.propMeshes || []) if (['tree', 'tree2', 'light', 'signal'].includes(m.userData.kind)) for (const p of m.userData.items) posts.push(p);
     let best = null;
-    for (const park of g.city.parks || []) for (let dy = -170; dy <= 170; dy += 3) for (let dx = -170; dx <= 170; dx += 3) {
+    /* tiles lane (helper cost 2), Nov 15: only the parks whose box reaches the 340 m square that is searched, and only the trees and poles within 12.5 m of that square, are tried: no other park can hold one of its points and no other post can spoil one, so the same spot (the search was every park of the city x 12,996 points: 211 ms of the nine-area load, 148 of six). ?padfast=0 = all of them. */
+    const PF = !(g.P && g.P.get('padfast') === '0'), near = PF ? posts.filter((p) => Math.abs(p[0] - sx) < 183 && Math.abs(p[1] - sy) < 183) : posts;
+    const pks = (g.city.parks || []).filter((park) => { if (!PF) return true; let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9; for (const q of park.ext) { if (q[0] < x0) x0 = q[0]; if (q[0] > x1) x1 = q[0]; if (q[1] < y0) y0 = q[1]; if (q[1] > y1) y1 = q[1]; } return x1 >= sx - 170 && x0 <= sx + 170 && y1 >= sy - 170 && y0 <= sy + 170; });
+    for (const park of pks) for (let dy = -170; dy <= 170; dy += 3) for (let dx = -170; dx <= 170; dx += 3) {
       const x = sx + dx, y = sy + dy, d = Math.hypot(dx, dy); if ((best && d >= best.d) || !pointInPoly(x, y, park.ext)) continue;
-      let ok = true; for (const p of posts) if (Math.abs(p[0] - x) < 12.5 && Math.abs(p[1] - y) < 12.5 && Math.hypot(p[0] - x, p[1] - y) < 12.5) { ok = false; break; }
+      let ok = true; for (const p of near) if (Math.abs(p[0] - x) < 12.5 && Math.abs(p[1] - y) < 12.5 && Math.hypot(p[0] - x, p[1] - y) < 12.5) { ok = false; break; }
       if (ok) for (let a = 0; a < 8 && ok; a++) for (const r of [4, 8, 14, 20]) if (H.top(x + Math.cos(a * Math.PI / 4) * r, y + Math.sin(a * Math.PI / 4) * r, 1e4) > 0.5 || g.roads.inLane(x + Math.cos(a * Math.PI / 4) * r, y + Math.sin(a * Math.PI / 4) * r, 1)) { ok = false; break; }
       if (ok) best = { name: 'Madison Square Park', x, y, h, d };
     }

@@ -1258,9 +1258,11 @@ function guardGeometry(L, Wd, style, seed) {
 }
 
 // distance from each tree to the nearest building wall (metres, capped), from a grid of wall segments
+/* tiles lane (helper cost 2), Nov 15: the 16 m grid of a list of outlines is made once per list and kept (the lane fix asked for all three lists again for every tree it moved: the whole city's walls, kerbs and parks gridded anew each time). The same grid, the same answer. ?negrid=0 = a new grid at every call. */
+const NE_KEEP = /[?&]negrid=0/.test(location.search) ? null : new WeakMap();
 function nearestEdge(polys, trees, key, cap) {
-  const CS = 16, grid = new Map();
-  for (const p of polys) {
+  const CS = 16, kept = NE_KEEP && NE_KEEP.get(polys), grid = kept || new Map(); if (NE_KEEP && !kept) NE_KEEP.set(polys, grid);
+  if (!kept) for (const p of polys) {
     for (let i = 0; i < p.length; i++) {
       const a = p[i], c = p[(i + 1) % p.length];
       const x0 = Math.floor(Math.min(a[0], c[0]) / CS), x1 = Math.floor(Math.max(a[0], c[0]) / CS), y0 = Math.floor(Math.min(a[1], c[1]) / CS), y1 = Math.floor(Math.max(a[1], c[1]) / CS);
@@ -1450,6 +1452,7 @@ export async function add(game, ctx) {
   if (!trees.length) return { group, report: { instances: 0 } };
   // a tree standing in a park is a park tree whatever its size; the others are street trees: find their wall and their kerb
   const parks = (ctx.city.parks || []).map((p) => p.ext).filter(Boolean);
+  const NE_B = ctx.city.buildings.filter((b) => !b.far && (b.minh || 0) < 5).map((b) => b.poly), NE_K = ctx.city.blocks.map((b) => b.ext);     /* helper cost 2: the walls' and the kerbs' outlines as ONE list each, so nearestEdge keeps one grid for each */
   for (const t of trees) if (!t.park) for (const p of parks) if (inPoly(t.x, t.y, p)) { t.park = true; break; }
   // hero blocks: the lead's street trees there give way to the trees that really stand there (2015 census: species, trunk size, guard)
   let nHero = 0, nDropped = 0;
@@ -1459,7 +1462,7 @@ export async function add(game, ctx) {
     for (let i = trees.length - 1; i >= 0; i--) { const t = trees[i]; if (t.park || !inBox(t)) continue;
       if (cs) { const a = cs.get(game.statics.key(Math.floor(t.x / game.statics.cell), Math.floor(t.y / game.statics.cell))); if (a) for (const o of a) if (o.tag === 'tree' && o.on && Math.abs(o.x - t.x) < 0.02 && Math.abs(o.y - t.y) < 0.02) o.on = false; }
       trees.splice(i, 1); nDropped++; }
-    const blocks = ctx.city.blocks.map((b) => b.ext);
+    const blocks = NE_K;
     const kq = hc.trees.map((c) => ({ x: c[0], y: c[1] })); nearestEdge(blocks, kq, 'kerb', 30);
     hc.trees.forEach((c, i) => {
       let x = c[0], y = c[1]; const q = kq[i];
@@ -1469,8 +1472,8 @@ export async function add(game, ctx) {
       if (game.statics && game.statics.addCircle) game.statics.addCircle(x, y, 0.25, 'tree');
     });
   } catch (e) { console.warn('[trees] hero census not loaded', e); }
-  nearestEdge(ctx.city.buildings.filter((b) => !b.far && (b.minh || 0) < 5).map((b) => b.poly), trees, 'wall', 12);
-  nearestEdge(ctx.city.blocks.map((b) => b.ext), trees, 'kerb', 12);
+  nearestEdge(NE_B, trees, 'wall', 12);
+  nearestEdge(NE_K, trees, 'kerb', 12);
   nearestEdge(parks, trees, 'pk', 12);          // a street tree at a park's edge: look at what it stands on; on grass it gets no pit
   { const grass = []; if (world.cityRoot) world.cityRoot.traverse((o) => { if (o.isMesh && /^grass/.test(o.name)) grass.push(o); });
     const rc = new THREE.Raycaster(), dn = new THREE.Vector3(0, -1, 0), from = new THREE.Vector3();
@@ -1486,8 +1489,10 @@ export async function add(game, ctx) {
     const R = game.roads, St = game.statics, moved = [], dropped = [], blds = ctx.city.buildings.filter((b) => !b.far && (b.minh || 0) < 5);
     for (const e of R.edges) if (!e.box) e.box = e.pts.reduce((a, p) => [Math.min(a[0], p[0]), Math.min(a[1], p[1]), Math.max(a[2], p[0]), Math.max(a[3], p[1])], [1e9, 1e9, -1e9, -1e9]);
     const onSw = (x, y) => !!(St && St.onSidewalk && St.onSidewalk(x, y));
-    const test = (x, y, r) => { let worst = null; const sw = onSw(x, y);
-      for (const e of R.edges) { const b = e.box, hw = Math.max(e.width || 0, e.lanes * e.lw) / 2 + r + 0.3; if (x < b[0] - hw || x > b[2] + hw || y < b[1] - hw || y > b[3] + hw) continue;
+    /* tiles lane (helper cost), Nov 15: the edges a point can touch come from a 64 m grid of the edges' boxes (grown by the widest half width + 3 m), in the edges' own order, and the same box test follows: the same answer without every edge of the city for every tree (365 ms of the nine-area load). A circle over 2.5 m, or ?edgegrid=0, looks at every edge as before. */
+    const EG = /[?&]edgegrid=0/.test(location.search) ? null : new Map(), EC = 64; if (EG) R.edges.forEach((e) => { const b = e.box, m = Math.max(e.width || 0, e.lanes * e.lw) / 2 + 3; for (let i = Math.floor((b[0] - m) / EC); i <= Math.floor((b[2] + m) / EC); i++) for (let j = Math.floor((b[1] - m) / EC); j <= Math.floor((b[3] + m) / EC); j++) { const k = i * 65536 + j; let a = EG.get(k); if (!a) EG.set(k, (a = [])); a.push(e); } });
+    const NOEDGE = []; const test = (x, y, r) => { let worst = null; const sw = onSw(x, y);
+      for (const e of (EG && r <= 2.5 ? (EG.get(Math.floor(x / EC) * 65536 + Math.floor(y / EC)) || NOEDGE) : R.edges)) { const b = e.box, hw = Math.max(e.width || 0, e.lanes * e.lw) / 2 + r + 0.3; if (x < b[0] - hw || x > b[2] + hw || y < b[1] - hw || y > b[3] + hw) continue;
         const pr = e.line.project(x, y), lane = pr.d - (e.lanes * e.lw) / 2 - r, kerb = pr.d - (e.width || 0) / 2 - r;
         if (lane < 0.3 || (!sw && kerb < 0)) { const need = Math.max(0.3 - lane, sw ? 0 : -kerb); if (!worst || need > worst.need) worst = { need, pr, e, why: lane < 0 ? 'lane' : lane < 0.3 ? 'lane edge' : 'roadway' }; } }
       if (!sw && !worst) for (const n of R.nodes) if (Math.hypot(x - n.p[0], y - n.p[1]) < (n.r || 0) + r) { worst = { need: 9, why: 'junction' }; break; }
@@ -1501,7 +1506,7 @@ export async function add(game, ctx) {
       const rec = [+t.x.toFixed(2), +t.y.toFixed(2), 0.25, w.why, t.hero ? 'census' : t.park ? 'park' : 'street'];
       if (ok) { if (t.hero) { const c1 = circAt(t.x, t.y); if (c1) c1.on = false; if (St && St.addCircle) St.addCircle(nx, ny, 0.25, 'tree'); }   // a census tree's circle is moved here; the others' where trees moved off the paving get theirs (t.from, below)
         if (!t.from) t.from = [t.x, t.y];
-        t.x = nx; t.y = ny; rec.push('moved to', +nx.toFixed(2), +ny.toFixed(2)); moved.push(rec); nearestEdge(blds.map((b) => b.poly), [t], 'wall', 12); nearestEdge(ctx.city.blocks.map((b) => b.ext), [t], 'kerb', 12); nearestEdge(parks, [t], 'pk', 12); }
+        t.x = nx; t.y = ny; rec.push('moved to', +nx.toFixed(2), +ny.toFixed(2)); moved.push(rec); nearestEdge(NE_B, [t], 'wall', 12); nearestEdge(NE_K, [t], 'kerb', 12); nearestEdge(parks, [t], 'pk', 12); }
       else { const c0 = circAt(t.x, t.y) || (t.from && circAt(t.from[0], t.from[1])); if (c0) c0.on = false; trees.splice(i, 1); rec.push('dropped'); dropped.push(rec); } }
     laneFix = { moved, dropped }; window.__treesLaneFix = laneFix;
     if (moved.length || dropped.length) console.log('[trees] out of the lanes: moved ' + moved.length + ', dropped ' + dropped.length);
@@ -1883,15 +1888,17 @@ export async function add(game, ctx) {
       const a0 = W(-gx, gz), a1 = W(-gx, -gz), a2 = W(gx, -gz), a3 = W(gx, gz); game.statics.addSeg(a0[0], a0[1], a1[0], a1[1], 0.52, 'guard'); game.statics.addSeg(a1[0], a1[1], a2[0], a2[1], 0.52, 'guard'); game.statics.addSeg(a2[0], a2[1], a3[0], a3[1], 0.52, 'guard'); }     /* 0.52: the guard's top rail over the pit (guardGeometry: y0 0.06 + H 0.46), so a jump clears it */
   }
   const apronG = sizes.map((s, i) => apronGeometry(s[0], s[1], 91 + i)), apronMat = apronMaterial(shared);
+  /* tiles lane (helper cost 2), Nov 15: a map tile's pit / apron geometry shares the base shape's vertices, so it takes a COPY of the base shape's bounding sphere (worked out once) instead of walking every vertex again for each of the city's tiles (three did that inside InstancedMesh.computeBoundingSphere: 415 ms of the six-area load, 670 of the nine-area one). The same numbers. ?bshare=0 = worked out per tile. */
+  const BSHARE = !/[?&]bshare=0/.test(location.search), bsOf = (g0, g) => { if (!BSHARE) return; if (!g0.boundingSphere) g0.computeBoundingSphere(); g.boundingSphere = g0.boundingSphere.clone(); };
   for (const [, tile] of tiles) for (let si = 0; si < 3; si++) {
-    if (tile.a[si].length) { const ag = new THREE.BufferGeometry(); for (const k in apronG[si].attributes) ag.setAttribute(k, apronG[si].attributes[k]); ag.setIndex(apronG[si].index);
+    if (tile.a[si].length) { const ag = new THREE.BufferGeometry(); for (const k in apronG[si].attributes) ag.setAttribute(k, apronG[si].attributes[k]); ag.setIndex(apronG[si].index); bsOf(apronG[si], ag);
       const ap = new Float32Array(tile.a[si].length * 4); tile.a[si].forEach((mm, i) => ap.set(mm.pit, i * 4)); ag.setAttribute('aPit', new THREE.InstancedBufferAttribute(ap, 4));
       const im = new THREE.InstancedMesh(ag, apronMat, tile.a[si].length); im.renderOrder = 6; im.onBeforeRender = (r, sc, cam, g, mat) => { g.setDrawRange(0, mat === apronMat ? Infinity : 0); }; tile.a[si].forEach((mm, i) => im.setMatrixAt(i, mm)); im.instanceMatrix.needsUpdate = true; im.computeBoundingSphere(); im.matrixAutoUpdate = false; im.receiveShadow = true; im.userData.kind = 'st_treeapron'; group.add(im); pitTiles.push(im); }
     const sets = [0, 1, 2, 3, 4, 5, 6, 7].map((v) => [tile.p[si][v], pitG[si][v], false, v >= 4]).concat([0, 1].map((v) => [tile.g[si][v], guardG[si][v], true, false]));
     for (const [list, geo, cast, heroPit] of sets) {
       if (!list.length) continue;
       let g2 = geo;
-      if (!cast) { g2 = new THREE.BufferGeometry(); for (const k in geo.attributes) g2.setAttribute(k, geo.attributes[k]); g2.setIndex(geo.index);
+      if (!cast) { g2 = new THREE.BufferGeometry(); for (const k in geo.attributes) g2.setAttribute(k, geo.attributes[k]); g2.setIndex(geo.index); bsOf(geo, g2);
         const ap = new Float32Array(list.length * 4); list.forEach((mm, i) => ap.set(mm.pit, i * 4)); g2.setAttribute('aPit', new THREE.InstancedBufferAttribute(ap, 4)); }
       const im = new THREE.InstancedMesh(g2, heroPit ? pitMatHero : pitMat, list.length); list.forEach((mm, i) => im.setMatrixAt(i, mm));
       im.instanceMatrix.needsUpdate = true; im.computeBoundingSphere(); im.matrixAutoUpdate = false; im.castShadow = false; im.receiveShadow = true; im.userData.kind = cast ? 'st_treeguard' : 'st_treepit';

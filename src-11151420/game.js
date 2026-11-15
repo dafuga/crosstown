@@ -106,7 +106,10 @@ export class Game {
     extra.tree2 = []; city.props.tree = city.props.tree.filter((p) => { if (p[3] > 1.3) { extra.tree2.push([p[0], p[1], p[2], p[3] * 0.7]); return false; } return true; });
     for (const p of city.props.signal) { p[6] = Math.PI; }
     // a street light planted within a stride of a signal pole reads as a doubled pole: the signal keeps the corner
-    if (city.props.light && city.props.signal) city.props.light = city.props.light.filter((l) => !city.props.signal.some((p) => Math.abs(p[0] - l[0]) < 3 && Math.abs(p[1] - l[1]) < 3 && Math.hypot(p[0] - l[0], p[1] - l[1]) < 3));
+    /* tiles lane (helper cost 2), Nov 15: the signals near a light come from an 8 m grid (the nine cells round the light hold every signal within 3 m) instead of every signal of the city for every light: the same lights dropped. ?lightgrid=0 = every signal. */
+    if (city.props.light && city.props.signal) { const SG = this.P && this.P.get('lightgrid') === '0' ? null : new Map(); if (SG) for (const p of city.props.signal) { const k = Math.floor(p[0] / 8) * 65536 + Math.floor(p[1] / 8); let a = SG.get(k); if (!a) SG.set(k, (a = [])); a.push(p); }
+      const nearSig = (l) => { if (!SG) return city.props.signal.some((p) => Math.abs(p[0] - l[0]) < 3 && Math.abs(p[1] - l[1]) < 3 && Math.hypot(p[0] - l[0], p[1] - l[1]) < 3); const ci = Math.floor(l[0] / 8), cj = Math.floor(l[1] / 8); for (let i = ci - 1; i <= ci + 1; i++) for (let j = cj - 1; j <= cj + 1; j++) { const a = SG.get(i * 65536 + j); if (a) for (const p of a) if (Math.abs(p[0] - l[0]) < 3 && Math.abs(p[1] - l[1]) < 3 && Math.hypot(p[0] - l[0], p[1] - l[1]) < 3) return true; } return false; };
+      city.props.light = city.props.light.filter((l) => !nearSig(l)); }
     // street furniture that the map data left standing in a travel lane (medians and forks confuse the placement) is taken away:
     // a pole in the lane is a wall for the player and nothing the traffic knows about
     this.propsDropped = 0; for (const k of ['light', 'tree', 'signal', 'hydrant', 'bin', 'meter', 'newsbox']) if (city.props[k]) city.props[k] = city.props[k].filter((p) => { if (this.roads.inLane(p[0], p[1], 0.45)) { this.propsDropped++; return false; } return true; });

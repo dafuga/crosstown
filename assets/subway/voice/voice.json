@@ -1,8 +1,8 @@
 {
 "file": "announcer.mp3",
 "format": "mp3 24 kHz mono 64 kbit/s",
-"secs": 157.1,
-"bytes": 1257600,
+"secs": 161.28,
+"bytes": 1290816,
 "voices": [
 "Bill pqHfZKP75CvOlQylNhV4",
 "Matilda XrExE9yKIg1WjnnlVkGX"
@@ -808,6 +808,27 @@
 "voice": "Bill",
 "start": 155.6442,
 "dur": 1.1103
+},
+"st-14-st": {
+"text": "Fourteenth Street.",
+"who": "car",
+"voice": "Matilda",
+"start": 156.9045,
+"dur": 0.979
+},
+"st-18-st": {
+"text": "Eighteenth Street.",
+"who": "car",
+"voice": "Matilda",
+"start": 158.0335,
+"dur": 0.9335
+},
+"st-34-st-hudson-yards": {
+"text": "Thirty-fourth Street, Hudson Yards.",
+"who": "car",
+"voice": "Matilda",
+"start": 159.117,
+"dur": 1.8082
 }
 }
 }

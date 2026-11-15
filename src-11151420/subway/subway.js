@@ -111,9 +111,14 @@ export async function install(game) {
     for (const u of S.units.values()) if (u.state === 'building') { const t0 = performance.now(), budget = S.own || window.__subFast ? 30 : 3.5; try { let r; do { r = u.gen.next(); } while (!r.done && performance.now() - t0 < budget); u.ms += performance.now() - t0; if (r.done) finishUnit(u, r.value); } catch (e) { fail('build ' + u.st.id, e); u.state = 'failed'; } break; } };
 
   // ---------------------------------------------------------------- trains
+  // TRAINS AS LONG AS THEIR PLATFORMS (handover-19; ?subcars=8 = eight cars everywhere, as before): as many cars as fit the shortest platform of the station's line
+  // (15.6 m cars on the numbered lines, 18.4 m on the lettered: ten on the Lexington Av line, eleven on the 7, nine or ten elsewhere); eight cars left 20 to 30 m of
+  // platform with no car at each end. A count other than 8 written in the data (the shuttle's five) stands.
+  const carsOf = (st) => { const fx = +P.get('subcars'); if (fx >= 2 && fx <= 11) return fx; if (st.cars && st.cars !== 8) return st.cars; const L = (data.lines || []).find((l) => l.id === st.line); let m = st.plen || 150;
+    if (L) for (const id of L.stations) { const q = stOf.get(id); if (q && q.plen) m = Math.min(m, q.plen); } return clamp(Math.floor(m / ((st.div || 'B') === 'A' ? 15.6 : 18.4)), 5, 11); };
   const startTrains = async (u) => { let mod; try { mod = await import('./train.js'); } catch (e) { console.log('[subway] no train.js: ' + (e && e.message)); return; } if (u.state !== 'ready') return;
     const st = u.st; let k = 0;
-    for (const T of st.tracks) { const route = T.routes[k % T.routes.length], tr = mod.buildTrain(THREE, { cars: st.cars || 8, div: st.div || 'B', route: { label: route, color: ROUTE_COL[route] || '#888' }, seed: 7 + T.id });
+    for (const T of st.tracks) { const route = T.routes[k % T.routes.length], tr = mod.buildTrain(THREE, { cars: carsOf(st), div: st.div || 'B', route: { label: route, color: ROUTE_COL[route] || '#888' }, seed: 7 + T.id });
       tr.group.traverse((o) => { o.layers.enable(LAYER); if (o.isMesh) { o.frustumCulled = false; for (const m of Array.isArray(o.material) ? o.material : [o.material]) if (m && !m.userData.subK) { m.userData.subK = 1; m.fog = false; } } }); tr.group.visible = false; u.res.core.add(tr.group);
       const dx = T.b[0] - T.a[0], dy = T.b[1] - T.a[1], L = Math.hypot(dx, dy), ux = dx / L * T.dir, uy = dy / L * T.dir;
       const far = st.plen / 2 + st.tun - tr.length / 2 - 3;

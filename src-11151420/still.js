@@ -20,12 +20,17 @@ const isStatic = (top) => (top.name ? STATIC.test(top.name) : !!(top.isInstanced
 const W = 16, put = (o, a, k) => { const p = o.position, q = o.quaternion, s = o.scale, e = o.matrix.elements; a[k] = p.x; a[k + 1] = p.y; a[k + 2] = p.z; a[k + 3] = q._x; a[k + 4] = q._y; a[k + 5] = q._z; a[k + 6] = q._w; a[k + 7] = s.x; a[k + 8] = s.y; a[k + 9] = s.z; a[k + 10] = e[12]; a[k + 11] = e[13]; a[k + 12] = e[14]; a[k + 13] = e[0]; a[k + 14] = e[5]; a[k + 15] = e[10]; };
 function install(scene) {
   S.scene = scene; const full = scene.updateMatrixWorld.bind(scene); S.full = full;
+  // helper cost, Nov 15: the walk for new objects (30,000 visits, four times a second: 0.4 s of every 12 s of play on nine map areas) is made only after something was
+  // ADDED somewhere (Object3D.add, which every three object shares, sets a flag: one assignment), and once every 2 s as a net for a list written by hand.
+  // ?stillwalk=0 = a walk four times a second and a quarter of the watched a frame, as before.
+  S.lazy = !Q || Q.get('stillwalk') !== '0'; S.dirty = true; S.lastFull = -1e9;
+  if (S.lazy) { try { let P = Object.getPrototypeOf(scene); while (P && !Object.prototype.hasOwnProperty.call(P, 'add')) P = Object.getPrototypeOf(P); if (P && !P.__stillAdd) { const add0 = P.add; P.add = function () { S.dirty = true; return add0.apply(this, arguments); }; P.__stillAdd = true; } else if (!P) S.lazy = false; } catch (e) { S.lazy = false; } }
   scene.updateMatrixWorld = function (force) {
     if (force === true || !S.on) return full(force);
     if (this.matrixAutoUpdate) this.updateMatrix(); if (this.matrixWorldNeedsUpdate) { this.matrixWorld.copy(this.matrix); this.matrixWorldNeedsUpdate = false; }
     const kids = this.children; for (let i = 0, n = kids.length; i < n; i++) { const top = kids[i];
       if (top.__stillTop === true) continue;
-      if (top.__stillTop === undefined) { top.__stillTop = isStatic(top); S.lastWalk = -1e9; }      // new at the top: in full this once, then by its family
+      if (top.__stillTop === undefined) { top.__stillTop = isStatic(top); S.lastWalk = -1e9; S.dirty = true; }      // new at the top: in full this once, then by its family
       top.updateMatrixWorld(true); }
     const L = S.live; for (let i = 0; i < L.length; i++) { const o = L[i]; if (o.parent) o.updateMatrixWorld(true); }      // static things that turned out to move
   };
@@ -43,8 +48,8 @@ function walk(scene) {
 export function stillTick(world, now = performance.now()) {
   if (!S.on || !world || !world.scene || (typeof window !== 'undefined' && !window.__ready)) return; const scene = world.scene;
   if (S.scene !== scene) install(scene);
-  if (now - S.lastWalk > 250) { S.lastWalk = now; walk(scene); }
-  const L = S.list, a = S.snap, n = L.length; if (!n) return; const m = Math.ceil(n / 4); let i = S.at;
+  if (now - S.lastWalk > 250 && (!S.lazy || S.dirty || now - S.lastFull > 2000)) { S.lastWalk = now; S.lastFull = now; S.dirty = false; walk(scene); S.walks = (S.walks || 0) + 1; }
+  const L = S.list, a = S.snap, n = L.length; if (!n) return; const m = Math.ceil(n / (S.lazy ? 8 : 4)); let i = S.at;
   for (let c = 0; c < m; c++, i++) { if (i >= n) i = 0; const o = L[i]; if (!o) continue; if (!o.parent) { L[i] = null; S.nGone++; if (o.__still === 1) o.matrixAutoUpdate = true; o.__still = undefined; continue; }      // taken out by its owner: seen afresh if it comes back
     const k = i * W, p = o.position, q = o.quaternion, s = o.scale, e = o.matrix.elements;
     if (o.matrixAutoUpdate || (o.__still === 1 && (a[k] !== p.x || a[k + 1] !== p.y || a[k + 2] !== p.z || a[k + 3] !== q._x || a[k + 4] !== q._y || a[k + 5] !== q._z || a[k + 6] !== q._w || a[k + 7] !== s.x || a[k + 8] !== s.y || a[k + 9] !== s.z))) {

@@ -1,11 +1,12 @@
 # The subway's sound: where every sound comes from
 
-## The announcer: `announcer.mp3` (one MIXED file: 112 spoken parts one after another, each on our own station bed; `voice.json` says where each lies)
+## The announcer: `announcer.mp3` (one MIXED file: 115 spoken parts one after another, each on our own station bed; `voice.json` says where each lies)
 - **Synthetic speech from ElevenLabs text-to-speech**, made Nov 14 2026 by `lanes/subway/tools/voice-eleven.py render` (model `eleven_multilingual_v2`)
   on the company's ElevenLabs account (Creator plan; key `elevenlabs-nyc`; order: Matt through CHIEF, Nov 14 19:23Z). 1,742 characters in all (one run of 1,646, then ten parts made again without words-after, 96).
   Nov 15 2026 (CHIEF's yes, 10:45 ET): ten more station names for the stations added since (50 St, 59 St-Columbus Circle, 7 Av, 57 St-7 Av, Grand Central-42 St,
   51 St, 5 Av/53 St, Lexington Av/53 St, 57 St, 5 Av/59 St), same voice and settings, 282 characters, inside the plan's monthly characters; the file now holds 107 parts.
   Later that day (CHIEF 12:15): five parts for the shuttle's wording ("This is the shuttle", "to Grand Central" and "to Times Square" in both voices), 83 characters; 112 parts.
+  And three station names of the west column (14 St, 18 St, 34 St-Hudson Yards), 71 characters; 115 parts.
 - **Two of ElevenLabs' own stock ("premade") library voices. No voice was cloned or designed from anyone's recording.**
   - station, transfer and next-stop lines (`who: car`): **"Matilda"**, voice id `XrExE9yKIg1WjnnlVkGX` (ElevenLabs' labels: female, American, middle-aged)
   - "Stand clear of the closing doors, please.", the platform lines and notices (`who: safety`): **"Bill"**, id `pqHfZKP75CvOlQylNhV4` (male, American, older, "crisp")
