@@ -55,6 +55,15 @@ export async function install(g, M, POSE) {
   function makeNpc(c, v) { const kind = kinds.length ? kinds[c.rk % Math.min(kinds.length, 2)] : null; if (!kind || !EntryRig) return null; let vis = null; try { vis = g.kit.person(kind); } catch (e) {} if (!vis || !vis.acts.drive) return null; const rig = new EntryRig(vis, kind); if (!rig.ok) return null;
     g.world.scene.add(vis.object); vis.acts.drive.play(); vis.mixer.setTime(0.2); return { vis, rig, kind, v, c, state: 'ride', t: 0, rest: 0, pose: POSE.make(), x: v.x, y: v.y, h: v.h, z: 0, R: null, fake: null, U: null }; }
   function dropNpc(n) { try { g.world.scene.remove(n.vis.object); } catch (e) {} if (n.fake) n.fake.state = 'gone'; const i = M.npcs.indexOf(n); if (i >= 0) M.npcs.splice(i, 1); }
+  M.releaseRider = (c) => {
+    if (!TR.cars.includes(c)) return false;
+    const v = new M.Vehicle(DEF, c.x, c.y, c.h, c.color);
+    v.z = c.mz || 0; v.lean = c.mlean || 0; v.spin = c.spin || 0;
+    v.vx = Math.cos(c.h)*c.v; v.vy = Math.sin(c.h)*c.v;
+    v.stand = 0; v.down = v.lean < 0 ? -1 : 1;
+    TR.remove(c); g.vehicles.push(v);
+    return true;
+  };
   M.jack = {
     begin(c) {
       if (pl.busy || M.fall) return false; TR.remove(c); const v = new M.Vehicle(DEF, c.x, c.y, c.h, c.color); v.lean = c.mlean || 0; v.held = TUNE.footLean; v.keep = true; v.spin = c.spin || 0; v.steer = c.steer || 0; v.vseed = c.id; g.vehicles.push(v);

@@ -304,7 +304,8 @@ class Combat {
       let h = this.cast(ox, oy, oz, dx / L, -dz / L, dy / L, tmin, W.range + tmin);
       // the bullet itself leaves the muzzle: something between the gun and that point takes it instead
       const m9 = sc9 ? this.subMuzzle(mz.x, -mz.z) : null, mx9 = m9 ? m9[0] : mz.x, my9 = m9 ? m9[1] : -mz.z, bx = h.x - mx9, by = h.y - my9, bz = h.z - mz.y, bl = Math.hypot(bx, by, bz);
-      if (bl > 0.6) { const h2 = this.cast(mx9, my9, mz.y, bx / bl, by / bl, bz / bl, 0.05, bl - 0.25); if (h2.kind !== 'none') h = h2; h.dx = bx / bl; h.dy = by / bl; h.dz = bz / bl; } else { h.dx = dx / L; h.dy = -dz / L; h.dz = dy / L; }
+      const bikeHit = g.P.get('bikehit') !== '0';
+      if (bl > (bikeHit ? 1e-6 : 0.6)) { const h2 = this.cast(mx9, my9, mz.y, bx / bl, by / bl, bz / bl, bikeHit ? 0 : 0.05, bikeHit ? bl : bl - 0.25); if (h2.kind !== 'none') h = h2; h.dx = bx / bl; h.dy = by / bl; h.dz = bz / bl; } else { h.dx = dx / L; h.dy = -dz / L; h.dz = dy / L; }
       const r2 = this.hit(h, this.HZ && h.kind === 'cop' && h.part === 'head' ? ((this._Wh ||= {})[kind] ||= Object.assign({}, W, { dmg: 500 })) : W, i === 0);      /* an officer's head: down at once with any gun (heatcore's hitCop counts W.dmg x 4 against 100) */ if (r2 === 'ped') anyPed = true; if (r2 === 'kill') { anyPed = true; killed = true; }
       this.shove(mz, h, W);
       if (W.tracer && rnd() < W.tracer) this.fx.tracer(mz, _v2.set(h.x, h.z, -h.y));
@@ -431,11 +432,47 @@ class Combat {
         }
       }
     }
+    const bikeHit = g.P.get('bikehit') !== '0';
+    // Clip the occupied interval to the beginning of the shot segment.
+    const ellipsoid = (x, y, z, rx, ry, rz, kind, obj, part) => {
+      const a = dx / rx, b = dy / ry, c = dz / rz;
+      const u = (ox - x) / rx, v = (oy - y) / ry, w = (oz - z) / rz;
+      const A = a*a + b*b + c*c, B = a*u + b*v + c*w;
+      const disc = B*B - A*(u*u + v*v + w*w - 1);
+      if (disc < 0) return;
+      const root = Math.sqrt(disc);
+      if ((-B + root) / A >= tmin) take(Math.max(tmin, (-B - root) / A), kind, -dx, -dy, -dz, obj, part);
+    };
+    const mounted = (r, z, h, lean) => {
+      if (Math.abs(r.x - ox) > H.t + 2 || Math.abs(r.y - oy) > H.t + 2) return;
+      const cs = Math.cos(h), sn = Math.sin(h);
+      const volume = (forward, left, up, width, height, part) => {
+        const lateral = left * Math.cos(lean) - up * Math.sin(lean);
+        ellipsoid(r.x + cs*forward - sn*lateral, r.y + sn*forward + cs*lateral,
+          z + up*Math.cos(lean) + left*Math.sin(lean), width, width, height, 'mounted', r, part);
+      };
+      volume(-0.12, 0, 1.26, 0.26, 0.39, 'body');
+      volume(0.04, 0, 1.64, 0.17, 0.19, 'head');
+      for (const side of [-1, 1]) volume(-0.08, side*0.19, 0.65, 0.15, 0.36, 'legs');
+    };
+    if (bikeHit && g.riders?.on) {
+      for (const r of g.riders.list) if (r.state === 'ride' && !r.gone) mounted(r, r.z || 0, r.hv, r.lean || 0);
+      for (const group of g.riders.clumps) for (const b of group.bikes) if (b.sit) mounted(b, 0.15, b.h, b.lean || 0);
+    }
     // cars: a lower body and a cabin, as two boxes in the car's own frame
     const car = (v, kind) => {
       const ex2 = v.x - ox, ey2 = v.y - oy, along = ex2 * dx + ey2 * dy; if (along < -8 || along > H.t + 8) return; const L = v.def.len; if (Math.abs(ex2 * dy - ey2 * dx) > (L * 0.6 + 1) * Math.max(hl, 0.2) + Math.abs(dz) * 60) return;
       const cs = Math.cos(v.h), sn = Math.sin(v.h), z0 = v.z || 0, lx = -(ex2 * cs + ey2 * sn), ly = -(-ex2 * sn + ey2 * cs), lz = oz - z0, ldx = dx * cs + dy * sn, ldy = -dx * sn + dy * cs;
       const Wd = v.def.wid * 0.9, Ht = v.def.hgt - (v.type === 'taxi' ? 0.3 : 0), belt = Math.min(Ht * 0.58, 1.08), van = v.type === 'van' || v.type === 'bus';
+      if (bikeHit && kind === 'traffic') {
+        if (v.moto && g.moto?.releaseRider) mounted(v, v.mz || 0, v.h, -(v.mlean || 0));
+        else if (!v.moto && lx + ldx*tmin > -L*(van ? 0.48 : 0.30) && lx + ldx*tmin < L*(van ? 0.30 : 0.16) && Math.abs(ly + ldy*tmin) < Wd*(van ? 0.47 : 0.42) &&
+                 lz + dz*tmin > belt && lz + dz*tmin < Ht && !this.cars.get(v)?.drvDead) {
+          const seat = this.driverSeat(v), x = v.x + cs*seat[0] - sn*seat[1], y = v.y + sn*seat[0] + cs*seat[1];
+          ellipsoid(x,y,z0+seat[2]+0.36,0.27,0.27,0.27,'driver',v,'body');
+          ellipsoid(x,y,z0+seat[2]+0.72,0.15,0.15,0.15,'driver',v,'head');
+        }
+      }
       const box = (x0, x1, y0, y1, zz0, zz1, part) => {
         let t0 = -1e9, t1 = 1e9, ax = -1, sg = 0; const O = [lx, ly, lz], Dd = [ldx, ldy, dz], lo = [x0, y0, zz0], hi = [x1, y1, zz1];
         for (let i = 0; i < 3; i++) { if (Math.abs(Dd[i]) < 1e-7) { if (O[i] < lo[i] || O[i] > hi[i]) return; continue; } let a = (lo[i] - O[i]) / Dd[i], b = (hi[i] - O[i]) / Dd[i], s = -1; if (a > b) { const tt = a; a = b; b = tt; s = 1; } if (a > t0) { t0 = a; ax = i; sg = s; } if (b < t1) t1 = b; if (t0 > t1) return; }
@@ -457,6 +494,12 @@ class Combat {
     for (const s of g.parked.near(ox + dx * Math.min(far, 70) * 0.5, oy + dy * Math.min(far, 70) * 0.5, Math.min(far, 70) * 0.5 + 8, (this._pk ||= []))) car(s, 'parked');
     // people: an upright cylinder each; the top quarter of a metre is the head
     const person = (p, kind, hgt, zb) => {
+      if (bikeHit) {
+        const x = ox + dx*tmin - p.x, y = oy + dy*tmin - p.y, z = oz + dz*tmin - zb;
+        if (z >= 0 && z <= hgt && (z <= hgt-0.27 ? x*x+y*y <= 0.23**2 : x*x+y*y+(z-hgt+0.12)**2 <= 0.14**2)) {
+          take(tmin, kind, -dx,-dy,-dz,p,z > hgt-0.27 ? 'head' : z < hgt/2 ? 'legs' : 'body'); return;
+        }
+      }
       const rx = ox - p.x, ry = oy - p.y, A = dx * dx + dy * dy; if (A < 1e-9) return; const B = rx * dx + ry * dy; if (-B / A < -1 || -B / A > H.t + 1) return; const r = 0.23, Cc = rx * rx + ry * ry - r * r, disc = B * B - A * Cc; if (disc < 0) return;
       const t = (-B - Math.sqrt(disc)) / A; if (t < tmin || t >= H.t) return; const z = oz + dz * t - zb; if (z < 0 || z > hgt) return;
       if (z > hgt - 0.27) { const tm = -B / A, cz = oz + dz * tm - zb - (hgt - 0.12), d2 = Cc + r * r - B * B / A + cz * cz; if (d2 > 0.14 * 0.14) return; }      // past the shoulders only the head itself counts
@@ -468,12 +511,18 @@ class Combat {
     const Z = this.HZ ? this._zp : null, zone = (p, kind, sc) => {
       const m0 = Z[0] - ox, m1 = Z[1] - oy, m2 = Z[2] - oz, al = m0 * dx + m1 * dy + m2 * dz; if (al < -1 || al > H.t + 1) return; if (m0 * m0 + m1 * m1 + m2 * m2 - al * al > 6.3) return;
       let bt = 1e9, part = null, cx = Z[0], cy = Z[1], th = -1; const rh = this.T('hzr', 0.15) * sc + Math.max(0, al - 25) * this.T('hzf', 0.0012);      /* the head's ball: three or four centimetres wider than the head, and past 25 m wider by about a pixel of the picture (at 100 m a head is two and a half pixels across) */
-      { const q = rh * rh - (m0 * m0 + m1 * m1 + m2 * m2 - al * al); if (q > 0) { const t = al - Math.sqrt(q); if (t >= tmin) th = t; } }
+      { const q = rh * rh - (m0 * m0 + m1 * m1 + m2 * m2 - al * al); if (q > 0) { const t = al - Math.sqrt(q); if (t >= tmin) th = t; else if (bikeHit && al + Math.sqrt(q) >= tmin) th = tmin; } }
       const hl = Math.hypot(Z[0] - Z[3], Z[1] - Z[4], Z[2] - Z[5]) || 1, nk = Math.max(0, 1 - 0.22 * sc / hl), gz = Math.min(Z[5] - 0.2, (p.z !== undefined && kind !== 'ped' ? p.z || 0 : st.onSidewalk(p.x, p.y) ? 0.15 : 0) + 0.12 * sc);
       for (let k = 0; k < 2; k++) {      /* 0: hips -> neck, 1: hips -> the ground under them */
         const ax = Z[3], ay = Z[4], az = Z[5], ux = k ? 0 : (Z[0] - ax) * nk, uy = k ? 0 : (Z[1] - ay) * nk, uz = k ? gz - az : (Z[2] - az) * nk, r = (k ? 0.17 : 0.2) * sc;
         const wx = ox - ax, wy = oy - ay, wz = oz - az, b = dx * ux + dy * uy + dz * uz, c = ux * ux + uy * uy + uz * uz, dd = dx * wx + dy * wy + dz * wz, e = ux * wx + uy * wy + uz * wz, D = c - b * b, s = D < 1e-9 ? 0 : clamp((e - b * dd) / D, 0, 1), tc = b * s - dd;
-        const qx = wx + dx * tc - ux * s, qy = wy + dy * tc - uy * s, qz = wz + dz * tc - uz * s, q = r * r - (qx * qx + qy * qy + qz * qz); if (q <= 0) continue; const t = tc - Math.sqrt(q); if (t < tmin || t >= bt) continue;
+        const qx = wx + dx * tc - ux * s, qy = wy + dy * tc - uy * s, qz = wz + dz * tc - uz * s, q = r * r - (qx * qx + qy * qy + qz * qz); if (bikeHit) {
+          const u = c ? clamp((e + b*tmin)/c, 0, 1) : 0;
+          if ((wx+dx*tmin-ux*u)**2 + (wy+dy*tmin-uy*u)**2 + (wz+dz*tmin-uz*u)**2 <= r*r) {
+            bt = tmin; part = k ? 'legs' : 'body'; break;
+          }
+        }
+        if (q <= 0) continue; const t = tc - Math.sqrt(q); if (t < tmin || t >= bt) continue;
         bt = t; part = k || oz + dz * t < az - 0.04 * sc ? 'legs' : 'body'; cx = ax + ux * s; cy = ay + uy * s; }
       if (th >= 0) { bt = th; part = 'head'; cx = Z[0]; cy = Z[1]; }      /* a line that passes through the head's ball is a head shot, whatever of the shoulders it also crosses */
       if (!part || bt >= H.t) return; let nx = ox + dx * bt - cx, ny = oy + dy * bt - cy; const nl = Math.hypot(nx, ny) || 1; take(bt, kind, nx / nl, ny / nl, 0, p, part);
@@ -548,6 +597,32 @@ class Combat {
       if (mat === 'tyre') { if (!S.tyre) { S.tyre = true; if (h.ck === 'traffic') { v.v0 *= 0.45; } } const k = (h.lp[0] > 0 ? 'f' : 'b') + (h.lp[1] > 0 ? 'l' : 'r'); S.flat = S.flat || {}; if (!(k in S.flat)) { S.flat[k] = 0; this.snd('impact', 'tyre', { dist, pan }); } }
       else { S.hp -= W.dmg * (mat === 'glass' ? 0.35 : 0.8); this.carHurt(v, S, h); if (this.DMG && mat === 'metal') { try { this.lampHit(v, S, h, dist); } catch (e) {} } }
       return drv || 'car';
+    }
+    if (h.kind === 'driver') return this.driverHit(h.obj, this.carState(h.obj, 'traffic'), h, W);
+    if (h.kind === 'mounted') {
+      const r = h.obj, heading = r.hv ?? r.h, speed = r.v || 0;
+      const owner = r.moto ? g.moto : g.riders;
+      if (!owner.releaseRider(r, h)) return null;
+      const kind = g.peds.kinds[(r.rk ?? r.pv ?? 0) % g.peds.kinds.length];
+      const vis = g.peds.visual(kind), p = {x:r.x, y:r.y, h:heading, kind, vis, scale:1, fall:0, t:0,
+        state:'walk', speed, vx:Math.cos(heading)*speed, vy:Math.sin(heading)*speed};
+      p.hp = (r.hp ?? 60) - (h.part === 'head' && this.HZ ? 1e4 : W.dmg * (h.part === 'head' ? 4 : h.part === 'legs' ? 0.7 : 1));
+      vis.object.scale.setScalar(1);
+      vis.object.position.set(p.x, r.z || 0, -p.y);
+      vis.object.rotation.set(0, heading, 0);
+      if (vis.mixer) {
+        vis.mixer.stopAllAction(); vis.cur = null; vis.mixer.timeScale = 1;
+        (vis.acts.drive || vis.acts.idle)?.reset().play();
+        vis.mixer.setTime(0.2); vis.mixer.timeScale = 0;
+      }
+      vis.object.updateMatrixWorld(true);
+      g.peds.list.push(p);
+      if (!this.bodies?.kill(p, 'ped', h, W.force)) { p.state = 'down'; this.pedhit(p, h, W.force); }
+      fx.impact(P, Nn, 'flesh', {power:1});
+      if (first) this.snd('impact', 'flesh', {dist, pan});
+      if (h.part === 'head') this.headshot();
+      if (p.hp <= 0) { this.kills++; return 'kill'; }
+      return 'ped';
     }
     /* a subway rider (w7): the round stops in him. What he then does is the subway lane's: if its riders.js has shot(rider, hit) it is called and may answer 'kill'; either way it counts as a wounding */
     if (h.kind === 'rider') { const dir = _v3.set(h.dx || 0, h.dz || 0, -(h.dy || 0)); fx.impact(P, _v4.copy(Nn).multiplyScalar(0.6).addScaledVector(dir, 0.5), 'flesh', { power: h.part === 'head' ? 1.3 : 1 }); if (first) this.snd('impact', 'flesh', { dist, pan }); let res = null;
@@ -753,9 +828,9 @@ class Combat {
      him is re-posed) and the car rolls to a stop. The seat is the game's own (seatOf); hips 0.22 m above the seat base as game.js seats the figure. */
   driverSeat(v) { const st = this.g.seatOf(v, '\u0000'); return [st[0], st[1], st[2] + 0.22]; }
   driverHit(v, S, h, W) {
-    if (!h.lp || S.drvDead || S.fire && S.hp <= 0) return null; const g = this.g, cs = Math.cos(v.h), sn = Math.sin(v.h), dx = h.dx * cs + h.dy * sn, dy = -h.dx * sn + h.dy * cs, dz = h.dz, st = this.driverSeat(v);
+    if ((!h.lp && h.kind !== 'driver') || S.drvDead || S.fire && S.hp <= 0) return null; const g = this.g, cs = Math.cos(v.h), sn = Math.sin(v.h), dx = h.dx * cs + h.dy * sn, dy = -h.dx * sn + h.dy * cs, dz = h.dz, st = this.driverSeat(v);
     const near = (cz, r) => { const ax = st[0] - h.lp[0], ay = st[1] - h.lp[1], az = cz - h.lp[2], t = ax * dx + ay * dy + az * dz; if (t < -0.1 || t > 3) return false; return ax * ax + ay * ay + az * az - t * t < r * r; };
-    const head = near(st[2] + 0.72, 0.15), body = !head && near(st[2] + 0.36, 0.27); if (!head && !body) return null;
+    const head = h.kind === 'driver' ? h.part === 'head' : near(st[2] + 0.72, 0.15), body = !head && (h.kind === 'driver' || near(st[2] + 0.36, 0.27)); if (!head && !body) return null;
     const D = (S.drv ||= { hp: 60, t: 0, v0: 0, side: rnd() < 0.5 ? 1 : -1 }); D.hp -= W.dmg * (head ? 4 : 1); this.stats.hits.driver = (this.stats.hits.driver || 0) + 1;
     const cz = st[2] + (head ? 0.72 : 0.4), wx = v.x + cs * st[0] - sn * st[1], wy = v.y + sn * st[0] + cs * st[1]; this.fx.impact(_v3.set(wx, cz, -wy), _v4.set(-h.dx, 0.3, h.dy).normalize(), 'flesh', { power: head ? 1.1 : 0.8 });
     if (head) this.headshot();

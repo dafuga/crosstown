@@ -140,6 +140,19 @@ export async function install(g) {
     r._gap = gap; r._ov = ov;
   }
   function slotFree(r, lo) { for (let i = 0; i < seen.length; i += 4) { const f = seen[i], l = seen[i + 1], hl = seen[i + 2], hw = seen[i + 3]; if (f - hl < 10 && f + hl > -2.5 && Math.abs(r.lo - l - lo) < hw + 0.42) return false; } return true; }
+  out.releaseRider = (r, hit) => {
+    if (r.sit) {
+      const group = out.clumps.find(c => c.bikes.includes(r));
+      if (!group) return false;
+      group.bikes.splice(group.bikes.indexOf(r), 1);
+      for (const circle of r.circ) circle.on = false;
+      Object.assign(r, {sit:null, z:0.15, hv:r.h, v:0});
+      out.list.push(r);
+    } else if (r.state !== 'ride') return false;
+    r.mode = 'fallen'; r.rider = false;
+    down(r, Math.cos(r.hv)*r.v, Math.sin(r.hv)*r.v, hit.dy*Math.cos(r.hv) - hit.dx*Math.sin(r.hv));
+    return true;
+  };
   function down(r, vx, vy, l) { r.state = 'down'; r.t = 0; const sp = Math.hypot(vx, vy) || 1, sg = l > 0 ? -1 : 1; r.dvx = vx * 0.8 + (vy / sp) * sg * 1.5; r.dvy = vy * 0.8 - (vx / sp) * sg * 1.5; r.roll = sg; r.spin = (rand() - 0.5) * 3; out.stats.hits++;
     try { g.sound.thud(); } catch (e) {} try { g.missions.onPedHit(); } catch (e) {} }
 

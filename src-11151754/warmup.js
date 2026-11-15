@@ -82,7 +82,7 @@ export function startWarmup(world, renderer, P) {
   // ROUNDS: a material is handed over once, but its program changes when the lamps in the scene change (and a second kind of mesh can wear it), so when
   // the scene's lamps change, and every 10 s once nothing new is found, the "handed over" marks are dropped and everything is walked again under the
   // same cap (what is built already costs page time only: 40 ms a pass at most). ?earlyround=0 = handed over once, as the H22 trial did.
-  const capQ = P.get('earlycap'), CAP = capQ !== null && capQ !== '' && +capQ >= 0 ? Math.floor(+capQ) : Math.max(2, Math.round((+navigator.hardwareConcurrency || 8) / 2));
+  const capQ = P.get('earlycap'), CAP = capQ === '-1' ? Math.max(2, Math.round((+navigator.hardwareConcurrency || 8) / 2)) : capQ !== null && capQ !== '' && +capQ >= 0 ? Math.floor(+capQ) : 0;     /* handoff22b (light, Nov 15): the cap is OFF unless ?earlycap=N: players' Windows loads did not show the box's gain (step longer, ready no sooner); ?earlycap=-1 = half the cores as handoff22 had it */
   let capA = new WeakSet(), capM = new WeakSet(), capSig = null, capT = 0, capIdle = false; E.cap = CAP; E.capMax = 0; E.rounds = 0; const ROUND = P.get('earlyround') !== '0';
   const CH = { on: CAP > 0, grow: 1, ps: null, t: 0 }; let capPar = null;
   const chainLook = () => { if (!CH.on || !CH.ps) return; let k = 0; try { for (const p of CH.ps) if (!p.usedTimes || p.isReady()) k++; } catch (e) { CH.on = false; return; } if (k < CH.ps.length) return;
