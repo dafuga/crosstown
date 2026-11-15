@@ -112,7 +112,7 @@ export async function install(game) {
   // ---------------------------------------------------------------- trains
   const startTrains = async (u) => { let mod; try { mod = await import('./train.js'); } catch (e) { console.log('[subway] no train.js: ' + (e && e.message)); return; } if (u.state !== 'ready') return;
     const st = u.st; let k = 0;
-    for (const T of st.tracks) { const route = T.routes[k % T.routes.length], tr = mod.buildTrain(THREE, { cars: 8, div: st.div || 'B', route: { label: route, color: ROUTE_COL[route] || '#888' }, seed: 7 + T.id });
+    for (const T of st.tracks) { const route = T.routes[k % T.routes.length], tr = mod.buildTrain(THREE, { cars: st.cars || 8, div: st.div || 'B', route: { label: route, color: ROUTE_COL[route] || '#888' }, seed: 7 + T.id });
       tr.group.traverse((o) => { o.layers.enable(LAYER); if (o.isMesh) { o.frustumCulled = false; for (const m of Array.isArray(o.material) ? o.material : [o.material]) if (m && !m.userData.subK) { m.userData.subK = 1; m.fog = false; } } }); tr.group.visible = false; u.res.core.add(tr.group);
       const dx = T.b[0] - T.a[0], dy = T.b[1] - T.a[1], L = Math.hypot(dx, dy), ux = dx / L * T.dir, uy = dy / L * T.dir;
       const far = st.plen / 2 + st.tun - tr.length / 2 - 3;
@@ -184,7 +184,7 @@ export async function install(game) {
   const nextHop = (st, dir, key, route) => { const a = brAt(st, key, route), n = a && a.b.stops[a.i + a.d]; if (n) return { N: stOf.get(n[0]), key: a.d > 0 ? n[1] : n[2] }; const N = nextLine(st, dir, key); return N ? { N, key } : null; };
   const nextStation = (st, dir, key, route) => { const h = nextHop(st, dir, key, route); return h ? h.N : null; };
   S.dirOf = (t, route) => { const a = t && t.u && brAt(t.u.st, t.T.key, route || t.route); return a ? a.d : t.T.dir; };      // +1 = the route's uptown way (at 7 Av the E runs against the track's own sense)
-  const EXPR = new Set((data.lines || []).flatMap((l) => l.express || [])), destOf = (T, r) => (T.kind === 'express' && EXPR.has(r) ? 'EXPRESS' : 'LOCAL');      // (the E on 7 Av's tracks is a local)
+  const EXPR = new Set((data.lines || []).flatMap((l) => l.express || [])), destOf = (T, r) => (r === 'S' ? 'SHUTTLE' : T.kind === 'express' && EXPR.has(r) ? 'EXPRESS' : 'LOCAL');      // (the E on 7 Av's tracks is a local)
   const tLocal = (t, x, y) => { const dx = x - (t.mx + t.ux * t.c), dy = y - (t.my + t.uy * t.c); return [-dx * t.uy + dy * t.ux, dx * t.ux + dy * t.uy]; };      // [across (train +X), along]
   const tMap = (t, lx, lz) => [t.mx + t.ux * t.c + t.ux * lz - t.uy * lx, t.my + t.uy * t.c + t.uy * lz + t.ux * lx];
   const inCar = (t, lx, lz, open) => { const tr = t.train, m = 0.22; for (const w of tr.walk) if (lx >= w.x0 + m && lx <= w.x1 - m && lz >= w.z0 + m && lz <= w.z1 - m) return true;
