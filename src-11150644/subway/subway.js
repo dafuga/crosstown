@@ -29,6 +29,13 @@ export async function install(game) {
   const fail = (where, e) => { if (S.fails++ < 6) console.warn('[subway] ' + where + ': ' + String((e && e.stack) || e).slice(0, 500)); };
   for (const e of EN) { e.ca = Math.cos(e.h); e.sa = Math.sin(e.h); }
   const stOf = new Map(data.stations.map((s) => [s.id, s]));
+  // The data is made for the largest map; the map loaded now may be smaller (the public build can name its own). An entrance outside this map's play area is off
+  // (no kit, no gate, no way out up its stair), a station left with no entrance is not there at all and no train runs to it.
+  try { const pa = (g.city && g.city.meta && g.city.meta.play) || (w.city && w.city.meta && w.city.meta.play); if (pa && P.get('subplay') !== '0') { let off = 0; const gone = [];
+      for (const e of EN) if (!(e.x > pa[0] + 1 && e.x < pa[2] - 1 && e.y > pa[1] + 1 && e.y < pa[3] - 1)) { e.off = true; e.open = false; off++; }
+      for (const st of data.stations) { st.ent = st.ent.filter((i) => !EN[i].off); if (!st.ent.length) gone.push(st.id); }
+      for (const L of data.lines || []) L.stations = L.stations.filter((id) => !gone.includes(id));
+      if (off) console.log('[subway] this map: ' + off + ' entrances outside it are off' + (gone.length ? '; stations not in it: ' + gone.join(' ') : '')); } } catch (e) { fail('play area', e); }
 
   // ---------------------------------------------------------------- the street: kerb stones, railings and the sign at every entrance
   const lO = meta.lOpen, W2 = meta.wStair / 2, zW = meta.zWalk, CW = 0.2;
@@ -57,14 +64,14 @@ export async function install(game) {
     for (const o of [im, bd]) { o.instanceMatrix.needsUpdate = true; o.castShadow = o === im; o.receiveShadow = true; o.computeBoundingSphere(); streetGroup.add(o); }
     let cx = 0, cy = 0; for (const e of es) { cx += e.x; cy += e.y; } st.cx = cx / es.length; st.cy = cy / es.length; st.rad = Math.max(...es.map((e) => Math.hypot(e.x - st.cx, e.y - st.cy))); }
   // a CLOSED entrance (its station's hall is out of reach, or not built) is shut at the street: a folding gate across the top of the stair, solid; the steps show going down behind it
-  { const closed = EN.filter((e) => !e.open), parts = [], bar = (x0, x1, y0, y1, z0, z1) => { const b = new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0); b.translate((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2); const c = new Float32Array(b.attributes.position.count * 3).fill(0.09); b.setAttribute('color', new THREE.BufferAttribute(c, 3)); parts.push(b); };
+  { const closed = EN.filter((e) => !e.open && !e.off), parts = [], bar = (x0, x1, y0, y1, z0, z1) => { const b = new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0); b.translate((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2); const c = new Float32Array(b.attributes.position.count * 3).fill(0.09); b.setAttribute('color', new THREE.BufferAttribute(c, 3)); parts.push(b); };
     const zr = W2 + CW / 2; for (const yy of [zW + 0.06, zW + 0.62, zW + 1.16]) bar(-0.03, 0.03, yy - 0.03, yy + 0.03, -zr, zr); for (let k = 0; k <= 12; k++) { const z = -zr + 2 * zr * k / 12; bar(-0.012, 0.012, zW + 0.03, zW + 1.19, z - 0.012, z + 0.012); }
     bar(-0.035, 0.035, zW + 0.72, zW + 0.92, -0.16, 0.16);      // the lock box
     if (closed.length) { const gm = new THREE.InstancedMesh(mergeGeos(parts), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.6 }), closed.length); closed.forEach((e, i) => { q4.setFromAxisAngle(UP, e.h); m4.compose(p4.set(e.x - e.ca * 0.02, 0, -(e.y - e.sa * 0.02)), q4, s4.set(1, 1, 1)); gm.setMatrixAt(i, m4); }); gm.instanceMatrix.needsUpdate = true; gm.castShadow = true; gm.computeBoundingSphere(); gm.name = 'subway_gates'; streetGroup.add(gm); }
     try { const st = g.statics, old = st.owner; st.owner = 'subway'; for (const e of closed) { const c = (u, v) => [e.x + e.ca * u - e.sa * v, e.y + e.sa * u + e.ca * v], a = c(-0.05, W2 + CW / 2), b = c(-0.05, -W2 - CW / 2); st.addSeg(a[0], a[1], b[0], b[1]); } st.owner = old; } catch (e) { fail('gates', e); } }
   w.scene.add(streetGroup);
   // the kerb stones and railings are solid to cars and people on the street (three sides; the top of the stair is the way in)
-  try { const st = g.statics, old = st.owner; st.owner = 'subway'; for (const e of EN) { const c = (u, v) => [e.x + e.ca * u - e.sa * v, e.y + e.sa * u + e.ca * v], a = c(-0.05, W2 + CW / 2), b = c(lO + CW / 2, W2 + CW / 2), d = c(lO + CW / 2, -W2 - CW / 2), f = c(-0.05, -W2 - CW / 2); st.addSeg(a[0], a[1], b[0], b[1]); st.addSeg(b[0], b[1], d[0], d[1]); st.addSeg(d[0], d[1], f[0], f[1]); } st.owner = old; } catch (e) { fail('statics', e); }
+  try { const st = g.statics, old = st.owner; st.owner = 'subway'; for (const e of EN) { if (e.off) continue; const c = (u, v) => [e.x + e.ca * u - e.sa * v, e.y + e.sa * u + e.ca * v], a = c(-0.05, W2 + CW / 2), b = c(lO + CW / 2, W2 + CW / 2), d = c(lO + CW / 2, -W2 - CW / 2), f = c(-0.05, -W2 - CW / 2); st.addSeg(a[0], a[1], b[0], b[1]); st.addSeg(b[0], b[1], d[0], d[1]); st.addSeg(d[0], d[1], f[0], f[1]); } st.owner = old; } catch (e) { fail('statics', e); }
 
   // ---------------------------------------------------------------- a station's underground: built near, dropped far
   let look = null, lookP = null; const getLook = () => (lookP ||= getLook1()); const getLook1 = async () => { try { if (P.get('sublook') === 'plain') throw new Error('plain asked'); look = (await import('./look.js')).makeLook(THREE); const need = ['tile', 'tileDark', 'floor', 'platform', 'edge', 'stair', 'ceiling', 'concrete', 'trackbed', 'steel', 'metal', 'rail', 'black', 'glowWhite']; for (const k of need) if (!look.mat || !look.mat[k]) throw new Error('look.mat.' + k + ' missing'); }
@@ -151,7 +158,7 @@ export async function install(game) {
   const figureLayers = () => { try { pl.vis.object.traverse((o) => o.layers.enable(LAYER)); } catch (e) {} };
   const setOrder = (v) => { if (S._ord === v) return; S._ord = v; try { pl.vis.object.traverse((o) => { if (o.isMesh) o.renderOrder = v; }); } catch (e) {} };
   const hemi = new THREE.HemisphereLight(0xfff3dc, 0x7d776c, 0.75 * K / 0.3), key = new THREE.DirectionalLight(0xfff6e6, 0.5 * K / 0.3); hemi.layers.set(LAYER); key.layers.set(LAYER); key.position.set(0.3, 1, 0.2); w.scene.add(hemi, key, key.target);
-  const setDeep = (on) => { if (S.deep === on) return; S.deep = on; emit('deep', on); for (const u of S.units.values()) if (u.sky) u.sky.visible = on;
+  const setDeep = (on) => { if (S.deep === on) return; S.deep = on; emit('deep', on); for (const u of S.units.values()) if (u.sky) u.sky.visible = on && u === S.unit;      /* only the sky up HIS station's stairs: a crossing station's card stood in the hall as a white shaft (Herald Sq N Q R W, out/all-heraldq/07-down-hall.jpg) */
     if (on) { saved = { mask: w.camera.layers.mask, env: w.scene.environmentIntensity, off: w.streetOff, bg: w.scene.background }; w.camera.layers.set(LAYER); w.scene.environmentIntensity = 0.03; w.streetOff = true; figureLayers(); }
     else if (saved) { w.camera.layers.mask = saved.mask; w.scene.environmentIntensity = saved.env; w.streetOff = saved.off; saved = null; } };
   const enter = (u, e) => { S.own = true; S.unit = u; pos.x = pl.x; pos.y = pl.y; const f = u.st.floors.find((q) => q.k === 'street' && q.ent === e.id), uu = clamp(Walk.u(f, pl.x, pl.y), -f.l / 2 + 0.06, f.l / 2), vv = clamp(Walk.v(f, pl.x, pl.y), -f.w / 2 + R_BODY + 0.02, f.w / 2 - R_BODY - 0.02);
@@ -193,7 +200,7 @@ export async function install(game) {
     const c1 = -Math.min(nt.far, N.plen / 2 + tr.length / 2 + 25);      // it comes in from the dark, the whole train still in the tunnel
     nt.state = 'in'; nt.c = c1; nt.v = t.v; S.keep = null; nt.doors = 0; nt.t = 0; tr.group.visible = true; try { tr.setDoors(0, 0); tr.setLights({ front: 1, interior: K * 1.15 }); const r = t.T.routes[(t.routeI + t.T.routes.length - 1) % t.T.routes.length]; tr.setRoute({ label: r, color: ROUTE_COL[r] || '#888' }); } catch (e) {}
     t.state = 'wait'; t.t = 40; t.train.group.visible = false; const da = Math.atan2(nt.uy, nt.ux) - Math.atan2(t.uy, t.ux); pl.h += da; g.cam.yaw += da;
-    R.t = nt; u.res.core.visible = false; nu.res.core.visible = true; S.unit = nu; showWells(nu); const [x, y] = tMap(nt, R.lx, R.lz); pos.x = x; pos.y = y; pl.x = x; pl.y = y; g.cam.tx = x; g.cam.ty = y; S._clip = undefined; S.stats.hops = (S.stats.hops || 0) + 1; if (window.__mark) window.__mark('subway-hop'); emit('hop', u, nu, nt);
+    R.t = nt; u.res.core.visible = false; nu.res.core.visible = true; if (u.sky) u.sky.visible = false; if (nu.sky) nu.sky.visible = !!S.deep; S.unit = nu; showWells(nu); const [x, y] = tMap(nt, R.lx, R.lz); pos.x = x; pos.y = y; pl.x = x; pl.y = y; g.cam.tx = x; g.cam.ty = y; S._clip = undefined; S.stats.hops = (S.stats.hops || 0) + 1; if (window.__mark) window.__mark('subway-hop'); emit('hop', u, nu, nt);
     console.log('[subway] riding ' + u.st.name + ' -> ' + N.name); return true; };
   let step0 = null;      // the game's step with everyone else's wrappers on it (taken on the first drawn frame, so that ours is the outermost)
   const myStep = function (dt) {
@@ -208,7 +215,7 @@ export async function install(game) {
       if (!S.ride && chip) hint(null);
       if (S.ride) rideStep(dt, I, m, use);
       else if (m > 0.1) { const sp = (I.run ? 5.2 : 1.9) * Math.min(1, m) * (f && f.stair ? (I.run ? 0.62 : 0.8) : 1), dx = Math.cos(pl.h) * sp * dt, dy = Math.sin(pl.h) * sp * dt;
-        if (f && f.k === 'street') { const dn = f.z0 > f.z1 ? 1 : -1, d = dn * Walk.u(f, pos.x + dx, pos.y + dy) + f.l / 2; if (d < 0.02 && Math.abs(Walk.v(f, pos.x + dx, pos.y + dy)) < f.w / 2) { leave(pos.x + dx * 2, pos.y + dy * 2); return; } }      // up the last step: back on the street
+        if (f && f.k === 'street' && !(EN[f.ent] && EN[f.ent].off)) { const dn = f.z0 > f.z1 ? 1 : -1, d = dn * Walk.u(f, pos.x + dx, pos.y + dy) + f.l / 2; if (d < 0.02 && Math.abs(Walk.v(f, pos.x + dx, pos.y + dy)) < f.w / 2) { leave(pos.x + dx * 2, pos.y + dy * 2); return; } }      // up the last step: back on the street
         const nf = wk.move(pos, dx, dy, R_BODY); if (nf) f = S.floor = nf; if (f && f.k === 'platform') tryBoard(u, Math.cos(pl.h) * 0.5, Math.sin(pl.h) * 0.5); }
       if (!S.ride && f !== S.floor) f = S.floor;
       const zt = !S.ride && f && f.stair ? stairZ(f, pos.x, pos.y) : pos.z; visZ += (zt - visZ) * Math.min(1, dt * 16); if (Math.abs(zt - visZ) > 0.6 || S.ride) visZ = zt;

@@ -81,8 +81,19 @@ const SKY_FS = `uniform vec3 uMoon; uniform float uN, uDusk, uCloud; uniform vec
 export async function makeKit(game, N) {
   const g = game, w = g.world, P = g.P || new URLSearchParams(location.search), T = N.tune;
   const K = { pass: null, lamps: null, cars: null, sky: null, lampN: 0, spots: 0, carN: 0, patched: !!w.shared.uNightK, map: null };
-  Object.assign(T, { lamp: 0.75, head: 2.2, amb: 1.0, win: 0.55, winFrac: 0.36, glow: 1.0 }, Object.fromEntries(['lamp', 'head', 'amb', 'win', 'winFrac', 'glow'].filter((k) => P.has('N' + k)).map((k) => [k, +P.get('N' + k)])));
+  Object.assign(T, { lamp: 0.75, head: 2.2, amb: 1.0, win: 0.55, winFrac: 0.36, glow: 1.0, fx: 4.5 }, Object.fromEntries(['lamp', 'head', 'amb', 'win', 'winFrac', 'glow', 'fx'].filter((k) => P.has('N' + k)).map((k) => [k, +P.get('N' + k)])));
   if (!K.patched) console.log('[night] facade.js / world.js patch not there: windows stay dark');
+  // light, Nov 15 (the white patch by the plaza lamps at night): the combat effects' smoke, steam, dust and mist (combat/fx.js) are unlit quads whose colours
+  // are fixed DAY numbers times fx.day, and fx.day was 1.0 at all hours: steam off a damaged car's hood is .5 in scene light, a wreck's smoke .16, powder
+  // smoke .2, while the night street around is about .006 and the night exposure 3.2: the cloud drew near white, and the lamp pass above then read it as
+  // a white surface (pixel / night ambient clamps to 1) and added the full lamp light of whatever stood behind it. They are things with their daylight
+  // painted in, like the hero walls below, so fx.day now follows the same number (dimK) times T.fx (?Nfx=). At 2.45 fx.day would be the kit's own night
+  // ambient (uAmb, .052 at 22:00) and a particle's colour number its albedo in the lamp pass. Seen on laptop 2 at 22:00: at 1.5 and 2.45 steam and smoke
+  // cannot be made out at all; at 3.5 and 4.5 there is no white patch under the plaza lamps and a faint grey column on a dark road, a little plainer at
+  // 4.5 (steam then reads as albedo .92, a wreck's smoke .29): 4.5 it is. Higher was not tried: steam would pass albedo 1, the old fault's own mechanism.
+  // 1 by day. ?nightfx=0 = as before (fx.day never touched).
+  const NFX = P.get('nightfx') !== '0'; K.fxDay = 1;
+  const setFx = () => { if (!NFX) return; const fx = g.combat && g.combat.fx; if (fx && fx.day !== K.fxDay) fx.day = K.fxDay; };
 
   // ---------------------------------------------------------------- street lamps: where they are (the streets layer's own list), their map, their glows
   const heads = [];
@@ -142,10 +153,10 @@ export async function makeKit(game, N) {
     if (K.lamps) { K.lamps.m.visible = on && lamp > 0.001; K.lamps.mat.uniforms.uOn.value = lamp * T.glow; }
     C.m.visible = on && head > 0.001; C.mat.uniforms.uOn.value = head * T.glow;
     if (K.sky) { K.sky.visible = on; K.sky.material.uniforms.uN.value = n; K.sky.material.uniforms.uDusk.value = sm(0.05, 0.45, n) * (1 - sm(0.5, 0.95, n)) * 0.5 * (1 - rain); K.sky.material.uniforms.uCloud.value = rain; const lv = mix(1.5, 0.035, Math.pow(e, 0.7)); K.sky.material.uniforms.uCloudCol.value.set(lv * 0.93, lv * 0.96, lv * 1.0); }
-    { const s = N2.saved, k = on && s ? Math.min(1, (0.45 * w.scene.environmentIntensity / s.env + 2.0 * w.sun.intensity / s.I) / 2.45) : 1; if (on) collect(); dimApply(on ? k : 1, on ? e : 0); K.dimK = k; }
+    { const s = N2.saved, k = on && s ? Math.min(1, (0.45 * w.scene.environmentIntensity / s.env + 2.0 * w.sun.intensity / s.I) / 2.45) : 1; if (on) collect(); dimApply(on ? k : 1, on ? e : 0); K.dimK = k; K.fxDay = on ? Math.min(1, k * T.fx) : 1; setFx(); }
     if (K.patched) { const win = sm(0.25, 0.65, n), late = N2.tod > 0.5 && N2.tod < 5.2 ? 0.45 : 1; w.shared.uNightK.value.set(on ? mix(1, 0.05, e) : 1, on ? T.win * win : 0, on ? T.winFrac * win * late : 0); } };
   K.frame = (n, N2) => { if (performance.now() - dim.t > 3000) { dim.t = performance.now(); const had = dim.list.size; collect(); if (dim.list.size !== had) dimApply(dim.k, sm(0, 1, n)); }      // hero buildings arrive late
-    if (C.m.visible) carLights(); else if (K.pass) K.pass.u.uSpotN.value = 0; };
-  K.info = () => ({ lamps: K.lampN, map: K.map && K.map.size, pass: !!K.pass, passOn: !!(K.pass && K.pass.enabled), passDrawn: K.pass ? K.pass.drawn : 0, cars: K.carN, spots: K.spots, windows: K.patched, baked: dim.list.size, bakedK: +(K.dimK || 1).toFixed(3) });
+    if (C.m.visible) carLights(); else if (K.pass) K.pass.u.uSpotN.value = 0; setFx(); };      /* (each frame: the guns may load after the kit) */
+  K.info = () => ({ lamps: K.lampN, map: K.map && K.map.size, pass: !!K.pass, passOn: !!(K.pass && K.pass.enabled), passDrawn: K.pass ? K.pass.drawn : 0, cars: K.carN, spots: K.spots, windows: K.patched, baked: dim.list.size, bakedK: +(K.dimK || 1).toFixed(3), fxDay: NFX ? +K.fxDay.toFixed(4) : 'off' });
   return K;
 }

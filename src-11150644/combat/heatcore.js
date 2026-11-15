@@ -143,6 +143,14 @@ export class Heat {
     const C = CRIME[kind], l0 = this.level; let p = this.pts;
     if (C.cap === undefined || p < C.cap) p = Math.min(C.cap ?? PMAX, p + C.p); if (C.min) p = Math.max(p, C.min); this.pts = Math.min(PMAX, p);
     this.lastCrimeT = this.t; this.coolT = 0; this.onScene = false; this.setLevel();
+    /* p1 (three players' police reports, Nov 15; f8c122: 'No more police are spawning (their calls still are appearing) despite high wanted level. none are in game, and none are searching for me'):
+       a crime that is called in tells them WHERE. Until now the place they look for him was set only when the heat began or when an officer saw him, so a man they had lost (a change of cars unseen,
+       a run on foot) could kill his way to five stars half a mile off and every unit was sent to the old place. Now: he is already wanted, nobody has him in sight, and the call comes from outside
+       the area they are searching (or he has changed cars unseen): the call's place is where they look, and what he is in is what they look for. Not while the search for a driver they know
+       already has him near (est). ?heatcall=0 = as before. */
+    if (l0 > 0 && !this.seen && !this.dead && !this.est && this.g.P.get('heatcall') !== '0' && (this.swapK || Math.hypot(x - this.lkp.x, y - this.lkp.y) > AREA[l0])) { const pl = this.g.player, pv = pl.vehicle, nearHim = Math.hypot(x - pl.x, y - pl.y) < 60;
+      this.lkp.x = nearHim ? pl.x : x; this.lkp.y = nearHim ? pl.y : y; this.lkp.h = pv ? pv.h : pl.h; this.lkp.t = this.t; this.lkp.vx = pv && nearHim ? pv.vx : 0; this.lkp.vy = pv && nearHim ? pv.vy : 0; this.swapK = false; this.seenVeh = pv || null; this.unseenT = 0; this.trailS = this.trailN || 0;
+      this.stats.calls = (this.stats.calls || 0) + 1; this.say('p1: called in from ' + Math.round(this.lkp.x) + ',' + Math.round(this.lkp.y) + ' (' + kind + '): that is where they look now'); }
     if (this.level > l0) { if (l0 === 0) { const pl = this.g.player; this.lkp.x = pl.x; this.lkp.y = pl.y; this.dispT = DISP[1]; this.unseenT = 0; this.swapK = false; this.seenVeh = pl.vehicle || null; } this.pulse = 1; this.stats.levelT[this.level] = this.stats.levelT[this.level] ?? +this.t.toFixed(1); this.say('HEAT ' + this.level + ' (' + kind + ', ' + this.pts.toFixed(1) + ' pts)');
       if (this.level >= 3 && l0 < 3) this.shout('Shots fired, officers need help! Send everything!', 2); if (this.level === 5) this.shout('All units: suspect is armed. Take the shot.', 2); }
   }

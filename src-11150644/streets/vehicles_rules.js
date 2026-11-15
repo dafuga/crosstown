@@ -300,6 +300,16 @@ export function applyDoubleParked(game, opts = {}) {
     spots.push({ e, li: li0, s: s0, type: weighted({ van: 3, workvan: 3, boxtruck: 3, stepvan: 3 }, r()), seed: Math.floor(r() * 1e9), car: null, nudge: (right ? 1 : -1) * 0.75 });
   });
   const step0 = T.step.bind(T), spawn0 = T.spawn.bind(T), t = {};
+  /* THE TUCK FITS WHAT IS PARKED THERE (gameplay c1, Nov 15; public report 20261114174903-e25543 "Collision is wrong": a box truck on Madison Avenue stood half a metre
+     inside the two cars parked beside it). The tuck toward the parked row was a flat 0.75 m for every kind, whatever stood at the kerb; a van is 2.12 m wide, a box truck 2.46.
+     Now the standing car goes over only as far as leaves DBL_GAP between its side and the nearest parked car alongside it (never further than before, never out the other
+     way), worked out when it is put there and again each second in case a kerb row is built later (it only ever comes back toward the lane). ?dblfit=0 = the flat tuck. */
+  const fitOn = !(game.P && game.P.get && game.P.get('dblfit') === '0'), DBL_GAP = 0.25, DBL_MAX = 0.75, q2 = {}, near2 = [];
+  const fit = (sp, c) => { const sg = sp.nudge < 0 ? -1 : 1; if (!fitOn || !game.parked) return sg * DBL_MAX;
+    R.lanePos(sp.e, 1, sp.li, sp.s, q2); const fx = Math.cos(q2.h), fy = Math.sin(q2.h), rx = fy * sg, ry = -fx * sg, hl = c.def.len / 2 + 0.3, hw = c.def.wid / 2; let room = DBL_MAX;
+    near2.length = 0; for (const s of game.parked.near(q2.x, q2.y, 14, near2)) { if (s.gone) continue; const ch = Math.cos(s.h), sh = Math.sin(s.h), l2 = s.def.len / 2, w2 = s.def.wid / 2;
+      for (let a = -1; a <= 1; a += 0.25) for (let b = -1; b <= 1; b += 2) { const x = s.x + ch * l2 * a - sh * w2 * b - q2.x, y = s.y + sh * l2 * a + ch * w2 * b - q2.y, f = x * fx + y * fy, r = x * rx + y * ry; if (Math.abs(f) < hl && r > 0) room = Math.min(room, r - hw - DBL_GAP); } }
+    return sg * Math.max(0, room); };
   T.step = function (dt, tt) {
     const g = this.g, px = g.focus.x, py = g.focus.y;
     this._dpT = (this._dpT || 0) - dt;
@@ -307,12 +317,12 @@ export function applyDoubleParked(game, opts = {}) {
       for (const sp of spots) {
         if (sp.car && this.cars.indexOf(sp.car) < 0) sp.car = null;
         if (sp.cool > 0) { sp.cool -= 1; continue; }
-        if (sp.car) continue;
+        if (sp.car) { if (fitOn) { const n = fit(sp, sp.car); if (Math.abs(n) < Math.abs(sp.nudge)) sp.nudge = n; } continue; }
         R.lanePos(sp.e, 1, sp.li, sp.s, t); const d = Math.hypot(t.x - px, t.y - py); if (d > 380 || (d < 150 && !opts.anywhere)) continue;
         if (this.cars.some((c) => Math.hypot(c.x - t.x, c.y - t.y) < 16)) continue;
         const c = spawn0(sp.e, 1, sp.li, sp.s); if (!c) continue;
         c.type = sp.type; c.def = cars[sp.type]; c.color = colorFor(sp.type, hash(sp.seed), hash(sp.seed + 1)); c.id = sp.seed; c.v = 0; c.v0 = 0; c.stun = 1e9; c.dbl = true; c.held = 99;
-        sp.car = c;
+        sp.car = c; sp.nudge = fit(sp, c);
       }
     }
     // the demo's autopilot waits for ever behind a standing car: when it comes up the same block, the delivery is done and the van
