@@ -1,8 +1,8 @@
 {
 "file": "announcer.mp3",
 "format": "mp3 24 kHz mono 64 kbit/s",
-"secs": 134.88,
-"bytes": 1079808,
+"secs": 151.29,
+"bytes": 1210944,
 "voices": [
 "Bill pqHfZKP75CvOlQylNhV4",
 "Matilda XrExE9yKIg1WjnnlVkGX"
@@ -703,6 +703,76 @@
 "voice": "Matilda",
 "start": 133.0537,
 "dur": 1.4772
+},
+"st-50-st": {
+"text": "Fiftieth Street.",
+"who": "car",
+"voice": "Matilda",
+"start": 134.6809,
+"dur": 0.8872
+},
+"st-59-st-columbus-circle": {
+"text": "Fifty-ninth Street, Columbus Circle.",
+"who": "car",
+"voice": "Matilda",
+"start": 135.7182,
+"dur": 1.8938
+},
+"st-7-av": {
+"text": "Seventh Avenue.",
+"who": "car",
+"voice": "Matilda",
+"start": 137.7619,
+"dur": 0.9113
+},
+"st-57-st-7-av": {
+"text": "Fifty-seventh Street, Seventh Avenue.",
+"who": "car",
+"voice": "Matilda",
+"start": 138.8232,
+"dur": 1.9113
+},
+"st-grand-central-42-st": {
+"text": "Grand Central, Forty-second Street.",
+"who": "car",
+"voice": "Matilda",
+"start": 140.8845,
+"dur": 1.7729
+},
+"st-51-st": {
+"text": "Fifty-first Street.",
+"who": "car",
+"voice": "Matilda",
+"start": 142.8074,
+"dur": 1.0366
+},
+"st-5-av-53-st": {
+"text": "Fifth Avenue, Fifty-third Street.",
+"who": "car",
+"voice": "Matilda",
+"start": 143.994,
+"dur": 1.6293
+},
+"st-lexington-av-53-st": {
+"text": "Lexington Avenue, Fifty-third Street.",
+"who": "car",
+"voice": "Matilda",
+"start": 145.7734,
+"dur": 2.0307
+},
+"st-57-st": {
+"text": "Fifty-seventh Street.",
+"who": "car",
+"voice": "Matilda",
+"start": 147.9541,
+"dur": 1.1226
+},
+"st-5-av-59-st": {
+"text": "Fifth Avenue, Fifty-ninth Street.",
+"who": "car",
+"voice": "Matilda",
+"start": 149.2267,
+"dur": 1.7145
 }
 }
 }

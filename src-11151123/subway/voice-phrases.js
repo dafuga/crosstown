@@ -27,7 +27,7 @@ export const ordinal = (n) => { n = +n; if (n >= 100) { const r = n % 100; retur
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 // station names as the trains say them. "34 St-Herald Sq" -> "Thirty-fourth Street, Herald Square"; "47-50 Sts-Rockefeller Ctr" -> "Forty-seventh, Fiftieth Streets, Rockefeller Center"
 const SPOKEN = { '42 St-Port Authority': 'Forty-second Street, Port Authority Bus Terminal', '42 St-Port Authority Bus Terminal': 'Forty-second Street, Port Authority Bus Terminal' };
-export function spokenName(name) { if (SPOKEN[name]) return SPOKEN[name];
+export function spokenName(name) { if (SPOKEN[name]) return SPOKEN[name]; if (name.includes('/')) return name.split('/').map((q) => spokenName(q.trim())).join(', ');      /* "5 Av/53 St" is said "Fifth Avenue, Fifty-third Street" (a slash is read out as a word) */
   return String(name).split(/\s*-\s*(?=[A-Za-z])|(?<=[A-Za-z])\s*-\s*/).map((part) => part.trim()
     .replace(/\b(\d+)-(\d+)\b/g, (m, a, b) => cap(ordinal(a)) + ', ' + cap(ordinal(b))).replace(/\b(\d+)\b(?=\s+(St|Sts|Av|Avs)\b)/g, (m, a) => cap(ordinal(a)))
     .replace(/\bSts\b/g, 'Streets').replace(/\bSt\b/g, 'Street').replace(/\bAvs\b/g, 'Avenues').replace(/\bAv\b/g, 'Avenue').replace(/\bSq\b/g, 'Square').replace(/\bCtr\b/g, 'Center').replace(/\bPl\b/g, 'Place').replace(/\bPk\b/g, 'Park')).join(', ');
