@@ -90,7 +90,7 @@ export async function install(game) {
   const glowMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false, side: THREE.DoubleSide }); glowMat.name = 'railglow';
   const unitOf = (st) => { let u = S.units.get(st.id); if (!u) S.units.set(st.id, (u = { st, state: 'none', gen: null, res: null, group: null, trains: [] })); return u; };
   const startUnit = async (u) => { u.state = 'look'; try { if (!u.st.floors) { const r = await fetch(DIR + 'st/' + u.st.id + '.json'); if (!r.ok) throw new Error('station file ' + r.status); Object.assign(u.st, await r.json()); }      /* a station's underground is its own small file, fetched when he first comes near */
-      const L = await getLook(); u.gen = buildStation(THREE, u.st, meta, L, { glowMat }); u.state = 'building'; u.t0 = performance.now(); u.ms = 0; } catch (e) { fail('start ' + u.st.id, e); u.state = 'failed'; } };
+      const L = await getLook(); u.gen = buildStation(THREE, u.st, meta, L, { glowMat, turnstile: P.get("turnstile") !== "0" }); u.state = 'building'; u.t0 = performance.now(); u.ms = 0; } catch (e) { fail('start ' + u.st.id, e); u.state = 'failed'; } };
   const finishUnit = (u, res) => { u.res = res; u.walk = res.walk; u.group = res.group; u.gen = null;
     // caps over the stair openings (depth only) and, for the view from below once the city is not drawn, a bright card of sky in each opening
     const cp = [], ci = [], sp = []; let n = 0;
@@ -178,7 +178,7 @@ export async function install(game) {
     pos.x = f.x + f.ca * uu - f.sa * vv; pos.y = f.y + f.sa * uu + f.ca * vv; pos.z = Walk.zAt(f, uu); visZ = zW; dropV = DROP && zW - pos.z > 0.9 ? 0 : -1; S.floor = f; pl.roof = null; if (g.jump) { jumpWas = g.jump.on; g.jump.on = false; } u.res.core.visible = true; showWells(u); ensureTrains(u); figureLayers(); if (window.__mark) window.__mark('subway-in'); emit('enter', u, e); };
   // underground, only the station he is in is drawn: two stations of one complex cross each other in plan (Times Sq, Herald Sq), and their stairs and passages would stand in each other's halls
   const showWells = (only) => { for (const q of S.units.values()) if (q.res) { q.res.well.visible = !only || q === only; if (q.cap) q.cap.visible = !only || q === only; } };
-  const leave = (x, y) => { emit('leave', S.unit); S.own = false; S.ride = null; S.sit = null; S.keep = null; if (chip) hint(null); setDeep(false); setOrder(0); pl.x = x; pl.y = y; pl.alt = 0; if (g.jump) g.jump.on = jumpWas; if (S.unit) S.unit.res.core.visible = false; showWells(null); S.unit = null; S.floor = null; if (window.__mark) window.__mark('subway-out'); };
+  const leave = (x, y) => { if (paid?.turning) finishTurn(paid); else clearFare(); jumpTime = 0; emit('leave', S.unit); S.own = false; S.ride = null; S.sit = null; S.keep = null; if (chip) hint(null); setDeep(false); setOrder(0); pl.x = x; pl.y = y; pl.alt = 0; if (g.jump) g.jump.on = jumpWas; if (S.unit) S.unit.res.core.visible = false; showWells(null); S.unit = null; S.floor = null; if (window.__mark) window.__mark('subway-out'); };
   S.leave = () => { if (S.own) leave(pl.x, pl.y); };
   const stairZ = (f, x, y) => { const u = Walk.u(f, x, y), n = f.n || 1, dn = f.z0 > f.z1 ? 1 : -1, d = clamp(dn * u + f.l / 2, 0, f.l - 1e-6), i = Math.floor(d / (f.l / n)); return Math.max(f.z0, f.z1) - (i + 1) * meta.rise; };
 
@@ -218,27 +218,108 @@ export async function install(game) {
     const [x, y] = tMap(t, R.lx, R.lz); pos.x = x; pos.y = y; pos.z = t.T.z + tr.floorY; };
   // deep in the dark of the tunnel the ride changes stations: the same train, now coming in to the next station of the line (its neighbourhood is built while the train pulls out)
   const hop = (u, t) => { const H = nextHop(u.st, t.T.dir, t.T.key, t.route), N = H && H.N; if (!N) return false; const nu = unitOf(N); S.keep = nu; if (nu.state !== 'ready' || !nu.trains.length) { if (nu.state === 'none') startUnit(nu); else ensureTrains(nu); return false; }
-    const nt = nu.trains.find((q) => q.T.key === H.key) || nu.trains.find((q) => q.T.dir === t.T.dir && q.T.plat >= 0); if (!nt) return false; const R = S.ride, tr = nt.train; { const z0 = Math.min(...tr.walk.map((q) => q.z0)) + 0.3, z1 = Math.max(...tr.walk.map((q) => q.z1)) - 0.3; if (R.lz < z0 || R.lz > z1) { R.lz = clamp(R.lz, z0, z1); if (S.sit) { S.sit = null; hint(null); } } }      /* never beyond the end of the train he arrives in */
+    const nt = nu.trains.find((q) => q.T.key === H.key) || nu.trains.find((q) => q.T.dir === t.T.dir && q.T.plat >= 0); if (!nt) return false; const R = S.ride, tr = nt.train;
+    if (S.sit) {
+      // Each station builds its own train and seat objects.
+      const old = S.sit.seat;
+      const seat = tr.seats.find(q => q.car === old.car && q.face === old.face &&
+        Math.abs(q.x - old.x) < 0.01 && Math.abs(q.z - old.z) < 0.01);
+      if (seat && !S.seatTaken?.(nt, seat)) {
+        S.sit.seat = seat;
+        R.lx = seat.x;
+        R.lz = seat.z;
+      } else {
+        standUp(R);
+        hint(null);
+      }
+    }
+    const z0 = Math.min(...tr.walk.map(q => q.z0)) + 0.3, z1 = Math.max(...tr.walk.map(q => q.z1)) - 0.3;
+    R.lz = clamp(R.lz, z0, z1);
     const c1 = -Math.min(nt.far, N.plen / 2 + tr.length / 2 + 25);      // it comes in from the dark, the whole train still in the tunnel
     nt.state = 'in'; nt.c = c1; nt.v = t.v; S.keep = null; nt.doors = 0; nt.t = 0; tr.group.visible = true; try { tr.setDoors(0, 0); tr.setLights({ front: 1, interior: K * 1.15 }); const r = t.route || t.T.routes[(t.routeI + t.T.routes.length - 1) % t.T.routes.length]; nt.route = r; tr.setRoute({ label: r, color: ROUTE_COL[r] || '#888', dest: destOf(nt.T, r) }); } catch (e) {}
     t.state = 'wait'; t.t = 40; t.train.group.visible = false; const da = Math.atan2(nt.uy, nt.ux) - Math.atan2(t.uy, t.ux); pl.h += da; g.cam.yaw += da;
     R.t = nt; u.res.core.visible = false; nu.res.core.visible = true; if (u.sky) u.sky.visible = false; if (nu.sky) nu.sky.visible = !!S.deep; S.unit = nu; showWells(nu); const [x, y] = tMap(nt, R.lx, R.lz); pos.x = x; pos.y = y; pl.x = x; pl.y = y; g.cam.tx = x; g.cam.ty = y; S._clip = undefined; S.stats.hops = (S.stats.hops || 0) + 1; if (window.__mark) window.__mark('subway-hop'); emit('hop', u, nu, nt);
     console.log('[subway] riding ' + u.st.name + ' -> ' + N.name); return true; };
+  let paid = null, jumpTime = 0, jumpHeld = false, fareReported = false;
+  function clearFare() {
+    if (paid && paid.screen) paid.screen.visible = false;
+    paid = null;
+  }
+  function fareInput(gates, use, jump, dt) {
+    jumpTime = Math.max(0, jumpTime - dt);
+    let near = null;
+    for (const gate of gates) {
+      const x = pos.x - gate.x, y = pos.y - gate.y;
+      if (Math.abs(pos.z - gate.z) > 0.35 || Math.abs(-x * gate.sa + y * gate.ca) > gate.width / 2) continue;
+      const u = gate.pd * (x * gate.ca + y * gate.sa);
+      if (Math.abs(u) > 1.35) continue;
+      near = gate;
+      if (jump && !jumpHeld && !jumpTime) { jumpTime = 0.8; fareReported = false; }
+      if (u < 0 && paid !== gate && !paid?.turning) {
+        hint('Tap or swipe');
+        if (use) { clearFare(); paid = gate; if (gate.screen) gate.screen.visible = true; g.sound.shot(1046, 0.09); }
+      }
+      break;
+    }
+    if (paid !== near && !paid?.turning) clearFare();
+    if (paid?.turning && paid !== near) finishTurn(paid);
+    jumpHeld = jump;
+  }
+  const thirdTurn = 2 * Math.PI / 3;
+  function finishTurn(gate) {
+    gate.angle = gate.turnBase + thirdTurn;
+    gate.arm.setRotationFromAxisAngle(gate.axis, gate.angle);
+    gate.turning = false;
+    clearFare();
+  }
+  function fareMove(walk, gates, dx, dy, radius) {
+    const old = { ...pos }, floor = walk.move(pos, dx, dy, radius);
+    for (const gate of gates) {
+      const along = p => ((p.x-gate.x)*gate.ca + (p.y-gate.y)*gate.sa)*gate.pd;
+      const before = along(old), after = along(pos);
+      if (Math.abs(pos.z-gate.z)>0.35 || Math.abs(-(pos.x-gate.x)*gate.sa+(pos.y-gate.y)*gate.ca)>gate.width/2+radius) continue;
+      const forward = after > before, air = jumpTime*(0.8-jumpTime)*7;
+      if (air < 0.8 && (forward ? before < 0 && after > -radius && paid !== gate : before >= 0 && after < radius)) {
+        Object.assign(pos, old); return S.floor;
+      }
+      if (paid === gate && forward && after > -radius) {
+        if (!gate.turning) { gate.turnBase = gate.angle || 0; gate.turning = true; }
+        const progress = Math.min(1, (after + radius) / (2 * radius));
+        gate.angle = Math.max(gate.angle || 0, gate.turnBase + thirdTurn * progress);
+        gate.arm.setRotationFromAxisAngle(gate.axis, gate.angle);
+        if (after >= radius) finishTurn(gate);
+      } else if ((before < 0) !== (after < 0)) {
+        if (air >= 0.8 && !fareReported) {
+          fareReported = true;
+          const heat = g.combat?.heat;
+          if (heat) Promise.resolve(heat.start ? heat.start('fare') : heat).then(h => h?.crime('fare', old.x, old.y, 1));
+        }
+      }
+    }
+    return floor;
+  }
   let step0 = null;      // the game's step with everyone else's wrappers on it (taken on the first drawn frame, so that ours is the outermost)
   const myStep = function (dt) {
     if (!S.own) { step0(dt); if (wh) whine(null, dt); if (ao0 !== null) rideAO(false); try { manage(dt);
         if (free()) for (const u of S.units.values()) { if (u.state !== 'ready') continue; for (const i of u.st.ent) { const e = EN[i], dx = pl.x - e.x, dy = pl.y - e.y; if (Math.abs(dx) > (DROP ? lO + 1 : 3) || Math.abs(dy) > (DROP ? lO + 1 : 3)) continue; const uu = dx * e.ca + dy * e.sa, vv = -dx * e.sa + dy * e.ca; if (e.open && uu > 0.04 && uu < (DROP ? lO + CW / 2 : 1.3) && Math.abs(vv) < W2 + 0.1) { enter(u, e); break; } } if (S.own) break; } } catch (e) { fail('street step', e); } return; }
     // underground: the game's own step runs (input, the turn of the body, animation, everything else in the city), then its move is undone and ours made
-    const I = g.input, use = I.use; I.use = false; pl.x = pos.x; pl.y = pos.y; pl.alt = visZ || -0.001;
+    const I = g.input, keyUse = I.use, padWasDown = g._gpUse; I.use = false; pl.x = pos.x; pl.y = pos.y; pl.alt = visZ || -0.001;
     if (S.sit) { const pa = g.playerAnim; g.playerAnim = () => {}; try { step0(dt); } finally { g.playerAnim = pa; } }      /* seated: the game's on-foot step asked for 'idle' every frame and ours for 'drive' after it, each restarting the other's fade, so he stood (seen on out/v6c-tsq/13) */
     else step0(dt);
+    // Game.readInput polls the pad during step0 and Game.step consumes I.use.
+    const use = keyUse || (!padWasDown && g._gpUse);
     try { if (!free()) { leave(pl.x, pl.y); return; }
       let u = S.unit; const wk = u.walk, m = Math.hypot(I.mx, I.my); let f = S.floor;
       if (!S.ride && chip) hint(null);
+      const gates = u.res.gates;
+      if (!S.ride && gates.length) {
+        fareInput(gates, use, I.handbrake, dt);
+
+      }
       if (S.ride) rideStep(dt, I, m, use);
       else if (m > 0.1) { const sp = (I.run ? 5.2 : 1.9) * Math.min(1, m) * (f && f.stair ? (I.run ? 0.62 : 0.8) : 1), dx = Math.cos(pl.h) * sp * dt, dy = Math.sin(pl.h) * sp * dt;
         if (f && f.k === 'street' && !(EN[f.ent] && EN[f.ent].off)) { const dn = f.z0 > f.z1 ? 1 : -1, d = dn * Walk.u(f, pos.x + dx, pos.y + dy) + f.l / 2; if (d < 0.02 && Math.abs(Walk.v(f, pos.x + dx, pos.y + dy)) < f.w / 2) { leave(pos.x + dx * 2, pos.y + dy * 2); return; } }      // up the last step: back on the street
-        const nf = wk.move(pos, dx, dy, R_BODY); if (nf) f = S.floor = nf; if (f && f.k === 'platform') tryBoard(u, Math.cos(pl.h) * 0.5, Math.sin(pl.h) * 0.5); }
+        const nf = gates.length ? fareMove(wk, gates, dx, dy, R_BODY) : wk.move(pos, dx, dy, R_BODY); if (nf) f = S.floor = nf; if (f && f.k === 'platform') tryBoard(u, Math.cos(pl.h) * 0.5, Math.sin(pl.h) * 0.5); }
       if (!S.ride && f !== S.floor) f = S.floor;
       const zt = !S.ride && f && f.stair ? stairZ(f, pos.x, pos.y) : pos.z; if (dropV >= 0 && !S.ride && visZ > zt + 0.02) { dropV += 18 * dt; visZ = Math.max(zt, visZ - dropV * dt); } else { dropV = -1; visZ += (zt - visZ) * Math.min(1, dt * 16); if (Math.abs(zt - visZ) > 0.6 || S.ride) visZ = zt; }
       if (S.sit && S.ride) { const hips = (g.kit.driveHips && g.kit.driveHips.player) || 0.3; visZ = pos.z + 0.45 + 0.1 - hips; if (pl.vis.acts && pl.vis.acts.drive) { g.playerAnim('drive'); if (pl.vis.mixer) pl.vis.mixer.timeScale = 1; } }
@@ -250,8 +331,18 @@ export async function install(game) {
     } catch (e) { fail('step', e); }
   };
   const sync0 = g.syncVisuals.bind(g);
-  g.syncVisuals = function (dt) { sync0(dt); if (!step0) { step0 = g.step.bind(g); g.step = myStep; const r0 = w.render.bind(w); w.render = function (t, focus) { try { placeCam(); } catch (e) { fail('camera', e); } return r0(t, focus); }; }
-    if (S.own && !pl.vehicle) { const o = pl.vis.object; o.position.set(pl.x, visZ, -pl.y); if (S.sit && S.ride) { try { sitHands(o); } catch (e) { fail('sit hands', e); } } } };
+  g.syncVisuals = function (dt) { sync0(dt); if (!step0) { step0 = g.step.bind(g); g.step = myStep; const r0 = w.render.bind(w); w.render = function (t, focus) { try { placeCam(); } catch (e) { fail('camera', e); } if (S.sit && S.ride && !S.camFree && P.get('seatcam') !== '0') {
+          const body = pl.vis.object, visible = body.visible;
+          const previousNear = w.fixedNear;
+          body.visible = false;
+          w.fixedNear = Math.min(previousNear || w.camera.near, 0.05);
+          try { return r0(t, focus); } finally {
+            w.fixedNear = previousNear;
+            body.visible = visible;
+          }
+        }
+        return r0(t, focus); }; }
+    if (S.own && !pl.vehicle) { const o = pl.vis.object; o.position.set(pl.x, visZ + jumpTime*(0.8-jumpTime)*7, -pl.y); if (S.sit && S.ride) { try { sitHands(o); } catch (e) { fail('sit hands', e); } } } };
   // seated in the train he plays the game's car-driving clip, whose hands hold a wheel: lay them on his thighs instead (the entry lane's rig, bone names only; ?subhands=0 off)
   let hrig = null, hrigP = null; const hv = [0, 1, 2, 3, 4, 5].map(() => new THREE.Vector3());
   const sitHands = (o) => { if (P.get('subhands') === '0') return; if (!hrigP) hrigP = import('../entry/rig.js').then((m) => { const r = new m.EntryRig(pl.vis, 'player'); if (r.ok) hrig = r; else console.log('[subway] sit hands: no rig'); }).catch((e) => console.log('[subway] sit hands: ' + (e && e.message)));
@@ -264,6 +355,18 @@ export async function install(game) {
   const tgt = [0, 0, 0], want = [0, 0, 0]; let camT = 0;
   const placeCam = function () { if (!S.own || S.camFree || !S.unit || !S.unit.walk) return; const now = performance.now(), dt = Math.min(0.1, (now - camT) / 1000) || 0.016; camT = now;
     const C = g.cam, cam = w.camera, pitch = clamp(C.pitch, -0.7, 1.0), d0 = Math.min(C.dist, 3.1), bx = -Math.cos(C.yaw), by = -Math.sin(C.yaw);
+    if (S.sit && S.ride && P.get('seatcam') !== '0') {
+      const ride = S.ride, seat = S.sit.seat, t = ride.t;
+      // Anchor the eye to the rendered bench, including the carriage roll and bounce.
+      cam.position.set(seat.x + seat.face * 0.18, t.train.floorY + 1.22, ride.lz);
+      t.train.group.localToWorld(cam.position);
+      const tilt = clamp(C.pitch * (C.pitch > 0 ? 1.42 : 1), -Math.PI/2 + 0.01, Math.PI/2 - 0.01);
+      const horizontal = Math.cos(tilt);
+      cam.lookAt(cam.position.x + Math.cos(C.yaw)*horizontal, cam.position.y - Math.sin(tilt), cam.position.z - Math.sin(C.yaw)*horizontal);
+      if (cam.fov !== C.fov) { cam.fov = C.fov; cam.updateProjectionMatrix(); }
+      cam.updateMatrixWorld();
+      return;
+    }
     tgt[0] = C.tx; tgt[1] = C.ty; tgt[2] = S.sit ? (S.ride.t.T.z + S.ride.t.train.floorY + 1.22) : C.tz; want[0] = C.tx + bx * d0 * Math.cos(pitch); want[1] = C.ty + by * d0 * Math.cos(pitch); want[2] = C.tz + (C.h || 0.35) + d0 * Math.sin(pitch);
     let f; if (S.ride) { // inside the car: the camera is kept inside the car's box (clamped, not pulled into his head)
       const t = S.ride.t, tr = t.train, y0 = t.T.z + tr.floorY, w = tr.walk.find((q) => S.ride.lz >= q.z0 - 0.3 && S.ride.lz <= q.z1 + 0.3) || tr.walk[0], hx = tr.width / 2 - 0.3, top = y0 + (S.sit ? 1.62 : (tr.ceilingY ? tr.ceilingY - tr.floorY : 2.05) - 0.15);      /* seated: below the cove with the ad cards and the light strip (the eye sat in the strip: a white wedge across the view) */

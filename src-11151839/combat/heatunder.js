@@ -38,9 +38,33 @@ export async function install(game, S) {
   S.on('enter', (u, e) => { lastEnt = e; tryHook(); });
   S.on('step', (dt) => { if (!st.on) return; if (!H) { tryHook(); return; } try { afterStep(dt); } catch (e) { oops('after', e); } });
   S.on('deep', (on) => { if (H && on) fxLayers(); });
-  S.on('board', (t) => { plT = t; });
+  S.on('board', (t) => { plT = t; for (const k of H?.cops || []) if (under(k) && k.sub.u === S.unit) k.sub.intercept = t; });
+  // Stage a pursuing officer ahead while the player's train is still out in the tunnel.
+  function meetTrain(k, to, train) {
+    const s = k.sub, walk = SW(to), floor = zPof(train);
+    const door = doorOf(train, S.ride.lz);
+    if (!door || !H.level || H.dead || k.mode === 'leave') return false;
+    for (const along of [0, -1, 1, -2, 2]) for (const back of [1.4, 2.2, 3]) {
+      const lx = train.side*(train.train.width/2 + back), lz = door.z + along;
+      const x = train.mx + train.ux*lz - train.uy*lx, y = train.my + train.uy*lz + train.ux*lx;
+      const f = walk.free(x, y, floor, PN.R);
+      if (!f || f.k !== 'platform') continue;
+      // The walk grid contains fixtures. Other officers waiting for this train
+      // also need their own standing space when several miss the same departure.
+      if (H.cops.some(other => other !== k && other.hp > 0 && other.sub?.u === to &&
+          !other.sub.ride && Math.abs(other.z - floor) < 1 &&
+          Math.hypot(other.x - x, other.y - y) < 2 * PN.R + 0.1)) continue;
+      s.u = to; s.phase = 'under'; s.ride = s.path = s.pg = s.ex = s.sg = null;
+      s.intercept = train;
+      s.p.x = k.x = x; s.p.y = k.y = y; s.p.z = s.vz = k.z = floor;
+      k.path = null; layers(k); setOrder(k, 0);
+      return true;
+    }
+    return false;
+  }
   S.on('hop', (from, to, nt) => { const was = plT; plT = nt; if (!H) return; for (const k of H.cops.slice()) { const s = k.sub; if (!s || s.u !== from) continue;
-      if (s.phase === 'under' && s.ride && (was ? s.ride.t === was : s.ride.t.T.id === nt.T.id) && s.ride.in && k.hp > 0) { s.ride.t = nt; s.u = to; s.path = null; placeRider(k); k.z = s.vz = s.p.z; N.rode++; say('officer ' + k.n + ' rides with him to ' + to.st.name); }
+      if (s.phase === 'under' && s.ride && (was ? s.ride.t === was : s.ride.t.T.id === nt.T.id) && s.ride.in && k.hp > 0) { s.ride.t = nt; s.intercept = nt; s.u = to; s.path = null; placeRider(k); k.z = s.vz = s.p.z; N.rode++; say('officer ' + k.n + ' rides with him to ' + to.st.name); }
+      else if (s.phase === 'under' && !s.ride?.in && k.hp > 0 && meetTrain(k, to, nt)) continue;
       else if (s.phase === 'under') { if (k.hp > 0) release(k, 'left behind at ' + from.st.name); } else k.sub = null; } });
   S.on('train', (kind, t, u) => { if (!H) return; if (kind === 'leave') { for (const k of H.cops) { const s = k.sub; if (!s || s.phase !== 'under' || !s.ride || s.ride.t !== t || s.ride.in) continue; const m = S.tMap(t, t.side * (t.train.width / 2 + 0.8), s.ride.lz), zP = zPof(t); s.ride = null; if (u.walk && SW(u).free(m[0], m[1], zP, 0.3)) { s.p.x = k.x = m[0]; s.p.y = k.y = m[1]; } s.p.z = zP; s.path = null; } return; } if (kind !== 'gone') return; for (const k of H.cops.slice()) if (under(k) && k.sub.ride && k.sub.ride.t === t && k.hp > 0) release(k, 'carried off by a train he was alone on'); });
   S.on('drop', (u) => { if (!H) return; for (const k of H.cops.slice()) { const s = k.sub; if (!s || s.u !== u) continue; if (s.phase === 'under' && k.hp > 0) release(k, 'his station was put away'); else k.sub = null; } for (let i = deadUnder.length - 1; i >= 0; i--) if (deadUnder[i].u === u) deadUnder.splice(i, 1); });
@@ -84,7 +108,7 @@ export async function install(game, S) {
   const goal = (k) => { const s = k.sub;
     if (k.mode === 'leave') return exitGoal(k, k.x, k.y);
     if (!S.own || S.unit !== s.u) { const T = H.seen ? pl : H.lkp; return exitGoal(k, T.x, T.y); }      // he is back on the street: up the stair nearest to where he is (or was last seen)
-    if (H.seen || k.see || H.unseenT < 6) { const p = S.pos; return { x: p.x, y: p.y, z: p.z, player: true, ride: S.ride }; }
+    if ((S.ride && s.intercept === S.ride.t) || H.seen || k.see || H.unseenT < 6) { const p = S.pos; return { x: p.x, y: p.y, z: p.z, player: true, ride: S.ride }; }
     return searchGoal(k); };
 
   // ---------------------------------------------------------------- an officer's line of sight when the ground is in it
@@ -119,7 +143,7 @@ export async function install(game, S) {
 
     // ---- who follows: an officer on foot who has him in sight (or had, a moment ago) when he is on his way down
     const follow = (k) => { if (!S.own || !S.unit || S.unit.state !== 'ready' || !S.unit.walk || k.get || k.mode === 'leave' || !(h.level > 0) || h.dead || S.pos.z > zW - 0.6) return;
-      if (!(k.see || h.t - (k._subSeen ?? -99) < 2.5)) return; const f = S.floor, e = f && f.ent !== undefined && EN[f.ent] && EN[f.ent].st === S.unit.st.id ? EN[f.ent] : lastEnt; if (!e || e.st !== S.unit.st.id) return;
+      if (!(k.see || h.t - (k._subSeen ?? -99) < 2.5 || (lastEnt && Math.hypot(k.x-lastEnt.x,k.y-lastEnt.y) < 35))) return; const f = S.floor, e = f && f.ent !== undefined && EN[f.ent] && EN[f.ent].st === S.unit.st.id ? EN[f.ent] : lastEnt; if (!e || e.st !== S.unit.st.id) return;
       k.sub = { phase: 'street', e, u: S.unit, t0: h.t, id: k.n, p: { x: k.x, y: k.y, z: zW }, vz: k.z, trail: [], lead: 0 }; N.follow++; layers(k); say('officer ' + k.n + ' saw him go down entrance ' + e.id + ': after him (' + Math.hypot(k.x - e.x, k.y - e.y).toFixed(0) + ' m from the stair)'); };
     const sendTo = (k, x, y) => { if (Math.hypot(x - k.x, y - k.y) < 1.5) x = k.x + 3; k.post = { x, y }; k.cover = null; k.mode = 'move'; k.dodge = false; };
     const goUnder = (k) => { const s = k.sub, e = s.e, walk = SW(s.u), vv0 = clamp(-(k.x - e.x) * e.sa + (k.y - e.y) * e.ca, -(W2 - 0.36), W2 - 0.36);
@@ -133,7 +157,7 @@ export async function install(game, S) {
         if (!k.see || k.mode !== 'hold') sendTo(k, s.e.x - s.e.ca * 0.35, s.e.y - s.e.sa * 0.35); return 0; }
       if ((s.lay = (s.lay || 0) - dt) <= 0) { s.lay = 1.5; layers(k); }
       if (s.ride) placeRider(k); k.cover = null; k.z = s.vz;
-      if (k.mode !== 'leave' && !k.see) { const G = goal(k); sendTo(k, G.x, G.y); }
+      if (k.mode !== 'leave' && (!k.see || (S.ride && !s.ride && s.intercept === S.ride.t))) { const G = goal(k); sendTo(k, G.x, G.y); }
       else if (ABOARD && s.ride && !s.ride.in && k.mode !== 'leave' && S.own && S.ride && S.ride.t === s.ride.t && s.ride.t.state === 'dwell') { sendTo(k, S.pos.x, S.pos.y); N.inDoor = (N.inDoor || 0) + 1; }      /* u3: through the doorway, all the way in */
       else if (ABOARD && s.ride && k.see && k.mode !== 'leave' && (k._nl || 0) >= 2 && h.t - k._nlT < 2.5 && S.own && S.ride && S.ride.t === s.ride.t && !h.dead) { sendTo(k, S.pos.x, S.pos.y); N.close = (N.close || 0) + 1; }      /* u3: aboard with him and twice refused a shot: up the aisle to him */
       else if (k.mode === 'leave' && !k.post) k.post = { x: k.x + 3, y: k.y };
@@ -193,7 +217,7 @@ export async function install(game, S) {
       return r; };
     const underWalk = (k, tx, ty, sp, dt) => { const s = k.sub, walk = SW(s.u), G = goal(k), v = k.mode === 'leave' ? 2.4 : k.see ? Math.max(sp, 1.6) : G.search ? 3.0 : 4.4;
       // in his sights: the heat code's own post says how near to come (to arm's length for the cuffs, to the gun's range in a fight)
-      if (G.player && k.see && !(ABOARD && s.ride && !s.ride.in)) { const want = Math.hypot(tx - pl.x, ty - pl.y), d3 = Math.hypot(k.x - G.x, k.y - G.y, s.p.z - G.z); if (d3 <= Math.max(want, 1.2)) { k.post = { x: k.x, y: k.y }; return 0; } }
+      if (G.player && k.see && !(G.ride && !s.ride) && !(ABOARD && s.ride && !s.ride.in)) { const want = Math.hypot(tx - pl.x, ty - pl.y), d3 = Math.hypot(k.x - G.x, k.y - G.y, s.p.z - G.z); if (d3 <= Math.max(want, 1.2)) { k.post = { x: k.x, y: k.y }; return 0; } }
       if (G.ride && !s.ride && G.ride.t.state !== 'dwell') { k.post = { x: k.x, y: k.y }; s.path = null; N.watch = (N.watch || 0) + 1; return 0; }
       let m; if (s.ride) m = rideWalk(k, G, v, dt) * dt;
       else { let T = G; if (G.ride) { const t = G.ride.t, zP = zPof(t), d = doorOf(t, G.ride.lz), q = S.tMap(t, t.side * (t.train.width / 2 + 0.8), d.z); T = { x: q[0], y: q[1], z: zP };

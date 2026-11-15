@@ -584,7 +584,14 @@ export function makeLook(THREE, opts = {}) {
       R('win', 0, 0, 512, 256); }
     // the reader on a turnstile's top: a dark glass face, a small bright screen, a ring to tap
     { const x = 0, y = 256; ctx.fillStyle = '#0b0c0e'; ctx.fillRect(x, y, 128, 128); ctx.fillStyle = '#12303f'; rrect(ctx, x + 14, y + 12, 100, 46, 5); ctx.fill(); ctx.fillStyle = '#bfe9ff'; ctx.font = `700 22px ${SANS}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('TAP HERE', x + 64, y + 36);
-      ctx.strokeStyle = '#3fd27f'; ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(x + 64, y + 92, 22, 0, 6.3); ctx.stroke(); ctx.strokeStyle = 'rgba(160,220,255,0.8)'; ctx.lineWidth = 3; for (const q of [9, 15]) { ctx.beginPath(); ctx.arc(x + 58, y + 92, q, -0.8, 0.8); ctx.stroke(); } R('screen', x, y, 128, 128); }
+      ctx.strokeStyle = '#3fd27f'; ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(x + 64, y + 92, 22, 0, 6.3); ctx.stroke(); ctx.strokeStyle = 'rgba(160,220,255,0.8)'; ctx.lineWidth = 3; for (const q of [9, 15]) { ctx.beginPath(); ctx.arc(x + 58, y + 92, q, -0.8, 0.8); ctx.stroke(); } R('screen', x, y, 128, 128);
+      // Keep the same reader and tap ring. Change only the display after payment.
+      const paidX = 256;
+      ctx.drawImage(c, x, y, 128, 128, paidX, y, 128, 128);
+      ctx.fillStyle = '#0b0c0e'; ctx.fillRect(paidX, y, 128, 61);
+      ctx.fillStyle = '#12303f'; rrect(ctx, paidX + 14, y + 12, 100, 46, 5); ctx.fill();
+      ctx.fillStyle = '#bfe9ff'; ctx.font = `700 38px ${SANS}`; ctx.fillText('GO', paidX + 64, y + 36);
+      R('paidScreen', paidX, y, 128, 128); }
     // the lamp panel on a turnstile's tower: three round lenses in a dark plate, one lit (green arrow in = this way, red = no entry)
     for (const [nm, x, lit] of [['go', 128, '#49f08a'], ['no', 192, '#ff4a38']]) { const y = 256; ctx.fillStyle = '#101112'; ctx.fillRect(x, y, 64, 128); ctx.strokeStyle = '#3a3c3e'; ctx.lineWidth = 2; ctx.strokeRect(x + 4, y + 4, 56, 120);
       for (let k = 0; k < 3; k++) { const cy = y + 24 + k * 30, on = nm === 'go' ? k === 2 : k === 0; ctx.beginPath(); ctx.arc(x + 32, cy, 11, 0, 6.3); ctx.fillStyle = on ? lit : '#232527'; ctx.fill(); ctx.strokeStyle = '#55585a'; ctx.lineWidth = 1.5; ctx.stroke(); if (on) { ctx.beginPath(); ctx.arc(x + 29, cy - 3, 4, 0, 6.3); ctx.fillStyle = 'rgba(255,255,255,0.55)'; ctx.fill(); } }

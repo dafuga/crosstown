@@ -20,7 +20,7 @@ export function* buildStation(THREE, S, meta, look, opts = {}) {
   const walk = new Walk(meta); walk.a = (S.frame && S.frame.a) || 0;      /* nav.js lays its lattice along the station */
   const B = new Map(), M = look.mat, group = new THREE.Group(); group.name = 'subway_' + S.id;
   // two parts: 'well' (street stairs, landings, passages: drawn whenever the station is loaded, they are what is seen from the street) and 'core' (the rest: only drawn when someone is down there)
-  let part = 'core'; const BW = new Map(), bk = (mat) => { const T = part === 'well' ? BW : B; let b = T.get(mat); if (!b) T.set(mat, (b = new Bucket(mat))); return b; };
+  const gates = []; let special = null; let part = 'core'; const BW = new Map(), bk = (mat) => { if (special) return special; const T = part === 'well' ? BW : B; let b = T.get(mat); if (!b) T.set(mat, (b = new Bucket(mat))); return b; };
   const F0 = S.frame || { x: S.floors[0].x, y: S.floors[0].y, a: S.floors[0].a }, fca = Math.cos(F0.a), fsa = Math.sin(F0.a);
   const sOf = (x, y) => (x - F0.x) * fca + (y - F0.y) * fsa, tOf = (x, y) => -(x - F0.x) * fsa + (y - F0.y) * fca;
   const zM = meta.zM, zP = meta.zP, hM = meta.hM, hP = meta.hP, rise = meta.rise, zW = meta.zWalk;
@@ -206,7 +206,31 @@ export function* buildStation(THREE, S, meta, look, opts = {}) {
         if (FA) { fq('go', X(xt - 0.004, 0.05, 1.0), X(xt - 0.004, -0.05, 1.0), X(xt - 0.004, -0.05, 1.3), X(xt - 0.004, 0.05, 1.3), { flat: 1.7 }); fq('no', X(hl + 0.004, -0.05, 1.08), X(hl + 0.004, 0.05, 1.08), X(hl + 0.004, 0.05, 1.38), X(hl + 0.004, -0.05, 1.38), { flat: 1.7 }); }
         if (t.arm) { const c = 0.70711, C = [-hl + 0.36, hw - 0.01, 0.78], Hh = [C[0], C[1] + c * 0.085, C[2] - c * 0.085], P3d = (q) => L3(pd * q[0], q[1], q[2]);
           tube(ST, P3d([C[0], C[1] - c * 0.02, C[2] + c * 0.02]), P3d(Hh), 0.07, 8, { cap: true, k: 0.9 });
+          let gate;
+          if (opts.turnstile) {
+            const pivot = P3d(Hh), center = P3d([Hh[0], hw + t.lane / 2, 0]);
+            gate = { x: center[0], y: center[1], z: t.z, ca, sa, pd, width: t.lane };
+            gates.push(gate);
+            special = new Bucket(ST);
+            gate.origin = new THREE.Vector3(pivot[0], pivot[2], -pivot[1]);
+          }
           for (const d of [[0, 1, 0], [0.612, 0.25, -0.75], [-0.612, 0.25, -0.75]]) tube(ST, P3d([Hh[0] + d[0] * 0.03, Hh[1] + d[1] * 0.03 - c * 0.02, Hh[2] + d[2] * 0.03 + c * 0.02]), P3d([Hh[0] + d[0] * 0.5, Hh[1] + d[1] * 0.5, Hh[2] + d[2] * 0.5]), 0.023, 6, { cap: true, k: 1.1 });
+          if (gate) {
+            gate.arm = special.mesh(THREE, 'turnstile_arm');
+            gate.arm.geometry.translate(-gate.origin.x, -gate.origin.y, -gate.origin.z);
+            gate.arm.position.copy(gate.origin);
+            gate.arm.matrixAutoUpdate = true;
+            gate.axis = new THREE.Vector3(-sa, -1, -ca).normalize().multiplyScalar(pd);
+            special = null;
+            if (FA) {
+              special = new Bucket(FA.material);
+              fq('paidScreen', X(-hl-0.03,0.075,zc+0.022), X(-hl-0.03,-0.075,zc+0.022),
+                X(-hl+0.15,-0.075,zc+0.112), X(-hl+0.15,0.075,zc+0.112), {flat:2});
+              gate.screen = special.mesh(THREE, 'reader_GO');
+              gate.screen.visible = false;
+              special = null;
+            }
+          }
           // the hoop over this lane, to the next machine's tower
           const xh = hl - 0.15, v0 = 0.062, W = t.lane + t.bw - v0, r = 0.26, zt = 1.4, zh = 2.06, pts = [[v0, zt], [v0, zh - r]]; for (let i = 1; i <= 7; i++) { const q = i / 7 * Math.PI / 2; pts.push([v0 + r - Math.cos(q) * r, zh - r + Math.sin(q) * r]); } for (let i = 0; i <= 7; i++) { const q = i / 7 * Math.PI / 2; pts.push([W - r + Math.sin(q) * r, zh - r + Math.cos(q) * r]); } pts.push([W, zt]);
           for (let i = 0; i + 1 < pts.length; i++) tube(ST, L3(pd * xh, pts[i][0], pts[i][1]), L3(pd * xh, pts[i + 1][0], pts[i + 1][1]), 0.027, 10, { k: 1.1 }); } }
@@ -262,7 +286,8 @@ export function* buildStation(THREE, S, meta, look, opts = {}) {
   // ---------------------------------------------------------------- meshes: the stair wells and passages stay drawn from the street; the rest only when someone is down there
   const core = new THREE.Group(), well = new THREE.Group(); core.name = 'core'; well.name = 'well'; group.add(well, core); let tris = 0, verts = 0;
   for (const [T, g] of [[BW, well], [B, core]]) for (const [mat, b] of T) { const m = b.mesh(THREE, 'sub_' + (mat.name || 'm')); if (m) { m.renderOrder = -20; m.updateMatrix(); g.add(m); tris += b.i.length / 3; verts += b.n; } }
-  return { group, core, well, walk, lamps: lamps.length, tris, verts, signs };
+  for (const gate of gates) { core.add(gate.arm); if (gate.screen) core.add(gate.screen); }
+  return { gates, group, core, well, walk, lamps: lamps.length, tris, verts, signs };
 }
 
 // the materials when look.js is not there (or fails): plain colours, same names
