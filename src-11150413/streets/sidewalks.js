@@ -10,7 +10,7 @@
 // At load: removes ground.js's sidewalk / kerb-band / kerb triangles inside the hero blocks; wraps its sidewalk material's shader.
 import * as THREE from 'three';
 import { BAKE_LIGHT_GLSL } from '../facade.js';
-import { WET_DECL, WET_MAIN } from '../sky/wet.glsl.js';     /* progress/night: wet roads in the rain */
+import { WET_DECL, WET_MAIN, WET_U } from '../sky/wet.glsl.js';     /* progress/night: wet roads in the rain */
 
 const CURB = 0.15, KW = 0.18, D2R = Math.PI / 180, NS = 24;
 const RAMP_HW = 0.9, RAMP_FL = 0.5, RAMP_DEP = 1.35, RAMP_LOW = 0.022;        // as ground.js lays its ramps (its notches are reused)
@@ -529,7 +529,7 @@ function mkMat(shared, U, o) {
   const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0 });
   if (o.setup) o.setup(m);
   m.onBeforeCompile = (sh) => {
-    Object.assign(sh.uniforms, shared, U);
+    Object.assign(sh.uniforms, shared, U, WET_U);     /* light, rain 2: the lamps a wet road draws streaks from */
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', `#include <common>\n varying vec3 vWPos;\n${o.vsDecl || ''}`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>\n vWPos = (modelMatrix * vec4(position, 1.0)).xyz;\n${o.vsMain || ''}`);

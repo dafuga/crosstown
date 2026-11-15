@@ -29,6 +29,7 @@ void main(){
   for (int i = 0; i < ${NS}; i++) { if (i >= uSpotN) break; vec3 to = wp - uSpotP[i].xyz; float ds = length(to); vec3 l = to / max(ds, 1e-3); float c = dot(l, uSpotD[i].xyz);
     float cone = smoothstep(0.80, 0.975, c) + 0.10 * smoothstep(0.2, 0.8, c); float att = (1.0 - smoothstep(uSpotP[i].w * 0.55, uSpotP[i].w, ds)) / (1.0 + 0.012 * ds * ds);
     L += vec3(1.0, 0.95, 0.86) * (uHead * uSpotD[i].w * cone * att * mix(0.32, 1.0, max(dot(n, -l), 0.0))); }
+  L *= 1.0 - 0.6 * uWet * smoothstep(0.7, 0.95, n.y);      /* light, rain 2: wet ground throws lamp and headlight light on, away from the eye (sky/rain.js sets uWet) */
   vec3 alb = clamp(texture2D(tScene, vUv).rgb / uAmb, 0.0, 1.0);
   gl_FragColor = vec4(alb * L, 1.0);
 }`;
@@ -89,7 +90,7 @@ export async function makeKit(game, N) {
     const L = kinds && kinds.lampLod && kinds.lampLod.list; if (L) for (const it of L) { const s = (it[4] && typeof it[4].s === 'number' ? it[4].s : 1), h = it[3] || 0; heads.push([it[0] + Math.cos(h) * 2.8 * s, it[1] + Math.sin(h) * 2.8 * s, (8.4 + 1.25) * s + (it[2] || 0), 1]); }
     const Tw = kinds && kinds.twin && kinds.twin.list; if (Tw) for (const it of Tw) heads.push([it[0], it[1], 4.2 + (it[2] || 0), 0.6]);
   } catch (e) { console.warn('[night] lamp list: ' + e.message); }
-  K.lampN = heads.length;
+  K.lampN = heads.length; K.heads = heads;      /* light, rain 2: sky/rain.js reads the lamp heads */
   if (heads.length) {
     let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9; for (const h of heads) { x0 = Math.min(x0, h[0]); x1 = Math.max(x1, h[0]); y0 = Math.min(y0, h[1]); y1 = Math.max(y1, h[1]); } x0 -= 40; x1 += 40; y0 -= 40; y1 += 40;
     const S = Math.min(0.5, 2048 / Math.max(x1 - x0, y1 - y0)), cw = Math.ceil((x1 - x0) * S), ch = Math.ceil((y1 - y0) * S), cv = document.createElement('canvas'); cv.width = cw; cv.height = ch; const c = cv.getContext('2d');

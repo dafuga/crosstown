@@ -10,7 +10,7 @@
 // Replaces at load: the materials of road_* and grass_*; hides sidewalk_*, curb_*, marks_* of the lead's city (they are rebuilt here).
 import * as THREE from 'three';
 import { BAKE_LIGHT_GLSL } from '../facade.js';
-import { WET_DECL, WET_MAIN } from '../sky/wet.glsl.js';     /* progress/night: wet roads in the rain */
+import { WET_DECL, WET_MAIN, WET_U } from '../sky/wet.glsl.js';     /* progress/night: wet roads in the rain */
 
 const CURB = 0.15, FLAG = 1.22, D2R = Math.PI / 180;
 const RAMP_HW = 0.9, RAMP_FL = 0.5, RAMP_DEP = 1.35, RAMP_LOW = 0.022, KERB_W = 0.18, BAND_W = 1.1;
@@ -884,7 +884,7 @@ function mkMat(shared, U, o) {
   const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0 });
   if (o.setup) o.setup(m);
   m.onBeforeCompile = (sh) => {
-    Object.assign(sh.uniforms, shared, U);
+    Object.assign(sh.uniforms, shared, U, WET_U);     /* light, rain 2: the lamps a wet road draws streaks from */
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', `#include <common>\n varying vec3 vWPos;\n${o.vsDecl || ''}`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>\n vWPos = (modelMatrix * vec4(position, 1.0)).xyz;\n${o.vsMain || ''}`);

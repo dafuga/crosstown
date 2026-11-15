@@ -727,7 +727,7 @@ export class CrowdSim {
       for (const v of g.vehicles) { if (!v.def || Math.abs(v.x - this.cx) > 150 || Math.abs(v.y - this.cy) > 150) continue; if (Math.hypot(v.vx || 0, v.vy || 0) < 2.2) SO.push(slow(v)); }
       if ((this.lyT -= dt) <= 0) { this.lyT = 0.5; this.findLying(); } }
     for (let i = A.length - 1; i >= 0; i--) {
-      const a = A[i]; if (!a || a.gone) continue; a.t += dt; const think = (this.frame + a.tk) % 3 === 0, ox = a.x, oy = a.y;
+      const a = A[i]; if (!a || a.gone) continue; a.t += dt; const think = (this.frame + a.tk) % 3 === 0, ox = a.x, oy = a.y; if (this.timed) { a.tt = (a.tt || 0) + dt; if (think) { this.kq = Math.min(8, a.tt / 0.05); a.tt = 0; } } else this.kq = 1;      /* people/crowd-perf: per-think chances by time (one step a drawn frame, crowd.js) */
       if (a.state !== 'down' && g.vehicles.length && this.cars(a, dt)) { /* struck */ }
       switch (a.state) {
         case 'walk':
@@ -736,8 +736,8 @@ export class CrowdSim {
           if (think && !a.gone && a.state === 'walk' && a.w.kind === 'strip' && !a.path) {
             // now and then someone stops for a while; a trip that is over ends at a doorway when no one is near to watch
             const q = this.rand();
-            if (q < 0.0004 && this.nStand < this.agents.length * 0.2 && (!a.fol || !a.fol.some((f) => f.kid))) this.stand(a, 15 + this.rand() * 70, false);
-            else if (q < 0.0009 && !a.fol && !this.inFront(a.x, a.y, this.keepOut + 1.5)) { if (this.rand() < 0.5) this.hold(a, 'phone'); a.state = 'stand'; this.nStand++; a.t = 0; a.standT = 3 + this.rand() * 8; a.tx = a.x; a.ty = a.y; a.th = a.h + (this.rand() - 0.5) * 1.4; }
+            if (q < 0.0004 * this.kq && this.nStand < this.agents.length * 0.2 && (!a.fol || !a.fol.some((f) => f.kid))) this.stand(a, 15 + this.rand() * 70, false);
+            else if (q < 0.0009 * this.kq && !a.fol && !this.inFront(a.x, a.y, this.keepOut + 1.5)) { if (this.rand() < 0.5) this.hold(a, 'phone'); a.state = 'stand'; this.nStand++; a.t = 0; a.standT = 3 + this.rand() * 8; a.tx = a.x; a.ty = a.y; a.th = a.h + (this.rand() - 0.5) * 1.4; }
             else if (a.trip < 0 && !a.fol && a.w.pop > a.w.want && Math.hypot(a.x - this.cx, a.y - this.cy) > 80) { bandAt(a.w, a.s, B); if (B.hi < 11) { a.lt = B.hi + 0.5; a.door = 2; } a.trip = 1e9; }
           }
           if (a.door === 2 && !a.gone) { bandAt(a.w, clamp(a.s, 0, a.w.len), B); a.la = 0; if (a.l > B.hi - 0.15) { if (Math.hypot(a.x - this.cx, a.y - this.cy) > 70 || this.unseen(a.x, a.y)) this.remove(a); else { a.door = 0; a.lt = (B.lo + B.hi) / 2; a.trip = 200; } } }

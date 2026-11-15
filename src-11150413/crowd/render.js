@@ -12,8 +12,9 @@
 import * as THREE from 'three';
 import { BAKE_LIGHT_GLSL } from '../facade.js';
 import { clusterGeometry, mergeForShadow } from './lod.js';
+import { bakeData } from './bake.js';
 
-const FPS = 10, STRIDE = 16, NEAR_R = 20, MID_R = 62, DRAW_R = 235, SHADOW_R = 62, ACC_R = 60, BLOB_R = 95;
+const STRIDE = 16, NEAR_R = 20, MID_R = 62, DRAW_R = 235, SHADOW_R = 62, ACC_R = 60, BLOB_R = 95;
 
 const PARS = /* glsl */`
   attribute vec4 aPos; attribute vec4 aAnim; attribute vec4 aXf; attribute vec4 aXg;
@@ -75,10 +76,10 @@ function patch(mat, U, v) {
     sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\n' + PARS).replace('void main() {', 'void main() {\n crowdCompute();')
       .replace('#include <beginnormal_vertex>', 'vec3 objectNormal = crowdN;').replace('#include <begin_vertex>', 'vec3 transformed = crowdP;');
     if (v.lit) {
-      Object.assign(sh.uniforms, { tLight: U.shared.tLight, uHalf: U.shared.uHalf, uSunColor: U.shared.uSunColor, uShadowFar: U.shared.uShadowFar, uShadowCenter: U.shared.uShadowCenter });
+      Object.assign(sh.uniforms, { uCrowdIn: U.uIn, tLight: U.shared.tLight, uHalf: U.shared.uHalf, uSunColor: U.shared.uSunColor, uShadowFar: U.shared.uShadowFar, uShadowCenter: U.shared.uShadowCenter });
       sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
-          varying vec3 vWPos; varying vec3 vCTint; varying float vCH; varying float vCAO; uniform sampler2D tLight; uniform vec2 uHalf; uniform vec3 uSunColor; uniform float uShadowFar; uniform vec3 uShadowCenter; vec3 bakeV; vec3 bakeN;`)
-        .replace('#include <color_fragment>', '#include <color_fragment>\n diffuseColor.rgb *= vCTint;')
+          varying vec3 vWPos; varying vec3 vCTint; varying float vCH; varying float vCAO; uniform float uCrowdIn; uniform sampler2D tLight; uniform vec2 uHalf; uniform vec3 uSunColor; uniform float uShadowFar; uniform vec3 uShadowCenter; vec3 bakeV; vec3 bakeN;`)
+        .replace('#include <color_fragment>', '#include <color_fragment>\n diffuseColor.rgb *= vCTint;' + (v.fade ? '\n if (uCrowdIn < 1.0) { float cin = fract(sin(dot(floor(gl_FragCoord.xy), vec2(12.9898, 78.233))) * 43758.5453); if (cin > uCrowdIn) discard; }' : ''))
         // the baked ground light where the figure stands (sky seen from the street, sun beyond the shadow map), then the ground's own
         // share of the sky: the lower body sees pavement, not sky, so the light from above falls off towards the feet
         .replace('#include <aomap_fragment>', (U.shared.tLight && U.shared.tLight.value ? BAKE_READ + BAKE_LIGHT_GLSL : '') + `
@@ -95,69 +96,24 @@ function patch(mat, U, v) {
     }
   };
   if (v.farLit) mat.defines.CROWD_FARLIT = 1;
-  mat.customProgramCacheKey = () => 'crowd5|' + (v.ao ? 'a' : '') + (v.farLit ? 'f' : '') + (v.bones || 4) + '|' + (v.rigid !== undefined ? 'r' : 's') + '|' + (v.mask === true ? 'm' : 'u') + '|' + (v.lit ? 'l' : 'd');
+  mat.customProgramCacheKey = () => 'crowd5|' + (v.ao ? 'a' : '') + (v.fade ? 'i' : '') + (v.farLit ? 'f' : '') + (v.bones || 4) + '|' + (v.rigid !== undefined ? 'r' : 's') + '|' + (v.mask === true ? 'm' : 'u') + '|' + (v.lit ? 'l' : 'd');
   return mat;
 }
 
 // ---------------------------------------------------------------- the animation texture
-// Public feedback ("the update interval of objects is too low and the stuttering of animations is distracting"; people/crowd-fb, Nov 11).
-// What moved in steps was the cast's clips themselves: they are keyed 10 times a second, joined by straight lines, and 13 of the 27 stop short
-// of their own cycle (the export cut each to a whole number of tenths: WalkBrisk has keys to 0.8 s of a 0.867 s stride, Jog to 0.7 of 0.767),
-// so the pose at the last key was pulled to the first within one column: a foot 28 cm out of place, every stride. loopTrack() makes a track a
-// closed loop of the clip's real cycle (crowd.json's duration) and a smooth curve through its keys (cubic Hermite, slopes from the neighbours'
-// real times), sampled at the texture's columns; walking and running clips get 30 columns a second (20 if they are 1.6 s or longer).
-// Nothing is added per frame: the same texture reads. ?crowdsmooth=0 bakes as before; ?crowdsmooth=20 keeps short clips at 20 columns a second.
-function loopTrack(t, P, F) {
-  const n0 = t.times.length, k = t.getValueSize(), T = t.times, V = t.values; if (n0 < 3 || t.getInterpolation() === THREE.InterpolateDiscrete) return t;
-  let n = n0; if (P - T[n0 - 1] < 0.01) { for (let c = 0; c < k; c++) if (Math.abs(V[c] - V[(n0 - 1) * k + c]) > 4e-3 && Math.abs(V[c] + V[(n0 - 1) * k + c]) > 4e-3) return t; n = n0 - 1; }      // closed in the file (last key = first), or not a loop at all
-  const times = new Float32Array(F + 1), vals = new Float32Array((F + 1) * k), tm = (j) => T[((j % n) + n) % n] + Math.floor(j / n) * P, P0 = [0, 0, 0, 0], P1 = [0, 0, 0, 0], P2 = [0, 0, 0, 0], P3 = [0, 0, 0, 0];
-  const key = (j, o) => { const q = (((j % n) + n) % n) * k; for (let c = 0; c < k; c++) o[c] = V[q + c]; }, same = (Q, R) => { let d = 0; for (let c = 0; c < 4; c++) d += Q[c] * R[c]; if (d < 0) for (let c = 0; c < 4; c++) Q[c] = -Q[c]; };
-  for (let f = 0, i = 0; f <= F; f++) {
-    const x = f === F ? 0 : (f / F) * P; times[f] = (f / F) * P; if (f === F) i = 0; while (i < n - 1 && T[i + 1] <= x) i++;
-    const t0 = tm(i - 1), t1 = tm(i), t2 = tm(i + 1), t3 = tm(i + 2), h = t2 - t1, u = (x - t1) / h, u2 = u * u, u3 = u2 * u; key(i - 1, P0); key(i, P1); key(i + 1, P2); key(i + 2, P3);
-    if (k === 4) { same(P0, P1); same(P2, P1); same(P3, P2); }
-    let L = 0; for (let c = 0; c < k; c++) { const m1 = ((P2[c] - P0[c]) / (t2 - t0)) * h, m2 = ((P3[c] - P1[c]) / (t3 - t1)) * h, v = (2 * u3 - 3 * u2 + 1) * P1[c] + (u3 - 2 * u2 + u) * m1 + (-2 * u3 + 3 * u2) * P2[c] + (u3 - u2) * m2; vals[f * k + c] = v; L += v * v; }
-    if (k === 4) { L = Math.sqrt(L) || 1; for (let c = 0; c < 4; c++) vals[f * k + c] /= L; }
-  }
-  return new t.constructor(t.name, times, vals);
-}
-export function bake(renderer, cast, clipNames, smooth = 0) {
-  const t0 = performance.now(), chars = cast.chars, accs = cast.accs || [], meta = (cast.sim && cast.sim.clips) || {};
-  const NB = Math.max(...chars.map((c) => c.skeleton.bones.length)), ROWS = (NB + accs.length) * 3;
-  const clips = clipNames.map((n) => { const c = cast.animations.find((a) => a.name.toLowerCase() === n.toLowerCase()); if (!c) return null; const o = { name: n, clip: c, dur: c.duration, F: Math.max(2, Math.round(c.duration * (c.duration < 1.6 ? 2 * FPS : FPS))) };
-    if (smooth) { const m = meta[n] || {}, P = m.duration >= c.duration - 1e-3 && m.duration - c.duration < 0.12 ? m.duration : c.duration, moving = m.speed > 0;
-      if (moving || P - c.duration > 0.01) { o.loop = true; o.dur = P; o.F = Math.max(2, Math.round(P * (moving ? (P < 1.6 ? smooth : 2 * FPS) : P < 1.6 ? 2 * FPS : FPS))); } }
-    return o; });
-  let W = 0; for (const c of clips) if (c) { c.x0 = W; W += c.F + 1; }
-  const first = clips.find((c) => c); for (let i = 0; i < clips.length; i++) if (!clips[i]) clips[i] = Object.assign({}, first, { name: clipNames[i], missing: true });
-  const H = chars.length * ROWS, data = new Float32Array(W * H * 4), m = new THREE.Matrix4(), sc = new THREE.Matrix4();
-  const put = (x, y, e) => { for (let r = 0; r < 3; r++) { const o = ((y + r) * W + x) * 4; data[o] = e[r]; data[o + 1] = e[4 + r]; data[o + 2] = e[8 + r]; data[o + 3] = e[12 + r]; } };
-  chars.forEach((ch, ci) => {
-    const root = ch.root, sk = ch.skeleton, bones = sk.bones, inv = sk.boneInverses, bind = ch.bind, y0 = ci * ROWS; ch.rowBase = y0;
-    if (root.parent) root.parent.remove(root); root.position.set(0, 0, 0); root.quaternion.identity(); root.updateMatrixWorld(true);
-    const mixer = new THREE.AnimationMixer(root), pre = [ch.name + '_', ch.name + '.'];
-    const ab = accs.map((a) => bones.find((b) => b.name === ch.name + '_' + a.bone) || null); sc.makeScale(ch.height / 1.8, ch.height / 1.8, ch.height / 1.8);
-    for (const c of clips) {
-      if (c.missing) continue;
-      let tracks = c.clip.tracks.filter((t) => t.name.startsWith(pre[0]) || t.name.startsWith(pre[1])); if (!tracks.length) continue;
-      if (c.loop) tracks = tracks.map((t) => loopTrack(t, c.dur, c.F));
-      const act = mixer.clipAction(new THREE.AnimationClip(c.name + '_' + ch.name, c.dur, tracks)); act.play();
-      for (let f = 0; f < c.F; f++) {
-        mixer.setTime((f / c.F) * c.dur); root.updateMatrixWorld(true);
-        for (let b = 0; b < bones.length; b++) { m.multiplyMatrices(bones[b].matrixWorld, inv[b]).multiply(bind); put(c.x0 + f, y0 + b * 3, m.elements); }
-        for (let k = 0; k < accs.length; k++) if (ab[k]) { m.multiplyMatrices(ab[k].matrixWorld, sc).multiply(accs[k].local); put(c.x0 + f, y0 + (NB + k) * 3, m.elements); }
-      }
-      act.stop(); mixer.uncacheAction(act.getClip());
-      for (let y = y0; y < y0 + ROWS; y++) { const a = (y * W + c.x0) * 4, b = (y * W + c.x0 + c.F) * 4; for (let k = 0; k < 4; k++) data[b + k] = data[a + k]; }
-    }
-  });
-  // float texture with linear filtering where the GPU has it, else half floats (always filterable)
-  // half floats: always filterable, half the memory of floats (about 1 mm and 0.0005 of a turn: plenty for a skinning matrix)
-  let h; if (typeof Float16Array !== 'undefined') h = new Uint16Array(new Float16Array(data).buffer); else { h = new Uint16Array(data.length); for (let i = 0; i < data.length; i++) h[i] = THREE.DataUtils.toHalfFloat(data[i]); }
-  const tex = new THREE.DataTexture(h, W, H, THREE.RGBAFormat, THREE.HalfFloatType);
-  tex.minFilter = tex.magFilter = THREE.LinearFilter; tex.generateMipmaps = false; tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping; tex.colorSpace = THREE.NoColorSpace; tex.needsUpdate = true;
-  return { tex, W, H, NB, ROWS, clips, ms: Math.round(performance.now() - t0), missing: clips.filter((c) => c.missing).map((c) => c.name) };
-}
+// The bake itself is in crowd/bake.js (people/crowd-perf: the same code, also run by crowd/castworker.js off the main thread).
+const texOf = (B) => { const tex = new THREE.DataTexture(B.data, B.W, B.H, THREE.RGBAFormat, THREE.HalfFloatType);
+  tex.minFilter = tex.magFilter = THREE.LinearFilter; tex.generateMipmaps = false; tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping; tex.colorSpace = THREE.NoColorSpace; tex.needsUpdate = true; return Object.assign({}, B, { tex }); };
+// bake() is also called from outside (the guns module adds two clips of its own at load and bakes "everything" again). With the clips coming
+// from the worker that second bake is only of the added clips (CrowdRender.rebake): they go into the spare columns of the worker's texture.
+// Since Nov 13 the guns module (combat/people.js bakeAdd) asks for ONLY its added clips and joins them to the right of render.baked itself: that call
+// (no name of the cast file in the list) gets a plain texture of just those clips, as from the old bake. If the worker's texture is not here yet its
+// join does not fit (heights differ), it falls back to asking for everything, and that goes through rebake as before.
+export function bake(renderer, cast, clipNames, smooth = 0) { const R = cast && cast._render; if (R && R.split && clipNames.some((n) => R.base.includes(n))) return R.rebake(clipNames, smooth); return texOf(bakeData(THREE, cast, clipNames, smooth)); }
+export const smoothOf = (P) => { const v = P && P.get('crowdsmooth'); return P && (v === '0' || P.get('crowdfb') === '0') ? 0 : v === '20' ? 20 : 30; };      // people/crowd-fb: closed, smooth clip loops (see bake.js)
+// until the worker's texture is here: every bone matrix zero, so every body is drawn as a point (nothing on screen) while its shaders, meshes
+// and pictures go to the graphics card behind the start screen as before
+const holdTex = (names, NB, ROWS) => texOf({ data: new Uint16Array(16), W: 2, H: 2, NB, ROWS, clips: names.map((n) => ({ name: n, x0: 0, F: 1, dur: 1 })), missing: [], ms: 0, pending: true });
 
 class Batch {       // one instance buffer, shared by the draws of one character and band
   constructor(cap) { this.cap = cap; this.arr = new Float32Array(cap * STRIDE); this.ib = new THREE.InstancedInterleavedBuffer(this.arr, STRIDE, 1); this.ib.setUsage(THREE.DynamicDrawUsage); this.n = 0; this.meshes = []; this.dropped = 0; }
@@ -174,9 +130,14 @@ class Batch {       // one instance buffer, shared by the draws of one character
 export class CrowdRender {
   constructor(game, sim, cast, opts = {}) {
     const world = game.world, R = world.renderer; this.g = game; this.sim = sim; this.cast = cast;
-    { const P = game.P, v = P && P.get('crowdsmooth'); this.smooth = P && (v === '0' || P.get('crowdfb') === '0') ? 0 : v === '20' ? 20 : 30; }      // people/crowd-fb: closed, smooth clip loops (see bake)
-    const B = (this.baked = bake(R, cast, sim.clipNames, this.smooth));
-    const U = (this.U = { tAnim: { value: B.tex }, uAnimInv: { value: new THREE.Vector2(1 / B.W, 1 / B.H) }, shared: world.shared || {} });
+    this.smooth = smoothOf(game.P); this.fade = 1; this.final = null; this.extra = null; this.names = null;
+    let B;
+    if (cast.pending) {      // people/crowd-perf: the clips are being baked by the worker; the layout is known from the skeletons
+      this.split = true; this.base = sim.clipNames.slice(); cast._render = this; const NB = Math.max(...cast.chars.map((c) => c.skeleton.bones.length)), ROWS = (NB + (cast.accs || []).length) * 3;
+      cast.chars.forEach((c, i) => { c.rowBase = i * ROWS; const root = c.root; if (root.parent) root.parent.remove(root); root.position.set(0, 0, 0); root.quaternion.identity(); root.updateMatrixWorld(true); });
+      B = this.baked = holdTex(sim.clipNames, NB, ROWS);
+    } else B = this.baked = texOf(bakeData(THREE, cast, sim.clipNames, this.smooth));
+    const U = (this.U = { tAnim: { value: B.tex }, uAnimInv: { value: new THREE.Vector2(1 / B.W, 1 / B.H) }, uIn: { value: 1 }, shared: world.shared || {} });
     this.group = new THREE.Group(); this.group.name = 'crowd'; this.normalGroup = new THREE.Group(); this.batches = []; this.chars = [];
     const noop = new THREE.ShaderMaterial({ vertexShader: 'void main(){ gl_Position = vec4(2.0, 2.0, 2.0, 1.0); }', fragmentShader: 'void main(){ gl_FragColor = vec4(0.0); }', colorWrite: false, depthWrite: false, depthTest: false, side: THREE.DoubleSide });
     const depthMat = patch(new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking }), U, { bones: 1 });
@@ -197,7 +158,7 @@ export class CrowdRender {
       for (const p of ch.parts) {
         const hasMask = !!p.geometry.attributes.color && p.mask === true, names = ['position', 'normal', 'uv', 'skinIndex', 'skinWeight'].concat(hasMask ? ['aMask'] : []);
         const mk = (bones, far) => { const m = p.material.clone(); m.vertexColors = false; m.transparent = false; m.depthWrite = true; if (p.alphaTest) { m.alphaTest = p.alphaTest; m.side = THREE.DoubleSide; } m.envMapIntensity = p.material.envMapIntensity; if (bones < 4) { m.normalMap = null; }
-          return patch(m, U, { bones, mask: hasMask ? true : p.mask || [0, 0, 0], lit: true, ao: hasMask && p.ao, farLit: far }); };
+          return patch(m, U, { bones, mask: hasMask ? true : p.mask || [0, 0, 0], lit: true, ao: hasMask && p.ao, farLit: far, fade: !!cast.pending && m.alphaTest > 0 }); };
         const gN = near.geometry(p.geometry, names), mN = near.mesh(gN, mk(4)); mN.receiveShadow = true; this.group.add(mN); this.normalGroup.add(near.mesh(gN, nrmNear));
         rep.tris_near += p.geometry.index.count / 3; rep.parts++;
         if (p.far === false) continue;
@@ -230,6 +191,29 @@ export class CrowdRender {
     this.stats = { drawn: 0, near: 0, mid: 0, far: 0, shadow: 0, acc: 0, dropped: 0 }; this.nearR = opts.nearR || NEAR_R; this.midR = opts.midR || MID_R; this.shadowR = opts.shadowR || SHADOW_R;
     sim.farOf = farOf; sim.farR = this.midR;      // people/crowd-fb: past midR a figure is its stand-in body, so the sim may change who it is there without a change on screen
   }
+  // people/crowd-perf. The worker's texture has arrived (B: the 27 clips of the cast file, spare columns on the right).
+  setBaked(B, fade) {
+    const P = this.baked; if (B.NB !== P.NB || B.ROWS !== P.ROWS || B.H !== this.cast.chars.length * P.ROWS) throw new Error('the worker\'s clip texture does not fit the cast (' + [B.NB, B.ROWS, B.H] + ' against ' + [P.NB, P.ROWS, this.cast.chars.length * P.ROWS] + ')');
+    this.final = B; const Bk = this.compose(), old = this.baked.tex; this.baked = Bk; this.U.tAnim.value = Bk.tex; this.U.uAnimInv.value.set(1 / Bk.W, 1 / Bk.H); old.dispose();
+    this.fade = fade ? 0 : 1; this.U.uIn.value = this.fade; this._ft = performance.now(); Object.assign(this.report, { anim_tex: Bk.W + 'x' + Bk.H, anim_mb: +(Bk.W * Bk.H * 8 / 1048576).toFixed(1), bake_ms: 0, bake_worker_ms: B.ms });
+  }
+  // someone outside asks for the texture with more clips than the cast file has (bake() above): only those are baked here, on the page
+  rebake(clipNames, smooth) {
+    const extra = clipNames.filter((n) => !this.base.includes(n)); this.names = clipNames.slice();
+    this.extra = extra.length ? bakeData(THREE, this.cast, extra, smooth) : null;
+    for (const c of this.cast.chars) c.rowBase = this.chars.length ? this.chars[this.cast.chars.indexOf(c)].rowBase : c.rowBase;
+    return this.final ? this.compose() : holdTex(clipNames, this.baked.NB, this.baked.ROWS);
+  }
+  // the worker's texture with the added clips written into its spare columns; a new texture object every time (the caller throws the old one away)
+  compose() {
+    const F = this.final, E = this.extra, table = new Map(F.clips.map((c) => [c.name, c]));
+    if (E && E.H === F.H) { const x = F.used;
+      if (x + E.W > F.W) { const W2 = x + E.W, d2 = new Uint16Array(W2 * F.H * 4); for (let y = 0; y < F.H; y++) d2.set(F.data.subarray(y * F.W * 4, (y * F.W + x) * 4), y * W2 * 4); F.data = d2; F.W = W2; }
+      for (let y = 0; y < F.H; y++) F.data.set(E.data.subarray(y * E.W * 4, (y + 1) * E.W * 4), (y * F.W + x) * 4);
+      for (const c of E.clips) table.set(c.name, Object.assign({}, c, { x0: c.x0 + x })); }
+    const names = this.names || this.base, first = F.clips[0];
+    return texOf({ data: F.data, W: F.W, H: F.H, NB: F.NB, ROWS: F.ROWS, clips: names.map((n) => table.get(n) || Object.assign({}, first, { name: n, missing: true })), missing: F.missing || [], ms: F.ms || 0 });
+  }
   // what the camera sees of the sim, written into the instance buffers
   update() {
     const sim = this.sim, cam = this.g.world.camera, B = this.baked, C = B.clips, iW = 1 / B.W, S = this.stats;
@@ -237,17 +221,21 @@ export class CrowdRender {
     const hf = Math.atan(Math.tan(cam.fov * Math.PI / 360) * cam.aspect), cosV = Math.cos(Math.min(3.1, hf + 0.14)), look = Math.abs(e[9]) > 0.6;      // looking steeply up or down: no cone test
     for (const b of this.batches) b.n = 0; S.near = S.far = S.shadow = S.acc = 0; let dropped = 0;
     const nearR = this.nearR, midR = this.midR, shR = this.shadowR, BL = this.blob; BL.n = 0; S.mid = 0;
+    // people/crowd-perf: while the clips fade in, no shadows, nothing in the hand; before they are here, no contact shadows either
+    let fade = this.fade; if (fade < 1) { const now = performance.now(); fade = this.fade = Math.min(1, fade + (now - (this._ft || now)) / 900); this._ft = now; this.U.uIn.value = fade; } const hold = !!B.pending, SC = sim.clips;
+    const put = (b, a, ax, ay, uA, uB, row, sc) => { if (b.n >= b.cap) { dropped++; return; } const A = b.arr, o = b.n++ * STRIDE; A[o] = ax; A[o + 1] = a.z; A[o + 2] = -ay; A[o + 3] = a.h; A[o + 4] = uA; A[o + 5] = uB; A[o + 6] = a.blend; A[o + 7] = row; A[o + 8] = sc; A[o + 9] = a.fall; A[o + 10] = a.tint[0]; A[o + 11] = a.tint[1]; A[o + 12] = a.tint[2]; };
     for (const a of sim.agents) {
-      const dx = a.x - cx, dy = a.y - cy, d = Math.hypot(dx, dy); if (d > DRAW_R || (d < 0.55 && cam.position.y < 2.4)) continue;
+      // someone the sim steps every 2nd or 4th frame (far off, sim.js) is drawn where they have walked to since: along their heading, at their pace
+      let ax = a.x, ay = a.y, ph = a.ph; const lag = a.lag; if (lag > 0) { const s = a.v * lag; ax += Math.cos(a.h) * s; ay += Math.sin(a.h) * s; ph += (lag * a.rate) / SC[a.clip].duration; if (ph >= 1) ph -= Math.floor(ph); }
+      const dx = ax - cx, dy = ay - cy, d = Math.hypot(dx, dy); if (d > DRAW_R || (d < 0.55 && cam.position.y < 2.4)) continue;
       const seen = look || d < 7 || dx * fx + dy * fy > d * cosV, ch = this.chars[a.char];
-      const sh = d < shR && (seen || d < 28); if (!seen && !sh) continue;
-      const c = C[a.clip], c2 = C[a.clipB], uA = (c.x0 + 0.5 + a.ph * c.F) * iW, uB = (c2.x0 + 0.5 + a.phB * c2.F) * iW;
-      const put = (b, row, k) => { if (b.n >= b.cap) { dropped++; return; } const A = b.arr, o = b.n++ * STRIDE; A[o] = a.x; A[o + 1] = a.z; A[o + 2] = -a.y; A[o + 3] = a.h; A[o + 4] = uA; A[o + 5] = uB; A[o + 6] = a.blend; A[o + 7] = row === undefined ? ch.rowBase : row; A[o + 8] = k === undefined ? a.scale : a.scale * k; A[o + 9] = a.fall; A[o + 10] = a.tint[0]; A[o + 11] = a.tint[1]; A[o + 12] = a.tint[2]; };
-      if (sh) { put(ch.shadow, ch.farRow, ch.farK); S.shadow++; }
+      const sh = d < shR && (seen || d < 28) && fade >= 1; if (!seen && !sh) continue;
+      const c = C[a.clip], c2 = C[a.clipB], uA = (c.x0 + 0.5 + ph * c.F) * iW, uB = (c2.x0 + 0.5 + a.phB * c2.F) * iW;
+      if (sh) { put(ch.shadow, a, ax, ay, uA, uB, ch.farRow, a.scale * ch.farK); S.shadow++; }
       if (!seen) continue;
-      if (d < nearR) { put(ch.near); S.near++; } else if (d < midR) { put(ch.mid); S.mid++; } else { put(ch.far, ch.farRow, ch.farK); S.far++; }
-      if (d < BLOB_R && BL.n < BL.cap && a.state !== 'down') { const o = BL.n++ * 4; BL.arr[o] = a.x; BL.arr[o + 1] = a.seatOf ? a.seatOf.z : a.z; BL.arr[o + 2] = -a.y; BL.arr[o + 3] = d < 60 ? 1 : 1 - (d - 60) / (BLOB_R - 60); }
-      if (a.acc && d < ACC_R) for (let k = 0; k < this.accs.length; k++) if (a.acc & (1 << k)) { const b = this.accs[k]; if (b.n < b.cap) { put(b); b.arr[(b.n - 1) * STRIDE + 10] = a.accT[k]; b.arr[(b.n - 1) * STRIDE + 11] = 0xffffff; b.arr[(b.n - 1) * STRIDE + 12] = 0xffffff; S.acc++; } }
+      if (d < nearR) { put(ch.near, a, ax, ay, uA, uB, ch.rowBase, a.scale); S.near++; } else if (d < midR) { put(ch.mid, a, ax, ay, uA, uB, ch.rowBase, a.scale); S.mid++; } else { put(ch.far, a, ax, ay, uA, uB, ch.farRow, a.scale * ch.farK); S.far++; }
+      if (d < BLOB_R && BL.n < BL.cap && a.state !== 'down' && !hold) { const o = BL.n++ * 4; BL.arr[o] = ax; BL.arr[o + 1] = a.seatOf ? a.seatOf.z : a.z; BL.arr[o + 2] = -ay; BL.arr[o + 3] = (d < 60 ? 1 : 1 - (d - 60) / (BLOB_R - 60)) * fade; }
+      if (a.acc && d < ACC_R && fade >= 1) for (let k = 0; k < this.accs.length; k++) if (a.acc & (1 << k)) { const b = this.accs[k]; if (b.n < b.cap) { put(b, a, ax, ay, uA, uB, ch.rowBase, a.scale); b.arr[(b.n - 1) * STRIDE + 10] = a.accT[k]; b.arr[(b.n - 1) * STRIDE + 11] = 0xffffff; b.arr[(b.n - 1) * STRIDE + 12] = 0xffffff; S.acc++; } }
     }
     for (const b of this.batches) b.end(); S.drawn = S.near + S.mid + S.far; S.dropped = dropped;
     BL.g.instanceCount = BL.n; BL.me.visible = BL.n > 0; if (BL.n) { BL.ib.clearUpdateRanges(); BL.ib.addUpdateRange(0, BL.n * 4); BL.ib.needsUpdate = true; }
@@ -257,7 +245,7 @@ export class CrowdRender {
   hookAO(gtao) {
     if (!gtao || gtao._crowd) return; gtao._crowd = true; const ro = gtao.renderOverride.bind(gtao), self = this;
     gtao.renderOverride = function (renderer, mat, rt, cc, ca) {
-      const vis = self.group.visible; self.group.visible = false; ro(renderer, mat, rt, cc, ca); self.group.visible = vis; if (!vis || mat !== gtao.normalMaterial) return;
+      const vis = self.group.visible; self.group.visible = false; ro(renderer, mat, rt, cc, ca); self.group.visible = vis; if (!vis || mat !== gtao.normalMaterial || self.fade < 1 || self.baked.pending) return;
       const ac = renderer.autoClear; renderer.autoClear = false; renderer.setRenderTarget(rt); renderer.render(self.normalGroup, gtao.camera); renderer.autoClear = ac;
     };
   }

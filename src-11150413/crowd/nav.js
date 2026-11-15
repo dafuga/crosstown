@@ -32,6 +32,22 @@ export function furnitureOf(game) {
   return { extra, seats };
 }
 
+// people/crowd-perf, Nov 14: statics.onSidewalk's answer, from each block polygon's edges sorted into bands of y (same edges, same arithmetic,
+// only those that cannot cross the point's y are left out: the same answer bit for bit, a tenth of the time on the 796-corner block of the two-area map)
+function swIndex(st) {
+  if (!st.blocks || !st.key) return null; const idx = new Map();
+  const ring = (poly) => { let y0 = 1e9, y1 = -1e9; for (const p of poly) { if (p[1] < y0) y0 = p[1]; if (p[1] > y1) y1 = p[1]; }
+    const n = Math.max(1, Math.min(512, poly.length >> 1)), h = (y1 - y0) / n || 1, slabs = []; for (let k = 0; k < n; k++) slabs.push([]);
+    const at = (y) => { const k = Math.floor((y - y0) / h); return k < 0 ? 0 : k >= n ? n - 1 : k; };
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { const yi = poly[i][1], yj = poly[j][1], k1 = at(Math.max(yi, yj)); for (let k = at(Math.min(yi, yj)); k <= k1; k++) slabs[k].push(poly[i][0], yi, poly[j][0], yj); }
+    const R = { y0, y1, at, slabs: slabs.map((a) => new Float64Array(a)) }; idx.set(poly, R); return R; };
+  const inside = (x, y, poly) => { if (poly.length < 12) return pointInPoly(x, y, poly); const R = idx.get(poly) || ring(poly); if (!(y >= R.y0 && y <= R.y1)) return false;
+    const a = R.slabs[R.at(y)]; let inn = false; for (let o = 0; o < a.length; o += 4) { const xi = a[o], yi = a[o + 1], xj = a[o + 2], yj = a[o + 3]; if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inn = !inn; } return inn; };
+  return (x, y) => { const a = st.blocks.get(st.key(Math.floor(x / 64), Math.floor(y / 64))); if (!a) return false;
+    for (const b of a) { if (x < b.x0 || x > b.x1 || y < b.y0 || y > b.y1) continue;
+      if (inside(x, y, b.poly.ext)) { let hole = false; for (const h of b.poly.holes) if (inside(x, y, h)) { hole = true; break; } if (!hole) return true; } }
+    return false; };
+}
 export function buildNav(game, plazas = [], extraObs = []) {
   const R = game.roads, st = game.statics, city = game.city, nodes = R.nodes, edges = R.edges;
   // (crowd.js hands over the furniture as { x, y, r }: the walking room only. The things' own half widths are read here, so crowd.js stays as it is.)
@@ -43,7 +59,8 @@ export function buildNav(game, plazas = [], extraObs = []) {
   // is a point inside a building's outline? (asked only where a line stands in the kerb zone)
   let BG = null; const inBuilding = (x, y) => { if (!BG) { BG = new Map(); for (const b of city.buildings || []) { if ((b.minh || 0) >= 3 || !b.poly) continue; let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9; for (const q of b.poly) { x0 = Math.min(x0, q[0]); y0 = Math.min(y0, q[1]); x1 = Math.max(x1, q[0]); y1 = Math.max(y1, q[1]); } for (let i = Math.floor(x0 / 32); i <= Math.floor(x1 / 32); i++) for (let j = Math.floor(y0 / 32); j <= Math.floor(y1 / 32); j++) { const k = i * 8192 + j; let a = BG.get(k); if (!a) BG.set(k, (a = [])); a.push(b); } } }
     const a = BG.get(Math.floor(x / 32) * 8192 + Math.floor(y / 32)); if (a) for (const b of a) if (pointInPoly(x, y, b.poly)) return true; return false; };
-  const walkable = (x, y) => Math.abs(x - bcx) < bx && Math.abs(y - bcy) < by && st.onSidewalk(x, y);
+  const swQ = game.P && game.P.get && (game.P.get('crowdnav') === '0' || game.P.get('crowdperf') === '0') ? null : swIndex(st), onSw = swQ || ((x, y) => st.onSidewalk(x, y));      /* people/crowd-perf */
+  const walkable = (x, y) => Math.abs(x - bcx) < bx && Math.abs(y - bcy) < by && onSw(x, y);
   const pz = plazas.map((p) => { let x = 0, y = 0; for (const q of p.poly) { x += q[0]; y += q[1]; } return { x: x / p.poly.length, y: y / p.poly.length, r: Math.sqrt(p.area / Math.PI) + 30, poly: p.poly, area: p.area }; });
   const nearPlaza = (x, y) => { for (const p of pz) if (Math.hypot(x - p.x, y - p.y) < p.r) return true; return false; };
 

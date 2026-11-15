@@ -222,7 +222,13 @@ export async function install(game) {
   };
   const sync0 = g.syncVisuals.bind(g);
   g.syncVisuals = function (dt) { sync0(dt); if (!step0) { step0 = g.step.bind(g); g.step = myStep; const r0 = w.render.bind(w); w.render = function (t, focus) { try { placeCam(); } catch (e) { fail('camera', e); } return r0(t, focus); }; }
-    if (S.own && !pl.vehicle) { const o = pl.vis.object; o.position.set(pl.x, visZ, -pl.y); } };
+    if (S.own && !pl.vehicle) { const o = pl.vis.object; o.position.set(pl.x, visZ, -pl.y); if (S.sit && S.ride) { try { sitHands(o); } catch (e) { fail('sit hands', e); } } } };
+  // seated in the train he plays the game's car-driving clip, whose hands hold a wheel: lay them on his thighs instead (the entry lane's rig, bone names only; ?subhands=0 off)
+  let hrig = null, hrigP = null; const hv = [0, 1, 2, 3, 4, 5].map(() => new THREE.Vector3());
+  const sitHands = (o) => { if (P.get('subhands') === '0') return; if (!hrigP) hrigP = import('../entry/rig.js').then((m) => { const r = new m.EntryRig(pl.vis, 'player'); if (r.ok) hrig = r; else console.log('[subway] sit hands: no rig'); }).catch((e) => console.log('[subway] sit hands: ' + (e && e.message)));
+    if (!hrig) return; o.updateMatrixWorld(true); const [T, Kn, tg, pole, fw, lf] = hv; fw.set(Math.cos(pl.h), 0, -Math.sin(pl.h)); lf.set(-Math.sin(pl.h), 0, -Math.cos(pl.h));
+    for (const s of ['L', 'R']) { const sg = s === 'L' ? 1 : -1; hrig.pos('thigh_' + s, T); hrig.pos('shin_' + s, Kn); tg.copy(T).lerp(Kn, 0.62); tg.y += 0.1; tg.addScaledVector(lf, -0.02 * sg);
+      hrig.arm(s, tg, pole.set(0, -1, 0).addScaledVector(lf, 0.7 * sg).addScaledVector(fw, -0.3), 1); hrig.handDir(s, Kn.sub(T).normalize(), pole.set(0, s === 'R' ? 1 : -1, 0), 1); } };
   // camera: inside the rooms, never through a wall or the ground
   // Ours is set last, just before the frame is drawn (world.render is wrapped on the first frame): the guns module and the game place the camera by the
   // street's rules (never below 0.4 m, walls from the street's collision), which put it above the station's ceiling in the first live run.
