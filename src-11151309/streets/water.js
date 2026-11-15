@@ -49,7 +49,7 @@ function flat(poly, h, r) {
   g.computeBoundingSphere(); g.computeBoundingBox(); return g;
 }
 // the land west of a shore line, as one ring: the line, closed far to the north, west and south
-const landRing = (w) => { const s = w.shore, a = s[0], b = s[s.length - 1]; return s.concat([[b[0], BIG], [-BIG, BIG], [-BIG, -BIG], [a[0], -BIG]]); };
+const landRing = (w) => { const s = w.shore, a = s[0], b = s[s.length - 1]; return w.land === 'east' ? s.concat([[b[0], -BIG], [BIG, -BIG], [BIG, BIG], [a[0], BIG]]) : s.concat([[b[0], BIG], [-BIG, BIG], [-BIG, -BIG], [a[0], -BIG]]); };     /* (helper west) land: 'east' = a west shore (the Hudson): its line runs north to south, the land is closed far to the EAST */
 
 // the sidewalk blocks of one area with the water taken out: a block the data lists in water[].cut is replaced by its first part, its other parts are added at the end
 export function cutBlocks(whole, blocks) {

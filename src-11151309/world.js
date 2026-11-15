@@ -171,7 +171,7 @@ export class World {
       new Promise((res) => { const tall = (this.lm2 = !!(city.meta.sets && Q.get('lm2') !== '0' && this.renderer.capabilities.maxTextureSize >= 8192));
         // tiles lane, Nov 15: a map with a second COLUMN of areas (city.meta.seamsx) has its own picture (ground_light6, slabs in light/lm6/: lanes/tiles/tools/lightmap_cols.py), which
         // repeats in u too: the columns of the far west ring hold the ground east of x = +hx. Same size, same lookup, no shader change. ?lmwrap=0 = the one-column picture, ?lmdir= another slab folder.
-        const cols = !!(tall && city.meta.seamsx && city.meta.seamsx.length && Q.get('lmwrap') !== '0'), wrapS = cols ? THREE.RepeatWrapping : THREE.ClampToEdgeWrapping, lmDir = Q.get('lmdir') || (cols ? 'light/lm6/' : 'light/lm/'), lmWhole = cols ? 'ground_light6.webp' : 'ground_light2.webp'; this.lmWhole = A + lmWhole;
+        const cols = !!(tall && city.meta.seamsx && city.meta.seamsx.length && Q.get('lmwrap') !== '0'), wrapS = cols ? THREE.RepeatWrapping : THREE.ClampToEdgeWrapping, wide = cols && (city.meta.play[2] - city.meta.play[0]) > 2 * build.hx && Q.get('lmwide') !== '0', lmDir = Q.get('lmdir') || (wide ? 'light/lm9/' : cols ? 'light/lm6/' : 'light/lm/'), lmWhole = wide ? 'ground_light9.webp' : cols ? 'ground_light6.webp' : 'ground_light2.webp'; this.lmWhole = A + lmWhole; this.lmWide = wide;     /* tiles lane, Nov 15: a map WIDER than one picture (a third column: play box over 2 hx wide) has a picture twice as wide (8192 px = 4 hx, light/lm9/, ground_light9: lanes/tiles/tools/lightmap_wide.py) and uHalf.x is doubled below, as uHalf.y is for the tall one: every shader's u = x / (2 uHalf.x) + 0.5 lands right with no change. ?lmwide=0 = the one-width picture */
         const one = (name, wrapT, next, ws = THREE.ClampToEdgeWrapping) => texLoader.load(A + name, (t) => { t.colorSpace = THREE.NoColorSpace; t.flipY = true; t.wrapS = ws; t.wrapT = wrapT; t.anisotropy = 4; res(t); }, undefined, next);
         const whole = () => { if (tall) one(lmWhole, THREE.RepeatWrapping, () => { this.lm2 = false; one('ground_light.webp', THREE.ClampToEdgeWrapping, () => res(null)); }, wrapS); else one('ground_light.webp', THREE.ClampToEdgeWrapping, () => res(null)); };
         // tiles lane, Nov 14: the tall picture in SLABS (assets/light/lm, lanes/tiles/tools/lightmap_slabs.sh) drawn round the player into the same one texture: see lmSlabs below. ?lmslab=0, no KTX2, or no slabs.json = the whole picture as before.
@@ -179,7 +179,7 @@ export class World {
       tex('asphalt_02_diff.jpg', true), tex('asphalt_02_nor.jpg'), tex('asphalt_02_rough.jpg'), tex('concrete_pavement_diff.jpg', true), tex('concrete_pavement_nor.jpg'), tex('leafy_grass_diff.jpg', true),
       loadHDR(A + LIGHT.sky),
     ]);
-    Object.assign(this.shared.tWallA, { value: wa }); this.shared.tWallN.value = wn; this.shared.tLight.value = lm; if (this.lm2) this.shared.uHalf.value.y = 2 * build.hy;     /* tiles lane: the tall two-area lightmap (see its load above) */ this.shared.tSign.value = makeSignAtlas();
+    Object.assign(this.shared.tWallA, { value: wa }); this.shared.tWallN.value = wn; this.shared.tLight.value = lm; if (this.lm2) this.shared.uHalf.value.y = 2 * build.hy; if (this.lm2 && this.lmWide) this.shared.uHalf.value.x = 2 * build.hx;     /* tiles lane: the tall two-area lightmap (see its load above) */ this.shared.tSign.value = makeSignAtlas();
     this.setupSky(sky);
     onProgress('city');
     const facade = makeFacadeMaterial(this.shared);

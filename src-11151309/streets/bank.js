@@ -8,6 +8,12 @@
 // haze, night windows and rain exactly as Manhattan's own distant buildings do. The land is a flat mesh 0.3 m above the street level with a wall down into
 // the water along its shore; it lies over the water surface (which writes no depth and is drawn last), so the river ends at the far shore.
 // window.__bank = { files, buildings, walls, verts, tris, land, ms } for a look.
+// BEYOND (Nov 15, helper bank 2; ?beyond=0 off): the water surface ends at its outline's box (3 - 4 km from the play area) and the camera draws nothing past 6 km; past both the
+// sky dome's under-side showed (world.js: the HDR's horizon row at 0.9, without the haze the sky above has): from the air a straight water edge against a purple band. Now one flat
+// disc follows the camera, 2.4 m under the street: dull grey ground, and water where a river goes on north and south of its outline (the file's head.ends, or the outline's own
+// end edges). Its last ring stands for the horizon: those corners are pulled in to just inside the far plane along their line of sight (same place on the screen) and keep the fog
+// of their true distance, so ground and water fade into the scene's haze up to the sky's own horizon haze. It writes no depth and is drawn after every solid thing and before the
+// water; over the play box it draws nothing (the subway is under there). Scenery: no file, no fetch.
 import * as THREE from 'three';
 
 const LAND_H = 0.3;
@@ -71,20 +77,54 @@ function buildCell(group, head, S, cell, mat, rep, tag) {
   const m = still(new THREE.Mesh(g, mat)); m.name = 'bank_' + tag + '_' + b0; group.add(m); rep.verts += v; rep.tris += I.length / 3;
 }
 
+// the ground and the rivers past the end of everything built (see BEYOND at the top). ends = [[x0, y0, x1, y1]] in map metres: where water goes on
+function buildBeyond(game, ends) {
+  const world = game.world, play = (game.city.meta && game.city.meta.play) || [-600, -600, 600, 600], R = [0, 150, 400, 900, 1800, 3000, 4200, 5200, 5700, 1e6], SEG = 96, P = [], I = [];
+  for (const r of R) for (let k = 0; k < SEG; k++) { const a = (k / SEG) * Math.PI * 2; P.push(r * Math.cos(a), 0, r * Math.sin(a)); }
+  for (let j = 0; j + 1 < R.length; j++) for (let k = 0; k < SEG; k++) { const a = j * SEG + k, b = j * SEG + (k + 1) % SEG, c = a + SEG, d = b + SEG; I.push(a, b, c, b, d, c); }      // facing up
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(P.map((v, i) => (i % 3 === 1 ? 1 : 0)), 3)); g.setIndex(I);
+  const W = []; for (let i = 0; i < 6; i++) { const e = ends[i] || [0, 0, 0, 0]; W.push(new THREE.Vector4(e[0], e[1], e[2], e[3])); }
+  const U = { uBkFar: { value: 5850 }, uBkHole: { value: new THREE.Vector4(play[0] - 60, play[1] - 60, play[2] + 60, play[3] + 60) }, uBkWat: { value: W } };
+  const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.96, metalness: 0 }); m.depthWrite = false;
+  m.onBeforeCompile = (sh) => { Object.assign(sh.uniforms, U);
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\n varying vec3 vBkP; uniform float uBkFar;')
+      .replace('#include <project_vertex>', `#include <project_vertex>
+      vBkP = (modelMatrix * vec4(transformed, 1.0)).xyz; float bkZ = -mvPosition.z, bkD = length(mvPosition.xyz);
+      if (bkD > uBkFar) { mvPosition.xyz *= uBkFar / bkD; gl_Position = projectionMatrix * mvPosition; }`)
+      .replace('#include <fog_vertex>', '#include <fog_vertex>\n #ifdef USE_FOG\n vFogDepth = bkZ;\n #endif');
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\n varying vec3 vBkP; uniform vec4 uBkHole; uniform vec4 uBkWat[6]; float bkWet = 0.0;')
+      .replace('#include <color_fragment>', `#include <color_fragment>
+      { vec2 q = vec2(vBkP.x, -vBkP.z); if (q.x > uBkHole.x && q.x < uBkHole.z && q.y > uBkHole.y && q.y < uBkHole.w) discard;
+        for (int i = 0; i < 6; i++) { vec4 r = uBkWat[i]; if (q.x > r.x && q.x < r.z && q.y > r.y && q.y < r.w) bkWet = 1.0; }
+        diffuseColor.rgb = mix(vec3(0.058, 0.057, 0.054), vec3(0.013, 0.026, 0.028), bkWet); }`)
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n roughnessFactor = mix(0.96, 0.16, bkWet);'); };
+  m.customProgramCacheKey = () => 'tilesBeyond1';
+  const mesh = new THREE.Mesh(g, m); mesh.name = 'bank_beyond'; mesh.frustumCulled = false; mesh.castShadow = false; mesh.receiveShadow = false; mesh.renderOrder = 39; mesh.matrixAutoUpdate = false;
+  mesh.onBeforeRender = (r, s, cam) => { mesh.position.set(cam.position.x, -2.4, cam.position.z); mesh.updateMatrix(); mesh.updateMatrixWorld(true); };
+  const grp = new THREE.Group(); grp.name = 'bank_beyond_group'; grp.add(mesh); world.scene.add(grp); return mesh;
+}
+// where a water goes on past its outline: the file's own list, else the outline's end edges (the points on its box's north and south side), 60 km on
+function endsOf(w, head) {
+  if (head && head.ends) return head.ends; const out = []; let y0 = 1e9, y1 = -1e9; for (const p of w.poly) { if (p[1] < y0) y0 = p[1]; if (p[1] > y1) y1 = p[1]; }
+  for (const [y, far] of [[y1, y1 + 6e4], [y0, y0 - 6e4]]) { let a = 1e9, b = -1e9; for (const p of w.poly) if (Math.abs(p[1] - y) < 1) { if (p[0] < a) a = p[0]; if (p[0] > b) b = p[0]; } if (b - a > 20) out.push([a, Math.min(y, far), b, Math.max(y, far)]); }
+  return out;
+}
+
 // once per map, from water.js waterInit. Not waited for: the ground's build goes on, the bank is in the scene when its file has come (a few hundred kB).
 export function bankInit(game, waters) {
   const world = game.world, P = game.P; if (!world || world.__bank || !waters || !waters.length || (P && P.get && P.get('bank') === '0')) return null; world.__bank = 1;
   const A = (P && P.get && P.get('bankdir')) || 'assets/bank/', rep = { files: [], buildings: 0, walls: 0, verts: 0, tris: 0, land: 0, ms: 0 }; window.__bank = rep;
   const group = new THREE.Group(); group.name = 'streets_ground_bank'; world.scene.add(group);
+  const heads = [], beyond = () => { if (P && P.get && P.get('beyond') === '0') return; try { const ends = []; waters.forEach((w, k) => { if (w.poly) ends.push(...endsOf(w, heads[k])); }); buildBeyond(game, ends); rep.beyond = ends.length; } catch (e) { console.log('[bank] nothing beyond: ' + (e && e.message)); } };
   const one = async (w, k) => {
     const url = A + slug(w.name) + '.bin', r = await fetch(url); if (!r.ok) { rep.files.push(url + ' ' + r.status); return; }
-    const buf = await r.arrayBuffer(), { head, S } = read(buf); let t0 = performance.now(); buildLand(group, head, S, rep); rep.ms += performance.now() - t0;
+    const buf = await r.arrayBuffer(), { head, S } = read(buf); heads[k] = head; let t0 = performance.now(); buildLand(group, head, S, rep); rep.ms += performance.now() - t0;
     let mat = farMaterial(world); for (let i = 0; !mat && i < 100; i++) { await new Promise((res) => setTimeout(res, 200)); mat = farMaterial(world); }      // far.glb may still be on its way
     if (!mat) console.log('[bank] no far city material: the far bank has land only');
     // one 700 m cell of buildings at a time, the page's turn between two: no long task from this at load or after it
     if (mat) for (const c of head.cells) { t0 = performance.now(); buildCell(group, head, S, c, mat, rep, k * 100000); rep.ms += performance.now() - t0; await new Promise((res) => setTimeout(res, 0)); }
     rep.files.push(url + ' ' + buf.byteLength); rep.ms = Math.round(rep.ms);
   };
-  rep.done = Promise.all(waters.map((w, k) => one(w, k).catch((e) => { console.log('[bank] ' + w.name + ' not built: ' + (e && e.message)); }))).then(() => { rep.ready = 1; console.log('[water] far bank: ' + rep.buildings + ' buildings, ' + rep.verts + ' vertices, ' + Math.round(rep.tris) + ' triangles, built in ' + rep.ms + ' ms at ' + (performance.now() / 1000).toFixed(1) + ' s (' + rep.files.join(', ') + ')'); });
+  rep.done = Promise.all(waters.map((w, k) => one(w, k).catch((e) => { console.log('[bank] ' + w.name + ' not built: ' + (e && e.message)); }))).then(() => { beyond(); rep.ready = 1; console.log('[water] far bank: ' + rep.buildings + ' buildings, ' + rep.verts + ' vertices, ' + Math.round(rep.tris) + ' triangles, built in ' + rep.ms + ' ms at ' + (performance.now() / 1000).toFixed(1) + ' s (' + rep.files.join(', ') + ')'); });
   return rep;
 }

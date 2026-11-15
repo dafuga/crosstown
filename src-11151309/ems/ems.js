@@ -39,6 +39,7 @@ export function install(game, opts = {}) {
   if (P.get('ems') === '0') { E.on = false; return E; }
   const REAL = typeof document !== 'undefined' && !!(g.world && g.world.scene) && !opts.headless;
   const R = g.roads, st = g.statics, fast = P.has('emsfast');
+  const FIX = (E.fix = P.get('emsfix') !== '0');      // e3: the body is taken, the stretcher keeps out of walls, the ambulance may stop near a player on the walk (?emsfix=0 = e2)
   const num = (k, d) => (P.has(k) && isFinite(+P.get(k)) ? +P.get(k) : d);
   const C = (E.cfg = { hitMin: num('emshit', 4.2), crashMin: num('emscrash', 16), delay: fast ? 1 : 3.5, cool: fast ? 6 : num('emscool', 75), walk: { amb: 38, fire: 30 }, vmax: 15, sceneMax: 45, heatMax: num('emsheat', 2), vol: num('emsvol', 1),
     type: { amb: P.get('emsamb') || 'van', fire: P.get('emsfire') || 'stepvan' }, color: { amb: 0xeeeeea, fire: 0xd6160f }, q: num('emsq', 1) });
@@ -53,6 +54,14 @@ export function install(game, opts = {}) {
   // ---------------------------------------------------------------- incidents
   const ragBody = (Rg) => ({ rag: Rg, pos: () => { const L = g.__pedhit && g.__pedhit.list; return L && L.includes(Rg) ? { x: Rg.P.hips.p.x, y: -Rg.P.hips.p.z, z: Rg.P.hips.p.y } : null; }, hold: () => { Rg.t = Math.min(Rg.t, 12); }, take: () => { Rg.t = 99; } });
   const standBody = (b, B) => ({ pos: () => (b.doll && B.live.includes(b) ? { x: b.doll.p[36], y: -b.doll.p[38], z: b.doll.p[37] } : null), hold: () => {}, take: () => { try { if (B.live.includes(b)) B.release(b); } catch (e) {} } });
+  // e3: a walker of the street shot dead lies in combat.bodies.peds (people.js killPed: p.body.doll), not in bodies.live. It is taken the way the game itself clears a fallen walker (traffic.js: out of peds.list; people.js then drops its doll, blob and mark on its next step)
+  const pedBody = (p, B) => ({ ped: p, pos: () => { const d = p.body && p.body.doll; return d && B.peds.includes(p) ? { x: d.p[36], y: -d.p[38], z: d.p[37] } : null; }, hold: () => { if (p.state === 'down') p.t = Math.min(p.t, 5); },
+    take: () => { const L = g.peds && g.peds.list, i = L ? L.indexOf(p) : -1; if (i < 0 || p.state !== 'down') return; if (p.vis) { p.vis.used = false; if (p.vis.object) p.vis.object.visible = false; } L.splice(i, 1); } });
+  // e3: no body was known at the report (or it was lost): the nearest one lying within 8 m of the scene is the patient
+  const lateBody = (I) => { if (I.k !== 'amb' || I.taken || (I.body && I.body.pos())) return I; let best = null, bd = 8; const off = (x, y, mk) => { const d = hyp(x - I.x, y - I.y); if (d < bd) { bd = d; best = mk; } };
+    try { const B = g.combat && g.combat.bodies; if (B) { if (B.peds) for (const q of B.peds) { const d = q.body && q.body.doll; if (d) off(d.p[36], -d.p[38], () => pedBody(q, B)); } if (B.live) for (const b of B.live) if (b.doll) off(b.doll.p[36], -b.doll.p[38], () => standBody(b, B)); }
+      const L = g.__pedhit && g.__pedhit.list; if (L) for (const Rg of L) { const h = Rg.P && Rg.P.hips && Rg.P.hips.p; if (h) off(h.x, -h.z, () => ragBody(Rg)); } } catch (e) {}
+    if (best) { I.body = best(); say('body found at the scene'); } return I; };
   E.report = (kind, x, y, o = {}) => {
     if (!E.on || !isFinite(x) || !isFinite(y)) return null; const k = kind === 'hurt' ? 'amb' : 'fire'; E.stats.reports++;
     for (const I of E.incidents) if (I.k === k && !I.done && hyp(I.x - x, I.y - y) < 35) { if (o.body && !I.body) I.body = o.body; if (o.car && !I.car) I.car = o.car; if (kind === 'fire') I.kind = 'fire'; I.n++; E.stats.merged++; return I; }
@@ -66,7 +75,7 @@ export function install(game, opts = {}) {
     try { if (!E.on || v !== g.player.vehicle || hyp(v.vx, v.vy) < C.hitMin) return; const Rg = L && L[L.length - 1]; E.report('hurt', p.x, p.y, { body: Rg && Rg !== last ? ragBody(Rg) : null }); } catch (e) {} }; }
   // a person shot dead
   { const B = g.combat && g.combat.bodies; if (B && B.kill && B.live) { const k0 = B.kill.bind(B); B.kill = (p, kind, h, force) => { const last = B.live[B.live.length - 1], ok = k0(p, kind, h, force);
-    if (ok && E.on) try { const b = B.live[B.live.length - 1]; E.report('hurt', p.x, p.y, { body: b && b !== last && b.doll ? standBody(b, B) : null, shot: true }); } catch (e) {} return ok; }; } }
+    if (ok && E.on) try { const b = B.live[B.live.length - 1]; E.report('hurt', p.x, p.y, { body: b && b !== last && b.doll ? standBody(b, B) : FIX && kind === 'ped' && p && p.body && p.body.doll && B.peds ? pedBody(p, B) : null, shot: true }); } catch (e) {} return ok; }; } }
   // the player's own car in a heavy crash
   let wreck = null;
   { const c0 = g.onCrash.bind(g); g.onCrash = (v, f) => { c0(v, f); if (E.on && v === g.player.vehicle && f >= C.crashMin) wreck = { v, t: E.t, x: v.x, y: v.y, f }; }; }
@@ -106,7 +115,7 @@ export function install(game, opts = {}) {
   E.clearPose = clearPose;
   function planStop(ix, iy, def, k, minD = 0) {
     const L = def.len, W = def.wid, maxW = C.walk[k], pl = g.player; let best = null;
-    const pe = R.nearestEdge(pl.x, pl.y, 14);
+    const pe = R.nearestEdge(pl.x, pl.y, 14), afoot = FIX && k === 'amb' && !pl.vehicle && st.onSidewalk(pl.x, pl.y);      // e3: a player standing on the walk is not in the ambulance's way
     for (const e of R.edges) {
       if (e.out || e.len < L + 18) continue; const b = boxOf(e); if (ix < b[0] - maxW - 8 || ix > b[2] + maxW + 8 || iy < b[1] - maxW - 8 || iy > b[3] + maxW + 8) continue;
       for (const dir of e.oneway ? [1] : [1, -1]) for (const side of e.oneway ? [1, -1] : [1]) {
@@ -120,8 +129,8 @@ export function install(game, opts = {}) {
           else continue;
           const px = cx + nx * off, py = cy + ny * off, h = Math.atan2(_t.ty, _t.tx), walk = hyp(px - ix, py - iy); if (walk > maxW || walk < minD) continue;
           if (!g.bounds.in(px, py, -12) || !clearPose(px, py, h, L, W, null, inLane)) continue;
-          { /* not where the last metres of the way in would pass the player or his car */ const ax = pl.x - px, ay = pl.y - py, f = ax * _t.tx + ay * _t.ty, sd = Math.abs(-ax * _t.ty + ay * _t.tx); if (f < L / 2 + 5 && sd < W / 2 + 4.2 && (f > -26 || (pe && pe.e === e))) continue; }
-          const los = st.raycast(px, py, ix, iy) >= 1, mine = pe && pe.e === e && hyp(px - pl.x, py - pl.y) < 14;
+          { /* not where the last metres of the way in would pass the player or his car */ const ax = pl.x - px, ay = pl.y - py, f = ax * _t.tx + ay * _t.ty, sd = Math.abs(-ax * _t.ty + ay * _t.tx); if (f < L / 2 + 5 && sd < W / 2 + (afoot ? 1.2 : 4.2) && (f > -26 || (pe && pe.e === e))) continue; }
+          const los = st.raycast(px, py, ix, iy) >= 1, mine = pe && pe.e === e && hyp(px - pl.x, py - pl.y) < 14 && !afoot;
           const score = walk + (los ? 0 : k === 'fire' ? 40 : 12) + (mine ? 25 : 0) + (k === 'fire' && walk < 9 ? 20 : 0) + (inLane ? 60 : 0);
           if (!best || score < best.score) best = { x: px, y: py, h, e, dir, side, s, off: off * side, walk, los, score, tx: _t.tx, ty: _t.ty, inLane };
         }
@@ -235,7 +244,8 @@ export function install(game, opts = {}) {
   function walk(m, tx, ty, sp, dt) {
     const dx = tx - m.x, dy = ty - m.y, d = hyp(dx, dy); if (d < 0.25) { m.sp = 0; return true; }
     const h = Math.atan2(dy, dx); m.h += wrapPi(h - m.h) * Math.min(1, dt * 9); const stp = Math.min(d, sp * dt), nx = m.x + (dx / d) * stp, ny = m.y + (dy / d) * stp;
-    if (m.stuck > 2.5) { m.x = nx; m.y = ny; } else { st.resolve(nx, ny, 0.3, _o); const moved = hyp(_o.x - m.x, _o.y - m.y); m.stuck = moved < stp * 0.3 ? (m.stuck || 0) + dt : 0; m.x = _o.x; m.y = _o.y; }
+    if (m.nowall && m.gave) { if (hyp(tx - m.gave[0], ty - m.gave[1]) < 1.5) { m.sp = 0; return true; } m.gave = null; m.stuck = 0; }      // e3: a medic never goes through a wall: held for 2.5 s it stops where it is
+    if (m.stuck > 2.5) { if (m.nowall) { m.gave = [tx, ty]; m.sp = 0; return true; } m.x = nx; m.y = ny; } else { st.resolve(nx, ny, 0.3, _o); const moved = hyp(_o.x - m.x, _o.y - m.y); m.stuck = moved < stp * 0.3 ? (m.stuck || 0) + dt : 0; m.x = _o.x; m.y = _o.y; }
     m.sp = sp; return false;
   }
   const local = (v, lx, lz) => ({ x: v.x + Math.cos(v.h) * lx + Math.sin(v.h) * lz, y: v.y + Math.sin(v.h) * lx - Math.cos(v.h) * lz });
@@ -281,18 +291,22 @@ export function install(game, opts = {}) {
   // ---------------------------------------------------------------- the crews (who stands where and when; ems draws them if it can)
   const member = (U, i, x, y, h) => { const m = { i, x, y, h, sp: 0, pose: 'idle', gone: false, born: E.t, kind: U.k }; U.crew.push(m); return m; };
   function medics(U, dt) {
-    const v = U.v, I = U.I, p = scenePos(I), W = v.def.wid / 2; if (I.body) I.body.hold();
-    if (U.phase === 0) { if (U.t < 0.9) return false; const a = local(v, v.def.len * 0.2, -(W + 0.6)), b = local(v, -(v.def.len / 2 + 1.5), 0); member(U, 0, a.x, a.y, v.h); const m1 = member(U, 1, b.x, b.y, v.h + Math.PI); m1.cart = true; U.cart = { x: b.x, y: b.y, h: v.h, load: false, show: true }; U.phase = 1; U.pt = 0; return false; }
+    const v = U.v, I = U.I, p = scenePos(FIX ? lateBody(I) : I), W = v.def.wid / 2; if (I.body) I.body.hold();
+    const have = !!(I.body && I.body.pos()); if (have) U.hadBody = true; const gone = FIX && !!U.hadBody && !have;      // e3: the body went (the game cleared it) before it was loaded
+    const T = (x, y, r) => { if (!FIX) return [x, y]; st.resolve(x, y, r, _o); return [_o.x, _o.y]; };      // e3: a mark inside a wall is moved out of it
+    if (U.phase === 0) { if (U.t < 0.9) return false; const a = local(v, v.def.len * 0.2, -(W + 0.6)), b = local(v, -(v.def.len / 2 + 1.5), 0); member(U, 0, a.x, a.y, v.h); const m1 = member(U, 1, b.x, b.y, v.h + Math.PI); m1.cart = true; U.crew[0].nowall = m1.nowall = FIX; U.cart = { x: b.x, y: b.y, h: v.h, load: false, show: true }; U.phase = 1; U.pt = 0; return false; }
     const m0 = U.crew[0], m1 = U.crew[1], cart = U.cart; U.pt += dt;
-    const push = (tx, ty, sp) => { const done = walk(m1, tx, ty, sp, dt); cart.h = m1.h; cart.x = m1.x + Math.cos(m1.h) * 1.25; cart.y = m1.y + Math.sin(m1.h) * 1.25; m1.pose = done ? 'idle' : 'push'; return done; };
+    const push = (tx, ty, sp) => { const done = walk(m1, tx, ty, sp, dt); cart.h = m1.h; cart.x = m1.x + Math.cos(m1.h) * 1.25; cart.y = m1.y + Math.sin(m1.h) * 1.25; m1.pose = done ? 'idle' : 'push';
+      if (FIX) { /* e3: the cot keeps out of walls and posts: its middle is pushed clear, and its nose turns along what it meets */ st.resolve(cart.x, cart.y, 0.75, _o); cart.x = _o.x; cart.y = _o.y; const nx = cart.x + Math.cos(cart.h) * 0.95, ny = cart.y + Math.sin(cart.h) * 0.95; st.resolve(nx, ny, 0.35, _o); if (hyp(_o.x - nx, _o.y - ny) > 0.02) cart.h = Math.atan2(_o.y - cart.y, _o.x - cart.x); }
+      return done; };
     if (U.phase === 1) {
-      const dx = p.x - m0.x, dy = p.y - m0.y, dl = hyp(dx, dy) || 1, a0 = walk(m0, p.x - (dx / dl) * 0.75, p.y - (dy / dl) * 0.75, 3.4, dt); m0.pose = a0 ? 'kneel' : 'jog'; if (a0) m0.h = Math.atan2(p.y - m0.y, p.x - m0.x);
-      const ex = p.x - m1.x, ey = p.y - m1.y, el = hyp(ex, ey) || 1, a1 = push(p.x - (ex / el) * 2.4 + (-ey / el) * 0.9, p.y - (ey / el) * 2.4 + (ex / el) * 0.9, 2.6);
+      const dx = p.x - m0.x, dy = p.y - m0.y, dl = hyp(dx, dy) || 1, k0 = T(p.x - (dx / dl) * 0.75, p.y - (dy / dl) * 0.75, 0.4), a0 = walk(m0, k0[0], k0[1], 3.4, dt); m0.pose = a0 ? 'kneel' : 'jog'; if (a0) m0.h = Math.atan2(p.y - m0.y, p.x - m0.x);
+      const ex = p.x - m1.x, ey = p.y - m1.y, el = hyp(ex, ey) || 1, k1 = T(p.x - (ex / el) * 2.4 + (-ey / el) * 0.9, p.y - (ey / el) * 2.4 + (ex / el) * 0.9, 1.0), a1 = push(k1[0], k1[1], 2.6);
       if (a0 && !U.tend0) { U.tend0 = U.pt; U.rec.tend = +(E.t - I.t0).toFixed(1); }
-      if ((a0 && a1 && U.pt - U.tend0 > 6.5) || (a0 && U.pt - U.tend0 > 11) || U.pt > 26) { U.phase = 2; U.pt = 0; }
+      if ((a0 && a1 && U.pt - U.tend0 > 6.5) || (a0 && U.pt - U.tend0 > 11) || U.pt > 26 || (gone && a0 && U.pt - U.tend0 > 2.5)) { U.phase = 2; U.pt = 0; }
       return false;
     }
-    if (U.phase === 2) { /* onto the stretcher */ m0.pose = 'kneel'; if (U.pt > 0.9) { if (I.body) try { I.body.take(); } catch (e) {} I.body = null; cart.load = true; m0.pose = 'idle'; U.phase = 3; U.pt = 0; } return false; }
+    if (U.phase === 2) { /* onto the stretcher */ m0.pose = 'kneel'; if (U.pt > 0.9) { if (I.body) try { I.body.take(); U.rec.took = have; } catch (e) {} I.body = null; cart.load = !gone; I.taken = true; m0.pose = 'idle'; U.phase = 3; U.pt = 0; } return false; }
     if (U.phase === 3) { const b = local(v, -(v.def.len / 2 + 2.6), 0), a = local(v, -(v.def.len / 2 + 1.2), W + 0.7); const a1 = push(b.x, b.y, 2.7), a0 = walk(m0, a.x, a.y, 2.9, dt); m0.pose = a0 ? 'idle' : 'walk'; if ((a0 && a1) || U.pt > 16) { U.phase = 4; U.pt = 0; } return false; }
     if (U.pt > 1.3) { cart.show = false; return true; } cart.x += Math.cos(v.h) * 1.4 * dt; cart.y += Math.sin(v.h) * 1.4 * dt; cart.h = v.h; cart.lift = sm(U.pt / 1.0); m1.pose = 'idle'; m0.pose = 'idle'; return false;
   }

@@ -12,8 +12,10 @@ const LANDMARKS = [['Empire State Building', 40.74844, -73.98566], ['Flatiron Bu
   ['Koreatown', 40.74770, -73.98670], ['Garment District', 40.75370, -73.98990], ['Diamond District', 40.75690, -73.98030], ['Murray Hill', 40.74800, -73.97830], ['Chelsea', 40.74500, -73.99700], ['NoMad', 40.74480, -73.98850],
   ['Carnegie Hall', 40.76513, -73.97992], ['Radio City', 40.75998, -73.97998], ['Columbus Circle', 40.76806, -73.98190], ['Central Park', 40.76900, -73.97750], ['The Plaza', 40.76447, -73.97446], ['MoMA', 40.76143, -73.97762],
   ["St Patrick's", 40.75847, -73.97600], ["Hell's Kitchen", 40.76380, -73.99200], ['Theater District', 40.76000, -73.98500], ['Lincoln Center', 40.77250, -73.98350],
-  ['Chrysler Building', 40.75161, -73.97537], ['Morgan Library', 40.74922, -73.98140], ['Seagram Building', 40.75844, -73.97215], ['Kips Bay', 40.74230, -73.97800]];     /* tiles lane, Nov 15: the east column (Grand Central, Rockefeller Center, MoMA and St Patrick's were here already) */
-const AREAS = /Koreatown|District|Murray Hill|Chelsea|NoMad|Kips Bay/;
+  ['Chrysler Building', 40.75161, -73.97537], ['Morgan Library', 40.74922, -73.98140], ['Seagram Building', 40.75844, -73.97215], ['Kips Bay', 40.74230, -73.97800],
+  ['Hudson Yards', 40.75400, -74.00200], ['Javits Center', 40.75780, -74.00260], ['Chelsea Piers', 40.74660, -74.00830], ['Intrepid', 40.76450, -73.99960], ['Little Island', 40.74200, -74.01020],
+  ['Chelsea Market', 40.74240, -74.00610], ['Lincoln Tunnel', 40.75850, -74.00100], ['Meatpacking District', 40.74090, -74.00790], ['High Line', 40.74800, -74.00480]];     /* tiles lane, Nov 15: the west column */     /* tiles lane, Nov 15: the east column (Grand Central, Rockefeller Center, MoMA and St Patrick's were here already) */
+const AREAS = /Koreatown|District|Murray Hill|Chelsea$|NoMad|Kips Bay|Hudson Yards/;
 const short = (n) => n.replace(/^West /, 'W ').replace(/^East /, 'E ').replace(/ Street$/, ' St').replace(/Avenue of the Americas/, '6th Av').replace(/ Avenue$/, ' Av').replace(/ Place$/, ' Pl').replace(/ Square$/, ' Sq');
 
 export class CityMap {
