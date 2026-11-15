@@ -27,7 +27,27 @@ export function startWarmup(world, renderer, P) {
   // mirror's. The one lamp that joins at the very end of init (combat/fx.js: the muzzle flash, a PointLight without shadow) is stood in for during each
   // call, because one more lamp changes every lit program; if the lamps ever change, the early programs are simply not the ones used, and the line
   // printed by finish() says how many the compile-ahead step still had to add.
-  const E = (S.early = { passes: 0, added: 0, ms: 0, on: false }); let earlyT = 0;
+  const E = (S.early = { passes: 0, added: 0, ms: 0, on: false, arm: 0 }); let earlyT = 0;
+  // handoff17 (light, Nov 15): THE WINDOWS TRIAL. Telemetry (lanes/light/win/): on Direct3D the batch takes a median 30 to 60 s where a Mac takes 6, while the
+  // 30 s of game.init() before it leave the graphics process idle. So for a share of Windows page loads (window.__CFG.warmearly, 0..1, set by the public
+  // build; unset = none = today) the early linking is on, and E.arm says which side a load was on so telemetry can compare: 0 not in the trial, 1 forced by
+  // ?warmearly=1, 2 trial with early linking, 3 trial without (the comparison side). ?warmearly=0 = never.
+  { const q = P.get('warmearly'), share = +(window.__CFG && window.__CFG.warmearly) || 0;
+    E.arm = q === '1' ? 1 : q === '0' || !(share > 0) || !/Windows/.test(navigator.userAgent) ? 0 : Math.random() < share ? 2 : 3; }
+  // ms a program of an early pass (only where the browser can be asked without waiting, KHR_parallel_shader_compile), so that a REPEAT visit (the machine's
+  // shader cache knows them) can still be told by ramp() below although the batch at the end is small after early linking. game.init() holds the page's
+  // thread for seconds at a time, so "when were they all ready" cannot be watched from a timer (measured Nov 15 on an M2 Max, repeat visit: all 115 of the
+  // first pass were ready within the pass's own 250 ms or just after, and the first timer got to look 570 ms later: 7.8 ms a program, ramp run for
+  // nothing). So each pass is looked at the moment it ends, and then from a timer: when k of its programs are ready after T ms the graphics process has
+  // provably made k in T, T / k ms each; E.per is the least seen, counted only from a quarter of the pass (8 at least), so a few that were known already
+  // cannot speak for the rest. Measured: repeat 3.6 (69 of 115 ready at the pass's end), first visit 22 to 37 (1 of 64 at the pass's end).
+  const watches = [];
+  const perWatch = (t, n) => { let par = null; try { par = r.getContext().getExtension('KHR_parallel_shader_compile'); } catch (e) {} const ps = (r.info.programs || []).slice(n), need = Math.max(8, ps.length / 4); if (!par || ps.length < 8) return;
+    let timer = 0, done = false;
+    const look = () => { if (done) return; clearTimeout(timer); let k = 0; try { for (const p of ps) if (!p.usedTimes || p.isReady()) k++; } catch (e) { done = true; return; }
+      const T = performance.now() - t; if (k >= need) { const v = +(T / k).toFixed(1); if (E.per === undefined || v < E.per) E.per = v; }
+      if (k >= ps.length || T > 120000) done = true; else timer = setTimeout(look, 50); };
+    watches.push(look); look(); };
   const earlyPass = () => { if (!E.on) return; const t = performance.now(), n = r.info.programs ? r.info.programs.length : 0, old = r.getRenderTarget(); let lamp = null;
     try { let has = false; world.scene.traverse((o) => { if (o.isPointLight) has = true; });
       if (!has) { lamp = new THREE.PointLight(0xffc27a, 0, 16, 2); lamp.castShadow = false; world.scene.add(lamp); }
@@ -35,8 +55,8 @@ export function startWarmup(world, renderer, P) {
       const fc = !world.streetOff && !world.streetFull && world.streetCam && world.streetRT ? world.streetCam.children[0] : null;
       if (fc) { const m0 = fc.layers.mask; fc.layers.set(3); r.setRenderTarget(world.streetRT, 0); for (const top of world.scene.children) if (mirrored(top)) { try { r.compile(top, fc, world.scene); } catch (e) { fail('early mirror', e); } } fc.layers.mask = m0; }
     } catch (e) { fail('early', e); } finally { if (lamp) world.scene.remove(lamp); r.setRenderTarget(old); }
-    const dt = performance.now() - t; E.passes++; E.added += (r.info.programs ? r.info.programs.length : 0) - n; E.ms += dt; if (E.on) earlyT = setTimeout(earlyPass, Math.max(2500, dt * 10)); };
-  if (P.get('warmearly') === '1' && world.composer) { E.on = true; earlyT = setTimeout(earlyPass, 2500); }
+    const dt = performance.now() - t, got = (r.info.programs ? r.info.programs.length : 0) - n; E.passes++; E.added += got; E.ms += dt; perWatch(t, n); if (E.on) earlyT = setTimeout(earlyPass, Math.max(2500, dt * 10)); };
+  if ((E.arm === 1 || E.arm === 2) && world.composer) { E.on = true; earlyT = setTimeout(earlyPass, 2500); }
   // begin(): called just BEFORE main.js's compile-ahead step, so the two batches are one and are built side by side. Links only; waits for nothing.
   const begin = () => { if (E.on) { E.on = false; clearTimeout(earlyT); E.ms = Math.round(E.ms); } t0 = performance.now(); n0 = r.info.programs ? r.info.programs.length : 0; const old = r.getRenderTarget();
     try {
@@ -58,8 +78,8 @@ export function startWarmup(world, renderer, P) {
   const finish = async () => { if (!t0) begin(); const t1 = performance.now();
     try { const ready = () => { for (const p of r.info.programs || []) if (!p.isReady()) return false; return true; };
       for (let i = 0; i < 6000 && !ready() && performance.now() - t1 < 60000; i++) await sleep(10); } catch (e) { fail('wait', e); }
-    S.waitMs = Math.round(performance.now() - t1);
-    S.perProg = E.passes ? 99 : (performance.now() - t0) / Math.max(1, (r.info.programs ? r.info.programs.length : 0) - n0);     /* ms per program of the whole batch: about 15 on an M2 Max that has never seen them, 2 to 3 when the machine's shader cache has them (ramp() reads it) */
+    S.waitMs = Math.round(performance.now() - t1); for (const w of watches) w();     /* the early passes' watchers get their last look now that everything is ready */
+    S.perProg = E.passes ? (E.per !== undefined ? E.per : 99) : (performance.now() - t0) / Math.max(1, (r.info.programs ? r.info.programs.length : 0) - n0);     /* ms per program of the whole batch: about 15 on an M2 Max that has never seen them, 2 to 3 when the machine's shader cache has them (ramp() reads it) */
     console.log('[game] warm-up ahead: ' + (E.passes ? 'linked early while the game was set up: ' + E.added + ' programs in ' + E.passes + ' passes (page time ' + E.ms + ' ms), ' + ((r.info.programs ? r.info.programs.length : 0) - E.added) + ' more by the end; ' : '') + S.added + ' more programs in the batch (page time ' + S.linkMs + ' ms, waited ' + S.waitMs + ' ms more after the compile-ahead; street mirror: ' + S.mirror + ' groups; picture passes: ' + S.quads + ' quads)' + (S.errors ? ', errors ' + S.errors + ' (' + lastErr + ')' : '')); };
   // a group that joins the scene later (the landmark buildings, hero.js): its mirror variants as one batch, before it is added
   const late = async (obj) => { const fc = !(S.ramping ? S.rampOff0 : world.streetOff) && !world.streetFull && world.streetCam && world.streetRT ? world.streetCam.children[0] : null; if (!fc || !obj) return; const old = r.getRenderTarget(), t0 = performance.now();
@@ -77,7 +97,7 @@ export function startWarmup(world, renderer, P) {
     if (P.get('warmramp') === '0' || S.ramping || world.nearObject) return false;
     // a repeat visit (the batch above came back from the machine's shader cache: under 5 ms a program, page time included) has nothing to spread, and a
     // slow run of frames would only hold the landmark buildings back (they load one texture a frame): everything is drawn at once, as before. ?warmramp=1 forces the ramp.
-    if (P.get('warmramp') !== '1' && S.perProg !== undefined && S.perProg < 5) { S.rampSkipped = +S.perProg.toFixed(1); console.log('[game] warm-up ramp: not needed (the batch took ' + S.rampSkipped + ' ms a program: shader cache warm)'); return false; }
+    if (P.get('warmramp') !== '1' && S.perProg !== undefined && S.perProg < (E.passes ? 8 : 5)) {     /* after early linking the figure is an early pass's own (perWatch above: 3.6 against 22 to 37), taken while game.init() works beside it: under 8 */ S.rampSkipped = +S.perProg.toFixed(1); console.log('[game] warm-up ramp: not needed (the batch took ' + S.rampSkipped + ' ms a program: shader cache warm)'); return false; }
     const gl = r.getContext(), now = () => performance.now(), T0 = now(), R = (S.ramp = { log: [], tex: 0, frames: 0, idle: 0, steps: 0, objs: 0, progs: 0, mObjs: 0, mSteps: 0, maxStep: 0, hid: 0 });
     const isDrawn = (o) => o.isMesh || o.isLine || o.isPoints || o.isSprite;
     const unitsOf = (o) => { const out = []; for (const m of [].concat(o.material || [])) { const mp = m && r.properties.has(m) ? r.properties.get(m) : null; if (mp && mp.programs && mp.programs.size) { for (const p of mp.programs.values()) out.push(p); } else if (m) out.push(m); } return out; };
