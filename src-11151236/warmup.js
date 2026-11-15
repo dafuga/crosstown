@@ -55,12 +55,24 @@ export function startWarmup(world, renderer, P) {
   // interiors.js takes that same material and mesh (world.__shopHole). If interiors.js never takes it, begin() removes it again. Only with early linking;
   // ?holeearly=0 = the copy is made by interiors.js as before. Not made when the address rules the shops or the cut out (?interiors=0, ?ihole=0).
   let HM = null; const holeTry = () => { if (!HM || !E.on || world.__shopHole) return; try { if (HM.earlyHole(world)) E.hole = E.passes + 1; } catch (e) { fail('early hole', e); } };
+  // handoff19 (light, Nov 15): THE SHOP-OPENING COPY'S STREET-MIRROR PROGRAM. When a shop comes within range the tiles around it wear the copy, and the street
+  // mirror then draws them through its own cameras (no lamp, no shadow): a FOURTH building-front program, which nothing linked ahead. Measured on the
+  // Windows machine (lanes/light/handoff19/TESTED.md): the page stood still 26 to 28 s at the first shop, in one call (three asks a program's link result at
+  // its first draw, and Direct3D was still compiling it). So wherever the mirror's variants are linked (the early passes, begin()), the copy's tiny
+  // warm-up mesh is linked through the mirror's camera too. One more program, none at the shop. ?holemirror=0 = as before.
+  // WHEN: linked beside the other three during game set-up it made "ready" 9 s later on that machine (four 40 s compiles next to the page's own work), so
+  // by default it is linked right AFTER the wait in finish(): nobody waits for it, it is built behind the start screen and the first minute of play, and
+  // late() below does not count it. ?holemirror=1 = with the mirror's other variants, inside the batch (the measured, dearer way).
+  const HMQ = P.get('holemirror'), bg = new Set();
+  const holeMirror = (fc, after) => { if (HMQ === '0' || (HMQ === '1') === !!after) return; let n = 0; const n1 = r.info.programs ? r.info.programs.length : 0;
+    for (const top of world.scene.children) if (/^interiors_warm/.test(top.name || '')) for (const o of top.children) if (o.material && o.material.userData && o.material.userData.shopHole) { try { r.compile(o, fc, world.scene); n++; } catch (e) { fail('hole mirror', e); } }
+    if (n) S.holeMirror = n; if (after) for (const p of (r.info.programs || []).slice(n1)) bg.add(p); };
   const earlyPass = () => { if (!E.on) return; holeTry(); const t = performance.now(), n = r.info.programs ? r.info.programs.length : 0, old = r.getRenderTarget(); let lamp = null;
     try { let has = false; world.scene.traverse((o) => { if (o.isPointLight) has = true; });
       if (!has) { lamp = new THREE.PointLight(0xffc27a, 0, 16, 2); lamp.castShadow = false; world.scene.add(lamp); }
       r.setRenderTarget(world.composer.readBuffer); r.compile(world.scene, world.camera);
       const fc = !world.streetOff && !world.streetFull && world.streetCam && world.streetRT ? world.streetCam.children[0] : null;
-      if (fc) { const m0 = fc.layers.mask; fc.layers.set(3); r.setRenderTarget(world.streetRT, 0); for (const top of world.scene.children) if (mirrored(top)) { try { r.compile(top, fc, world.scene); } catch (e) { fail('early mirror', e); } } fc.layers.mask = m0; }
+      if (fc) { const m0 = fc.layers.mask; fc.layers.set(3); r.setRenderTarget(world.streetRT, 0); for (const top of world.scene.children) if (mirrored(top)) { try { r.compile(top, fc, world.scene); } catch (e) { fail('early mirror', e); } } holeMirror(fc); fc.layers.mask = m0; }
     } catch (e) { fail('early', e); } finally { if (lamp) world.scene.remove(lamp); r.setRenderTarget(old); }
     const dt = performance.now() - t, got = (r.info.programs ? r.info.programs.length : 0) - n; E.passes++; E.added += got; E.ms += dt; perWatch(t, n); if (E.on) earlyT = setTimeout(earlyPass, Math.max(2500, dt * 10)); };
   if ((E.arm === 1 || E.arm === 2) && world.composer) { E.on = true; earlyT = setTimeout(earlyPass, 2500);
@@ -71,7 +83,7 @@ export function startWarmup(world, renderer, P) {
       // 1. the street mirror's variants
       const fc = !world.streetOff && !world.streetFull && world.streetCam && world.streetRT ? world.streetCam.children[0] : null;
       if (fc) { fc.layers.set(3); r.setRenderTarget(world.streetRT, 0);
-        for (const top of world.scene.children) if (mirrored(top)) { try { r.compile(top, fc, world.scene); S.mirror++; } catch (e) { fail('mirror', e); } } }
+        for (const top of world.scene.children) if (mirrored(top)) { try { r.compile(top, fc, world.scene); S.mirror++; } catch (e) { fail('mirror', e); } } holeMirror(fc); }
       // 2. the picture passes' own quads (enabled passes only), and the exposure meter's two
       if (P.get('warmup') !== 'm' && world.composer) { const mats = new Set(), add = (m, mesh) => { if (m && m.isShaderMaterial && !mats.has(m)) { mats.add(m); try { r.compile(mesh || new THREE.Mesh(geo, m), cam); S.quads++; } catch (e) { fail('quad', e); } } };
         const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute([-1, 3, 0, -1, -1, 0, 3, -1, 0], 3)); geo.setAttribute('uv', new THREE.Float32BufferAttribute([0, 2, 0, 0, 2, 0], 2));
@@ -86,13 +98,15 @@ export function startWarmup(world, renderer, P) {
   const finish = async () => { if (!t0) begin(); const t1 = performance.now();
     try { const ready = () => { for (const p of r.info.programs || []) if (!p.isReady()) return false; return true; };
       for (let i = 0; i < 6000 && !ready() && performance.now() - t1 < 60000; i++) await sleep(10); } catch (e) { fail('wait', e); }
+    { const fc = !world.streetOff && !world.streetFull && world.streetCam && world.streetRT ? world.streetCam.children[0] : null;     /* handoff19: the shop-opening copy's mirror program starts building now, unwaited */
+      if (fc) { const old = r.getRenderTarget(), m0 = fc.layers.mask; try { fc.layers.set(3); r.setRenderTarget(world.streetRT, 0); holeMirror(fc, true); } catch (e) { fail('hole mirror', e); } finally { fc.layers.mask = m0; r.setRenderTarget(old); } } }
     S.waitMs = Math.round(performance.now() - t1); for (const w of watches) w();     /* the early passes' watchers get their last look now that everything is ready */
     S.perProg = E.passes ? (E.per !== undefined ? E.per : 99) : (performance.now() - t0) / Math.max(1, (r.info.programs ? r.info.programs.length : 0) - n0);     /* ms per program of the whole batch: about 15 on an M2 Max that has never seen them, 2 to 3 when the machine's shader cache has them (ramp() reads it) */
-    console.log('[game] warm-up ahead: ' + (E.passes ? 'linked early while the game was set up: ' + E.added + ' programs in ' + E.passes + ' passes (page time ' + E.ms + ' ms), ' + ((r.info.programs ? r.info.programs.length : 0) - E.added) + ' more by the end; ' + (E.hole ? 'the shop-opening copy of the building front was made before pass ' + E.hole + (E.holeTaken ? ' and taken by interiors.js; ' : ' and NOT taken (removed); ') : '') : '') + S.added + ' more programs in the batch (page time ' + S.linkMs + ' ms, waited ' + S.waitMs + ' ms more after the compile-ahead; street mirror: ' + S.mirror + ' groups; picture passes: ' + S.quads + ' quads)' + (S.errors ? ', errors ' + S.errors + ' (' + lastErr + ')' : '')); };
+    console.log('[game] warm-up ahead: ' + (E.passes ? 'linked early while the game was set up: ' + E.added + ' programs in ' + E.passes + ' passes (page time ' + E.ms + ' ms), ' + ((r.info.programs ? r.info.programs.length : 0) - E.added) + ' more by the end; ' + (E.hole ? 'the shop-opening copy of the building front was made before pass ' + E.hole + (E.holeTaken ? ' and taken by interiors.js; ' : ' and NOT taken (removed); ') : '') : '') + S.added + ' more programs in the batch (page time ' + S.linkMs + ' ms, waited ' + S.waitMs + ' ms more after the compile-ahead; street mirror: ' + S.mirror + ' groups' + (S.holeMirror && HMQ === '1' ? ' and the shop-opening copy' : '') + '; picture passes: ' + S.quads + ' quads' + (S.holeMirror && HMQ !== '1' ? '; the shop-opening copy\'s mirror program linked after the wait, unwaited' : '') + ')' + (S.errors ? ', errors ' + S.errors + ' (' + lastErr + ')' : '')); };
   // a group that joins the scene later (the landmark buildings, hero.js): its mirror variants as one batch, before it is added
   const late = async (obj) => { const fc = !(S.ramping ? S.rampOff0 : world.streetOff) && !world.streetFull && world.streetCam && world.streetRT ? world.streetCam.children[0] : null; if (!fc || !obj) return; const old = r.getRenderTarget(), t0 = performance.now();
     try { fc.layers.set(3); r.setRenderTarget(world.streetRT, 0); r.compile(obj, fc, world.scene); S.late = (S.late || 0) + 1; } catch (e) { fail('late', e); } finally { r.setRenderTarget(old); }
-    try { const ready = () => { for (const p of r.info.programs || []) if (!p.isReady()) return false; return true; }; for (let i = 0; i < 2000 && !ready() && performance.now() - t0 < 15000; i++) await sleep(10); } catch (e) { fail('late wait', e); } };
+    try { const ready = () => { for (const p of r.info.programs || []) if (!bg.has(p) && !p.isReady()) return false; return true; }; for (let i = 0; i < 2000 && !ready() && performance.now() - t0 < 15000; i++) await sleep(10); } catch (e) { fail('late wait', e); } };
   // ramp(first): light lane handoff15, Nov 15. MEASURED (firstload/STATE.md, every draw fenced by a round trip): on a first visit the first drawn frame stood
   // 9.4 s, and 6.5 s of it was the FIRST DRAW of each of 141 programs that were already fully linked (COMPLETION_STATUS true on all of them): the graphics
   // process builds a program's pipeline when it is first drawn, a median 36 ms each, one after another; 1.4 s more was texture upload. The street mirror's
