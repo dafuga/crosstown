@@ -44,7 +44,7 @@ const TO = String((window.__CFG && window.__CFG.feedbackUrl) || 'api/feedback').
 const post = window.fetch.bind(window), KEEP = typeof Request !== 'undefined' && 'keepalive' in Request.prototype;
 const T0 = performance.now(), sec = () => Math.round((performance.now() - T0) / 100) / 10;
 const sid = (() => { const a = new Uint8Array(6); crypto.getRandomValues(a); return Array.from(a, (b) => b.toString(16).padStart(2, '0')).join(''); })();
-const MAX_SENDS = 30, MAX_BIG = 3, MAX_ERRORS = 10, MAX_SUMMARIES = 8, MAX_CTX = 4, FIRST_SUMMARY = +(Q.get('tmsum') || 180), SECOND_SUMMARY = 900, STUCK_SECS = +(Q.get('tmstuck') || 15);
+const MAX_SENDS = 30, MAX_BIG = 3, MAX_ERRORS = 10, MAX_SUMMARIES = 11, MAX_CTX = 4, FIRST_SUMMARY = +(Q.get('tmsum') || 180), SECOND_SUMMARY = 900, STUCK_SECS = +(Q.get('tmstuck') || 15);
 const ROOT = new URL('..', import.meta.url).href, CODE = (/\/(src-\d+)\/[^/]*$/.exec(import.meta.url) || [])[1] || null;
 
 // ---- what leaves the page is cleaned here: addresses down to our own file names, no query strings, no disk paths, no e-mail addresses
@@ -171,6 +171,21 @@ function onCtx(api, event, extra) {
 // ---- where the load stands (for every summary): marks are main.js's (world, init, compiled, ready, warm, play; seconds since the page opened)
 let hidLoad = 0, hidAt = 0, sumN = 0, stuckN = 0;
 const r1 = (x) => (typeof x === 'number' && isFinite(x) ? Math.round(x * 10) / 10 : null);
+// light lane, Nov 15 (handoff16; CHIEF: Windows loads spend their minutes somewhere between "game set up" and Play, and the split above stops at
+// "compiled"): what src/warmup.js and the renderer already know, read here, numbers only, nothing per frame. progs = shader programs alive;
+// par = the browser links off the page's thread (KHR_parallel_shader_compile); add / link / wait / per = the warm-up batch (programs it added, ms the
+// page spent starting it, ms waited for it after the compile-ahead, ms a program); ramp = the first-frames ramp (0 skipped as a repeat visit,
+// 1 running, 2 done, 3 stopped early or failed), its seconds, steps and longest step; f1 = the longest and fN = the count of page freezes over
+// 0.2 s between ready and Play lit (long tasks; Chrome and Edge only), fz = their sum in seconds.
+let frz = null;
+function warmInfo() {
+  const o = {}; try { const w = window.world, r = w && w.renderer, S = w && w.warmup && w.warmup.S, m = rec.marks || {};
+    if (r) { o.progs = r.info && r.info.programs ? r.info.programs.length : null; try { o.par = r.getContext().getExtension('KHR_parallel_shader_compile') ? 1 : 0; } catch (e) {} }
+    if (S) { if (typeof S.added === 'number') o.add = S.added; if (typeof S.linkMs === 'number') o.link = S.linkMs; if (typeof S.waitMs === 'number') o.wait = S.waitMs; if (typeof S.perProg === 'number') o.per = r1(S.perProg);
+      const R = S.ramp; if (S.rampSkipped !== undefined) o.ramp = 0; else if (R) { o.ramp = S.ramping ? 1 : R.why === 'done' ? 2 : 3; if (typeof R.ms === 'number') o.rampS = r1(R.ms / 1000); o.steps = (R.steps || 0) + (R.mSteps || 0); if (R.maxStep) o.maxStep = Math.round(R.maxStep); } }
+    const a = window.__readyAt, b = m.warm || performance.now() / 1000; if (frz) Object.assign(o, frz); else if (a) { let n = 0, mx = 0, sum = 0; for (const l of rec.longs || []) if (l[0] >= a - 0.05 && l[0] <= b) { n++; sum += l[1]; if (l[1] > mx) mx = l[1]; } o.f1 = r1(mx / 1000); o.fN = n; o.fz = r1(sum / 1000); if (m.warm) frz = { f1: o.f1, fN: o.fN, fz: o.fz }; }     /* kept once Play is lit: feedback.js holds only the last 80 long tasks, so a long play would push these out (second read, F1) */
+  } catch (e) {} return o;
+}
 function loadInfo() {
   const L = window.__load || {}, m = rec.marks || {}, nav = performance.getEntriesByType('navigation')[0] || {}, c = navigator.connection || {}, now = performance.now(), done = L.done || 0;
   const tot = Math.max(L.total || 250e6, done * 1.02), building = (L.total && done >= L.total * 0.985) || (/game|compiled/.test(L.stage) && now - (L.last || 0) > 1500);
@@ -179,14 +194,14 @@ function loadInfo() {
   return { fb: nav.responseStart > 0 ? r1(nav.responseStart / 1000) : null, world: m.world || null, init: m.init || null, compiled: m.compiled || null, ready: window.__readyAt || null, warm: m.warm || null,
     dlPct: L.total ? Math.min(100, Math.round(done / L.total * 100)) : null, dlSecs: L.last ? r1(L.last / 1000) : null, mbDone: Math.round(done / 1e6), mbTotal: L.total ? Math.round(L.total / 1e6) : null, failed: L.failed || 0,
     st, bar: st === 'ready' ? 100 : st === 'warming' || building ? 99 : Math.max(2, Math.min(99, Math.floor(done / tot * 100))), hiddenSecs: Math.round((hidLoad + (hidAt ? now - hidAt : 0)) / 1000),
-    conn: typeof c.effectiveType === 'string' ? c.effectiveType.slice(0, 8) : null, downlink: typeof c.downlink === 'number' ? Math.min(10, r1(c.downlink)) : null, saveData: c.saveData ? 1 : 0, cached, resources: n, sums: sumN, stuck: stuckN };
+    conn: typeof c.effectiveType === 'string' ? c.effectiveType.slice(0, 8) : null, downlink: typeof c.downlink === 'number' ? Math.min(10, r1(c.downlink)) : null, saveData: c.saveData ? 1 : 0, cached, resources: n, sums: sumN, stuck: stuckN, wu: warmInfo() };
 }
 // the same as one short plain string (letters, digits, = . and spaces only), for servers that do not know the new field names yet
-const loadPack = (l) => 'L1' + [['fb', l.fb], ['wo', l.world], ['in', l.init], ['co', l.compiled], ['rd', l.ready], ['wm', l.warm], ['dl', l.dlPct], ['dlt', l.dlSecs], ['mb', l.mbTotal ? l.mbDone + 'of' + l.mbTotal : l.mbDone], ['fl', l.failed], ['st', l.st], ['bar', l.bar], ['hid', l.hiddenSecs], ['cn', l.conn], ['dn', l.downlink], ['sv', l.saveData || null], ['ca', l.cached + 'of' + l.resources], ['sm', l.sums], ['sk', l.stuck || null]].map(([k, v]) => (v == null ? '' : ' ' + k + '=' + String(v).replace(/[^\w.]/g, ''))).join('');
+const loadPack = (l) => 'L1' + [['fb', l.fb], ['wo', l.world], ['in', l.init], ['co', l.compiled], ['rd', l.ready], ['wm', l.warm], ['dl', l.dlPct], ['dlt', l.dlSecs], ['mb', l.mbTotal ? l.mbDone + 'of' + l.mbTotal : l.mbDone], ['fl', l.failed], ['st', l.st], ['bar', l.bar], ['hid', l.hiddenSecs], ['cn', l.conn], ['dn', l.downlink], ['sv', l.saveData || null], ['ca', l.cached + 'of' + l.resources], ['sm', l.sums], ['sk', l.stuck || null]].concat(l.wu ? [['pg', l.wu.progs], ['par', l.wu.par], ['wa', l.wu.add], ['wl', l.wu.link], ['ww', l.wu.wait], ['wp', l.wu.per], ['rp', l.wu.ramp], ['rs', l.wu.rampS], ['rn', l.wu.steps], ['rx', l.wu.maxStep], ['f1', l.wu.f1], ['fn', l.wu.fN], ['fz', l.wu.fz]] : []).map(([k, v]) => (v == null ? '' : ' ' + k + '=' + String(v).replace(/[^\w.]/g, ''))).join('');
 
 // ---- the summary: frame times while really playing (not loading, not the start screen, not paused, not hidden), from feedback.js's histogram
 const B = [8, 12, 17, 20, 25, 33, 50, 67, 100, 200, 500], ph = new Array(12).fill(0), prev = new Array(12).fill(0), fpsS = [];
-let playSecs = 0, wasPlay = false, summaries = 0, lastSumAt = -1e9, lastSumPlay = -1, did3 = false, did15 = false, gpuDev = null;
+const PH = Q.get('tmphase') !== '0', phased = {}; let playSecs = 0, wasPlay = false, summaries = 0, lastSumAt = -1e9, lastSumPlay = -1, did3 = false, did15 = false, gpuDev = null;
 function summary(why) {
   if (OFF || summaries >= MAX_SUMMARIES) return; summaries++; sumN++; lastSumAt = performance.now(); lastSumPlay = playSecs; let ld = null; try { ld = loadInfo(); } catch (e) {}
   const n = ph.reduce((a, b) => a + b, 0), at = (q) => { let c = 0; for (let i = 0; i < 12; i++) { c += ph[i]; if (c >= n * q) return i < 11 ? B[i] : 1000; } return null; };
@@ -255,6 +270,7 @@ function start() {
     if (playing && wasPlay) { for (let i = 0; i < 12; i++) ph[i] += h[i] - prev[i]; playSecs++; if (fpsS.length < 7200) fpsS.push(Math.round(g.fps || 0)); }
     for (let i = 0; i < 12; i++) prev[i] = h[i]; wasPlay = playing;
     if (!did3 && playSecs >= FIRST_SUMMARY) { did3 = true; summary('played' + FIRST_SUMMARY); } else if (!did15 && playSecs >= SECOND_SUMMARY) { did15 = true; summary('played' + SECOND_SUMMARY); }
+    if (!OFF && PH) { const m = rec.marks || {}; for (const k of ['init', 'ready', 'warm']) if (m[k] && !phased[k]) { phased[k] = 1; const a = lastSumAt, b = lastSumPlay; summary('at-' + k); lastSumAt = a; lastSumPlay = b; break; } }     /* light handoff16: one summary as the load passes "game set up", "ready" and "Play lit", so a load that dies in between is seen without the tab having to say goodbye; they do not count against the goodbye summaries' own spacing; ?tmphase=0 off */
     if (!gpuStr && window.world && !lost) gpu();     // read and kept while the context is alive: after a loss the card's name cannot be read
     if (hidAt && window.__readyAt) { hidLoad += Math.max(0, window.__readyAt * 1000 - hidAt); hidAt = 0; }
     if (!loadErr && window.__error) { loadErr = true; onErr('load', String(window.__error).split('\n')[0], window.__error, ''); }     // main.js caught a failed load: it never reaches the window's error event

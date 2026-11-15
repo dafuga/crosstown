@@ -51,6 +51,7 @@ import { World } from './world.js';
 import { memfree } from './memfree.js';     // audit lane, Nov 11: frees the page's copies of vertex arrays and texture data after upload (?memfree=0 off)
 
 const P = new URLSearchParams(location.search);
+if (window.__CFG && window.__CFG.heatedge === 0 && !P.has('heatedge')) P.set('heatedge', '0');     // lead, Nov 15: the public build holds gameplay p2 + p3 (police at the map's edge) off until shown on its map (PUBLIC_HEATEDGE=0 -> __CFG.heatedge = 0; ?heatedge=1 shows it there)
 // Big plain-data files are served gzip-packed (the link's uplink is ~2 MB/s): any fetch of these names reads <name>.gz and unpacks it in the page, falling back to the plain file.
 { const plain = window.fetch.bind(window), packed = /(dressing\.bin|city\.json)$/;
   window.fetch = async (u, o) => { if (typeof u === 'string' && packed.test(u) && self.DecompressionStream && !(o && o.method && o.method !== 'GET')) { try { const r = await plain(u + '.gz', o); if (r.ok) return new Response(r.body.pipeThrough(new DecompressionStream('gzip')), { status: 200 }); } catch (e) {} } return plain(u, o); }; }

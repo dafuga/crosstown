@@ -247,23 +247,46 @@ export class Heat {
     const alive = this.cops.filter((k) => k.hp > 0 && k.mode !== 'leave' && !(hunt && Math.hypot(k.x - pv0.x, k.y - pv0.y) > 90)).length, crew = this.cars.reduce((n, v) => n + (v.drive && !v.left && !v.wreck ? (v.heavy ? 3 : 2) : 0), 0);
     if (alive + crew >= FORCE[L] || this.cops.filter((k) => k.hp > 0 && k.mode !== 'leave').length + crew >= FORCE[L] + 4) return; this.dispT = 0;
     const cars = this.cars.filter((v) => !v.wreck && !v.left && !(hunt && !v.drive && Math.hypot(v.x - pv0.x, v.y - pv0.y) > 90)).length, wantCars = [0, hunt && this.seenVeh === pv0 ? 1 : 0, 1, 2, pv0 ? 3 : 4, pv0 ? 4 : 6][L], foot = this.cops.some((k) => k.hp > 0 && !k.car);
-    if (cars < wantCars && alive + crew + 2 <= FORCE[L]) { const heavy = L >= 4 && this.cars.filter((v) => v.heavy && !v.wreck).length < L - 3; if (this.sendCar(heavy, this.fast ? 2 : 0)) return; }
+    if (cars < wantCars && alive + crew + 2 <= FORCE[L]) { const heavy = L >= 4 && this.cars.filter((v) => v.heavy && !v.wreck).length < L - 3; if (this.sendCar(heavy, this.fast ? 2 : 0)) {
+        /* p3 (Nov 15): the car just sent has a way only because of p2 (to the nearest open road instead of his closed one, its crew walking on from there: up to 630 m by road and then the walk). Before p2
+           no car could be sent at such a place, so this fell through to the pair on foot below, who were with him in seconds (node, step 5, six seeds: first police 4 s every time at -535,2079 and
+           619,-546; with p2 4-60 s and 15-43 s). Now the car is sent AND the pair is put down by the same rule as before p2, while there is room for both in the step's force. */
+        const v9 = this.cars[this.cars.length - 1]; if (!(v9 && v9.drive && v9.drive.pts.fb && !pv0 && alive + crew + 4 <= FORCE[L] && g0.P.get('heatedge') !== '0')) return; } }
     if (hunt) return;
     if ((L < 3 || !foot || cars >= wantCars) && g0.P.get('heatfoot') !== '0') this.sendFoot();
   }
   sendFoot() {
     const g = this.g, pl = g.player, st = g.statics; let best = null, cf = null; try { const m = g.world.camera.matrixWorld.elements, l = Math.hypot(m[8], m[10]); if (l > 0.2) cf = [-m[8] / l, m[10] / l]; } catch (e) {}
     for (let k = 0; k < 40 && !best; k++) { const a = this.rnd() * 6.283, d = this.fast ? this.rr(20, 32) : k < 22 ? this.rr(32, 58) : this.rr(55, 95), x = this.lkp.x + Math.cos(a) * d, y = this.lkp.y + Math.sin(a) * d; if (!g.bounds.in(x, y, -8)) continue; if (!st.onSidewalk(x, y) || st.resolve(x, y, 0.5, _o) > 0) continue; if (this.wall.raycast(pl.x, pl.y, x, y) >= 1 && Math.hypot(x - pl.x, y - pl.y) < 130) { /* in the open: only well outside what the camera shows */ const dp = Math.hypot(x - pl.x, y - pl.y); if (dp < 40 || !cf || (cf[0] * (x - pl.x) + cf[1] * (y - pl.y)) / dp > 0.2) continue; } if (!this.pathNodes(x, y, this.lkp.x, this.lkp.y) && this.wall.raycast(x, y, this.lkp.x, this.lkp.y) < 1) continue; best = { x, y }; }
+    /* p3: open ground in the map's corner (Central Park, the north-east corner: no wall within 95 m, no road within 125 m). Every place within 95 m is in a clear line from him, and such a place is taken
+       only when it is behind the camera; with the corner behind him and the camera looking into the park there is none, so no pair was ever put down (node: no unit in 150 s). By the map's edge only
+       (he is within 150 m of the play box's side), when the 40 tries above found nothing: 60 more, 130-139 m from him: from 130 m the rule above already takes a place in the open whichever way the camera looks,
+       and an officer more than 140 m from him is sent away again (think). The other tests are the same. ?heatedge=0 = as before. */
+    if (!best && g.P.get('heatedge') !== '0' && !pl.vehicle && !g.bounds.in(this.lkp.x, this.lkp.y, -150)) for (let k = 0; k < 60 && !best; k++) { const a = this.rnd() * 6.283, d = this.rr(130, 139), x = this.lkp.x + Math.cos(a) * d, y = this.lkp.y + Math.sin(a) * d; if (!g.bounds.in(x, y, -8) || Math.hypot(x - pl.x, y - pl.y) < 130) continue; if (!st.onSidewalk(x, y) || st.resolve(x, y, 0.5, _o) > 0) continue; if (!this.pathNodes(x, y, this.lkp.x, this.lkp.y) && this.wall.raycast(x, y, this.lkp.x, this.lkp.y) < 1) continue; best = { x, y }; }
     if (!best) return false; this.units++;
     const n = 2; for (let i = 0; i < n; i++) this.addCop(best.x + i * 0.9, best.y + (i % 2) * 0.8, this.level >= 4 && i === 0 ? 'rifle' : this.level >= 3 && i === 1 ? 'shotgun' : 'pistol', null, i);
     this.say('dispatch: ' + n + ' on foot from ' + Math.round(Math.hypot(best.x - pl.x, best.y - pl.y)) + ' m'); return true;
   }
   // the way there by road: from a block out of sight, along the lane graph, onto the block where the player was last seen
   routeTo(x0, y0, e0, dir0, s0) {
-    const R = this.g.roads, ne = R.nearestEdge(this.lkp.x, this.lkp.y, 90); if (!ne) return null; const pts = [];
+    const R = this.g.roads; let ne = R.nearestEdge(this.lkp.x, this.lkp.y, 90); if (!ne) return null; const pts = [];
     const lane = (e, dir) => Math.max(0, Math.min(R.laneCount(e, dir) - 1, Math.floor(R.laneCount(e, dir) / 2)));
-    let best = null; for (const node of [ne.e.a, ne.e.b]) { if (R.endNode(e0, dir0) === node) { best = { segs: [{ e: e0, dir: dir0 }], node, len: 0 }; break; } const r = R.route(e0, dir0, node); if (!r) continue; let len = 0; for (const s of r) len += s.e.len; if (!best || len < best.len) best = { segs: r, node, len }; }
+    let best = null; const ends = () => { for (const node of [ne.e.a, ne.e.b]) { if (R.endNode(e0, dir0) === node) { best = { segs: [{ e: e0, dir: dir0 }], node, len: 0 }; break; } const r = R.route(e0, dir0, node); if (!r) continue; let len = 0; for (const s of r) len += s.e.len; if (!best || len < best.len) best = { segs: r, node, len }; } }; ends();
+    /* p2 (no police for a wanted man at the map's edge, Nov 15): the road he is nearest to is one that is closed at the map's edge (it runs out through the wall) and no car can be driven
+       to either end of it (both ends beyond the wall, or a one-way street coming IN whose inner end has no other way to it): until now no way came back, from any road, so no patrol car was
+       ever sent to him there. Now the car is routed to the nearest OPEN road (within 90 m of him: further off it would stop out of reach and be 'left behind'; and neither it nor any road of the way to it may lie under a block,
+       as the road at -407,1368 to -504,1422 does, which a building stands across) and stops at the point of it nearest him; its crew comes on from there on foot.
+       Only when his road is a closed one and no way to it was found: everywhere else this is the code as it was. ?heatedge=0 = as before. */
+    let fb = false; if (!best && ne.e.out && this.g.P.get('heatedge') !== '0') { /* p3: 'under a block' = on pavement AND a ground-floor wall crosses the road's line (p2 asked for pavement only; all of Central Park is one block of pavement, so every park drive was refused and no car could come to the north-east corner) */ const blk = (e1) => { if (e1._blk === undefined) { e1._blk = false; let px = 0, py = 0, pw = false; for (let s = 0, n = 0; ; s = Math.min(e1.len, s + 8), n++) { e1.line.at(s, _t); const x = _t.x, y = _t.y, w = this.g.statics.onSidewalk(x, y); if (n && (w || pw) && this.wall.raycast(px, py, x, y) < 1) { e1._blk = true; break; } px = x; py = y; pw = w; if (s >= e1.len) break; } } return e1._blk; }; let bo = null; for (const e1 of R.edges) { if (e1.out) continue; const pr = e1.line.project(this.lkp.x, this.lkp.y); if (pr.d < 90 && (!bo || pr.d < bo.d) && !blk(e1)) bo = { e: e1, d: pr.d, s: pr.s, x: pr.x, y: pr.y }; } if (bo) { const ne0 = ne; ne = bo; fb = true; ends(); if (best && best.segs.some((sg) => blk(sg.e))) best = null; if (!best) { ne = ne0; fb = false; } } }
     if (!best) return null;
+    /* p2: his road is a closed one (or the open road taken instead): the way ends at the point of the road nearest him, which may be far more than 28 m from him. driveCar asked for a new way
+       every 1.3 s while the end was more than 28 m from him: 15-24 new ways in 40 s, the cars circling the one-way blocks 150-340 m off and never arriving. The distance that cannot be helped
+       is kept with the way and allowed for there. */
+    if ((fb || ne.e.out) && this.g.P.get('heatedge') !== '0') pts.edgeD = ne.d; if (fb) pts.fb = true;
+    /* p2: a patrol car that has turned into a closed one-way street coming IN (it can only have entered at the inner end, against the way of the street) and is asked again for the way to a man
+       further out along it: until now it was sent 'on to the end of the block', which is the junction it came from, stopped there 200 m from him and was 'left behind' (unit after unit:
+       21 sent in 150 s at -536,1867, none within 100 m). Now: on along the street to him (the same for a car already on the open road it was sent to instead, with his point behind it). Closed streets and that one case only. */
+    if (e0 === ne.e && (e0.out || fb) && (dir0 > 0 ? ne.s : e0.len - ne.s) < s0 - 11 && this.g.P.get('heatedge') !== '0') { const sa = dir0 > 0 ? s0 : e0.len - s0, sg = ne.s > sa ? 1 : -1; for (let s = sa; (ne.s - s) * sg > 0; s += 7 * sg) { e0.line.at(s, _t); pts.push([_t.x, _t.y]); } e0.line.at(ne.s, _t); pts.push([_t.x, _t.y]); return pts.length > 1 ? pts : null; }
     if (e0 === ne.e) { const sT = dir0 > 0 ? ne.s : e0.len - ne.s, li = lane(e0, dir0), b = sT > s0 - 4 ? Math.max(s0 + 2, sT) : e0.len - 1; for (let s = s0; s < b; s += 7) { R.lanePos(e0, dir0, li, s, _t); pts.push([_t.x, _t.y]); } R.lanePos(e0, dir0, li, b, _t); pts.push([_t.x, _t.y]); return pts.length > 1 ? pts : null; }
     best.segs.forEach((sg, i) => { if (sg.e === ne.e) return; const li = lane(sg.e, sg.dir), a = i === 0 ? s0 : 7, b = sg.e.len - 7; for (let s = a; s < b; s += 7) { R.lanePos(sg.e, sg.dir, li, s, _t); pts.push([_t.x, _t.y]); } R.lanePos(sg.e, sg.dir, li, Math.max(a, b), _t); pts.push([_t.x, _t.y]); });
     /* the last block: from that corner toward the place itself, either way along it */
@@ -331,7 +354,7 @@ export class Heat {
   driveCar(v, dt) {
     const g = this.g, D = v.drive, pl = g.player, plv = pl.vehicle, plSp = plv ? Math.hypot(plv.vx, plv.vy) : 0, G0 = v.goal || this.tgt(), dPl = Math.hypot(pl.x - v.x, pl.y - v.y);
     /* the chase: he is driving and they have him */ const moving = !v.goal && !!plv && ((this.seen && (plSp > 4 || (this.slowT || 0) < (this.level >= 4 ? 9 : this.level >= 3 ? 6 : 2.5))) || this.guess()), ram = this.seen && plSp > 4 && moving && this.level >= 3 && dPl < 32 && this.t > (D.ramCd || 0) && this.t > (this.ramHold || 0) && this.los(v.x, v.y, pl.x, pl.y);
-    if (!v.goal && !D.stop) { D.rT = (D.rT || 0) - dt; const E = D.pts[D.pts.length - 1]; if (D.rT <= 0) { const far = Math.hypot(E[0] - G0.x, E[1] - G0.y) > 28 || (moving && D.i >= D.pts.length - 1); if (plv && this.trailTo(v)) D.rT = 0.6; else if (far) { D.rT = 1.3; this.reroute(v); } else D.rT = 0.4; } }
+    if (!v.goal && !D.stop) { D.rT = (D.rT || 0) - dt; const E = D.pts[D.pts.length - 1]; if (D.rT <= 0) { const far = Math.hypot(E[0] - G0.x, E[1] - G0.y) > 28 + (D.pts.edgeD || 0) || (moving && D.i >= D.pts.length - 1); if (plv && this.trailTo(v)) D.rT = 0.6; else if (far) { D.rT = 1.3; this.reroute(v); } else D.rT = 0.4; } }
     D.visT = (D.visT || 0) - dt; if (D.visT <= 0) { D.visT = 0.25; D.vis = !plv || (dPl < 110 && this.inPic(v.x, v.y) && this.los(pl.x, pl.y, v.x, v.y)); }
     const lull = !!plv && this.t < (this.lullT || 0); if (lull) { if (D.lullAt === undefined) D.lullAt = this.t + this.rr(1.5, 5); } else D.lullAt = undefined;
     if (plv && this.level >= 1 && !v.away && !v.goal && g.P.get('heathang') !== '0' && (lull || (moving && dPl < 90))) { if (moving && dPl < 90) D.chT = (D.chT || 0) + dt; if (D.chT > (D.chMax ||= this.rr(HANG[this.level][0], HANG[this.level][1])) || (lull && this.t > D.lullAt)) { if (!lull) { this.lullT = this.t + this.rr(LULL[this.level][0], LULL[this.level][1]); this.say('the wave falls back: no new car for ' + Math.round(this.lullT - this.t) + ' s'); } D.chT = D.chMax * 0.6; const B = g.bounds, far = { x: clamp(v.x - Math.cos(plv.h) * 240, (B.cx || 0) - B.x + 30, (B.cx || 0) + B.x - 30), y: clamp(v.y - Math.sin(plv.h) * 240, (B.cy || 0) - B.y + 30, (B.cy || 0) + B.y - 30), h: 0 }, lk = this.lkp, e0 = this.est; this.lkp = far; this.est = null; v.away = true; let ok = false; try { ok = this.reroute(v); } catch (e) {} this.lkp = lk; this.est = e0; if (ok) { v.goal = far; D.t0 = this.t; D.off = 0; this.say('unit ' + v.id + ' falls back after ' + Math.round(D.chMax) + ' s on him'); return; } v.away = false; } }
@@ -588,7 +611,7 @@ export class Heat {
     for (const q of this.cops) if (q !== k && q.hp > 0) { const ex = k.x - q.x, ey = k.y - q.y, dd = Math.hypot(ex, ey); if (dd < 0.7 && dd > 1e-3) { k.x += (ex / dd) * (0.7 - dd) * 0.5; k.y += (ey / dd) * (0.7 - dd) * 0.5; } }
     k.z = st.onSidewalk(k.x, k.y) ? 0.15 : 0;
     /* not getting anywhere: a step to one side and try again; after three of those, fight from here */
-    if (this.t - (k.stT || 0) > 0.8) { if (k.stT && this.t - k.stT < 1.2 && Math.hypot(k.x - k.stX, k.y - k.stY) < 0.45) { k.stN = (k.stN || 0) + 1; if (k.stN >= 3) { k.stN = 0; k.post = { x: k.x, y: k.y }; k.cover = null; k.mode = 'hold'; k.path = null; } else { const sgn = k.stN % 2 ? 1 : -1; st.resolve(k.x - (dy / (d || 1)) * sgn * 0.9, k.y + (dx / (d || 1)) * sgn * 0.9, 0.32, _o); k.x = _o.x; k.y = _o.y; k.path = null; } } else if (Math.hypot(k.x - (k.stX ?? 1e9), k.y - (k.stY ?? 1e9)) > 2) k.stN = 0; k.stT = this.t; k.stX = k.x; k.stY = k.y; }
+    if (this.t - (k.stT || 0) > 0.8) { if (k.stT && this.t - k.stT < 1.2 && Math.hypot(k.x - k.stX, k.y - k.stY) < 0.45) { k.stN = (k.stN || 0) + 1; if (k.stN >= 3) { k.stN = 0; k.post = { x: k.x, y: k.y }; k.cover = null; k.mode = 'hold'; k.path = null; } else { const sgn = k.stN % 2 ? 1 : -1; st.resolve(k.x - (dy / (d || 1)) * sgn * 0.9, k.y + (dx / (d || 1)) * sgn * 0.9, 0.32, _o); /* p2: this 0.9 m step to one side is a jump, and beside the map wall it put the officer on the far side of it (node: an officer after a man 4 m from the wall, at -539.6,2498.9); not taken when it would land beyond the wall */ if (g.bounds.in(_o.x, _o.y, 5.6) || g.P.get('heatedge') === '0') { k.x = _o.x; k.y = _o.y; } k.path = null; } } else if (Math.hypot(k.x - (k.stX ?? 1e9), k.y - (k.stY ?? 1e9)) > 2) k.stN = 0; k.stT = this.t; k.stX = k.x; k.stY = k.y; }
     return s;
   }
   /* the way on foot when a wall is between: junction to junction along the streets (either way along a one-way street), from a
@@ -597,10 +620,27 @@ export class Heat {
     const R = this.g.roads, st = this.g.statics, N = R.nodes, n = N.length, dist = new Float64Array(n).fill(1e18), prev = new Int32Array(n).fill(-1), done = new Uint8Array(n), goal = new Float64Array(n).fill(-1);
     let any = false, anyG = false;
     for (let i = 0; i < n; i++) { const p = N[i].p, d0 = Math.hypot(p[0] - x0, p[1] - y0), d1 = Math.hypot(p[0] - x1, p[1] - y1); if (d0 < 130 && this.wall.raycast(x0, y0, p[0], p[1]) >= 1) { dist[i] = d0; any = true; } if (d1 < 130 && this.wall.raycast(x1, y1, p[0], p[1]) >= 1) { goal[i] = d1; anyG = true; } }
-    if (!any || !anyG) return null; let end = -1, bestD = 1e18;
+    if (!any || !anyG) return this.edgeWay(x0, y0, x1, y1); let end = -1, bestD = 1e18;
     for (;;) { let u = -1, bd = 1e18; for (let i = 0; i < n; i++) if (!done[i] && dist[i] < bd) { bd = dist[i]; u = i; } if (u < 0 || bd >= bestD) break; done[u] = 1; if (goal[u] >= 0 && bd + goal[u] < bestD) { bestD = bd + goal[u]; end = u; }
       for (const ei of N[u].e) { const e = R.edges[ei], w = e.a === u ? e.b : e.a, nd = bd + e.len; if (nd < dist[w]) { dist[w] = nd; prev[w] = u; } } }
-    if (end < 0) return null; const out = [[x1, y1]]; for (let u = end; u >= 0; u = prev[u]) out.unshift([N[u].p[0], N[u].p[1]]); return out;
+    if (end < 0) return this.edgeWay(x0, y0, x1, y1); const out = [[x1, y1]]; for (let u = end; u >= 0; u = prev[u]) out.unshift([N[u].p[0], N[u].p[1]]); return out;
+  }
+  /* p2: the way on foot where the streets' corners give none, BY THE MAP'S EDGE ONLY (one end within 45 m of the play box's side). pathNodes wants a road corner in a clear line at each end;
+     a man in a strip between a building and the map wall, or at the blind end of a street the wall cuts, has none, so sendFoot refused every place (no unit was ever put down for him)
+     and an officer who did get near walked into the wall. Here: the ground itself, searched outward from the place on a 1.5 m grid (a step where no wall, fence or kerb line lies between and a
+     0.3 m circle is free; up to 120 m each way, never beyond the wall), kept while the place stays within 3 m; the way back from where the officer is, pulled straight where the line is clear.
+     Everywhere else (both ends more than 45 m inside) this returns nothing, as before. ?heatedge=0 = as before. */
+  edgeWay(x0, y0, x1, y1) {
+    const g = this.g, B = g.bounds, st = g.statics; if (g.P.get('heatedge') === '0' || (B.in(x0, y0, -45) && B.in(x1, y1, -45))) return null;
+    const C = 1.5, hw = 80, W = 2 * hw + 1; let F = this._ew; if (Math.abs(x0 - x1) > hw * C - 3 || Math.abs(y0 - y1) > hw * C - 3) return null;
+    if (!F || Math.hypot(F.x - x1, F.y - y1) > 3) { const par = new Int32Array(W * W).fill(-2), q = new Int32Array(W * W), c0 = hw * W + hw; let qh = 0, qt = 0; par[c0] = -1; q[qt++] = c0;
+      while (qh < qt) { const c = q[qh++], i = c % W, j = (c - i) / W, x = x1 + (i - hw) * C, y = y1 + (j - hw) * C; for (let n = 0; n < 4; n++) { const i2 = i + (n === 0 ? 1 : n === 1 ? -1 : 0), j2 = j + (n === 2 ? 1 : n === 3 ? -1 : 0); if (i2 < 0 || j2 < 0 || i2 >= W || j2 >= W) continue; const c2 = j2 * W + i2; if (par[c2] !== -2) continue;
+          const x2 = x1 + (i2 - hw) * C, y2 = y1 + (j2 - hw) * C; if (!B.in(x2, y2, 5.5) || st.raycast(x, y, x2, y2) < 1 || st.resolve(x2, y2, 0.3, _o) > 0) continue; par[c2] = c; q[qt++] = c2; } }
+      F = this._ew = { x: x1, y: y1, par }; this.stats.edgeWays = (this.stats.edgeWays || 0) + 1; }
+    const par = F.par, ic = Math.round((x0 - F.x) / C) + hw, jc = Math.round((y0 - F.y) / C) + hw; let c = -1, bd = 1e9; for (let j = jc - 1; j <= jc + 1; j++) for (let i = ic - 1; i <= ic + 1; i++) { if (i < 0 || j < 0 || i >= W || j >= W || par[j * W + i] === -2) continue; const x = F.x + (i - hw) * C, y = F.y + (j - hw) * C, d = Math.hypot(x - x0, y - y0); if (d < bd && (d < 0.05 || st.raycast(x0, y0, x, y) >= 1)) { bd = d; c = j * W + i; } }
+    if (c < 0) return null; const cells = []; for (let u = c, n = 0; u >= 0 && n < 4000; u = par[u], n++) { const i = u % W; cells.push([F.x + (i - hw) * C, F.y + ((u - i) / W - hw) * C]); } cells.push([x1, y1]);
+    const out = []; let px = x0, py = y0, k = 0; while (k < cells.length - 1) { let far = k; for (let m = Math.min(cells.length - 1, k + 40); m > k; m--) if (st.raycast(px, py, cells[m][0], cells[m][1]) >= 1) { far = m; break; } out.push(cells[far]); px = cells[far][0]; py = cells[far][1]; k = far === k ? k + 1 : far; }
+    if (!out.length || out[out.length - 1] !== cells[cells.length - 1]) out.push([x1, y1]); return out;
   }
 
   // ------------------------------------------------------------------ shooting, both ways
