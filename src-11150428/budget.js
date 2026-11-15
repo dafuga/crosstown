@@ -8,6 +8,7 @@
 // It never touches .visible (other modules own that): hiding is done by moving a mesh off camera layer 0, shadows by castShadow, and
 // both are put back when fly mode lifts the camera or with ?budget=0. Capture and stills do not run it.
 import * as THREE from 'three';
+const BS_OLD = typeof location !== 'undefined' && new URLSearchParams(location.search).get('bsphere') === 'old';     /* ?bsphere=old: every instanced mesh's sphere made again at each listing, as before Nov 15 */
 
 const SMALL = /^(st_furniture|dressing|storefronts)/, BIG = /^(streets_trees)/, SKIP = /^(streets_vehicles|streets_ground)/;
 export class Budget {
@@ -27,7 +28,7 @@ export class Budget {
       if (!kind) continue;
       top.traverse((o) => {
         if (!o.isMesh || o.isSkinnedMesh) return;
-        let bs; try { if (o.isInstancedMesh) { if (!o.count) return; o.computeBoundingSphere(); bs = o.boundingSphere; } else { if (!o.geometry.boundingSphere) o.geometry.computeBoundingSphere(); bs = o.geometry.boundingSphere; } } catch (e) { return; }
+        let bs; try { if (o.isInstancedMesh) { if (!o.count) return; if (!o.boundingSphere || BS_OLD) o.computeBoundingSphere();     /* tiles lane, Nov 15: only when it has none. Every builder (and three, at the first draw) has made it by now; making it again for every instanced mesh of the whole map was 0.8 s of the load on an M1 Pro, more with each map area */ bs = o.boundingSphere; } else { if (!o.geometry.boundingSphere) o.geometry.computeBoundingSphere(); bs = o.geometry.boundingSphere; } } catch (e) { return; }
         if (!bs || !isFinite(bs.radius) || bs.radius > 220) return;        // city-wide batches: leave alone
         c.copy(bs.center).applyMatrix4(o.matrixWorld);
         items.push({ o, x: c.x, y: c.y, z: c.z, r: bs.radius * o.matrixWorld.getMaxScaleOnAxis(), kind, cast: o.castShadow, hid: false, cut: false });

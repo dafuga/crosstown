@@ -97,7 +97,7 @@ export class Tiles {
         this.stats.sets2 = (this.stats.sets2 || []).concat([[S.set, +(tS / 1000).toFixed(1), Math.round(performance.now() - tS), Math.round(worst)]]);
         console.log('[tiles] set ' + S.set + ' came in during play: ' + H.meshes.length + ' shells over ' + Math.round(performance.now() - tS) + ' ms, the longest step ' + worst.toFixed(0) + ' ms'); }
       else for (const m of shells || []) addShell(m);
-      S.hasShells = !!shells; S.state = 2; this.sync();
+      S.hasShells = !!shells; S.state = 2; this.sync(); if (this.onSet && this.started) try { this.onSet(S); } catch (e) {}     /* a set that came in during play: who keeps a picture of the buildings (the helicopter's height picture) reads its part again */
       if (this.started) for (const T of this.tiles) if (T.set === S && T.pin && T.state === 0) { T.state = 1; this.loading++; this.fetchFull(T).then((mesh) => this.ready.push([T, mesh]), () => { T.state = 0; }).finally(() => { this.loading--; }); }
     } catch (e) { S.state = 0; S.failT = performance.now() + 8000; console.log('[tiles] set ' + S.set + ' not loaded: ' + (e && e.message)); }
   }

@@ -127,10 +127,12 @@ function heroPrune(world, polys, state) {
   const hit = (x, y, P) => { let c = false; for (let i = 0, j = P.length - 1; i < P.length; j = i++) { const a = P[i], b = P[j];
       if ((a[1] > y) !== (b[1] > y) && x < (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0]) c = !c;
       const dx = b[0] - a[0], dy = b[1] - a[1], t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / (dx * dx + dy * dy || 1))); if (Math.hypot(x - a[0] - t * dx, y - a[1] - t * dy) < R) return true; } return c; };
+  // tiles lane, Nov 15: a footprint's box (+ R) first. Every instance of the whole map was tested against every footprint edge by edge: 0.65 s of the load on an M1 Pro, more with each map area
+  const boxes = new Map(), box = (P) => { let b = boxes.get(P); if (!b) { b = [1e9, 1e9, -1e9, -1e9]; for (const q of P) { if (q[0] < b[0]) b[0] = q[0]; if (q[1] < b[1]) b[1] = q[1]; if (q[0] > b[2]) b[2] = q[0]; if (q[1] > b[3]) b[3] = q[1]; } b[0] -= R; b[1] -= R; b[2] += R; b[3] += R; boxes.set(P, b); } return b; };
   let ticks = 0, total = 0, doneAt = 0; const id = setInterval(() => {
     for (const name of ['storefronts', 'dressing']) { const g = world.scene.getObjectByName(name); if (!g) continue;
       g.traverse((o) => { if (!o.isInstancedMesh) return; const from = o.userData.heroPruned === true ? polys.length : o.userData.heroPruned || 0; if (from >= polys.length) return; o.userData.heroPruned = polys.length; const mine = polys.slice(from); let k = 0;
-        for (let i = 0; i < o.count; i++) { o.getMatrixAt(i, m); p.setFromMatrixPosition(m); if (p.y < 30 && mine.some((P) => hit(p.x, -p.z, P))) { o.setMatrixAt(i, zero); k++; } }
+        for (let i = 0; i < o.count; i++) { o.getMatrixAt(i, m); p.setFromMatrixPosition(m); if (p.y < 30 && mine.some((P) => { const b = box(P); return p.x > b[0] && p.x < b[2] && -p.z > b[1] && -p.z < b[3] && hit(p.x, -p.z, P); })) { o.setMatrixAt(i, zero); k++; } }
         if (k) { o.instanceMatrix.needsUpdate = true; total += k; } }); }
     ticks++; if (state.done && !doneAt) doneAt = ticks;
     if (ticks > 300 && doneAt && ticks > doneAt + 30) { clearInterval(id); console.log('[game] hero prune: ' + total + ' street-floor instances removed'); }
