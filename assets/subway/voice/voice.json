@@ -1,8 +1,8 @@
 {
 "file": "announcer.mp3",
 "format": "mp3 24 kHz mono 64 kbit/s",
-"secs": 151.29,
-"bytes": 1210944,
+"secs": 157.1,
+"bytes": 1257600,
 "voices": [
 "Bill pqHfZKP75CvOlQylNhV4",
 "Matilda XrExE9yKIg1WjnnlVkGX"
@@ -773,6 +773,41 @@
 "voice": "Matilda",
 "start": 149.2267,
 "dur": 1.7145
+},
+"c-shuttle": {
+"text": "This is the shuttle",
+"who": "car",
+"voice": "Matilda",
+"start": 151.0912,
+"dur": 0.8742
+},
+"bc-gc": {
+"text": "to Grand Central.",
+"who": "car",
+"voice": "Matilda",
+"start": 152.1153,
+"dur": 0.9667
+},
+"bp-gc": {
+"text": "to Grand Central",
+"who": "safety",
+"voice": "Bill",
+"start": 153.232,
+"dur": 1.1368
+},
+"bc-tsq": {
+"text": "to Times Square.",
+"who": "car",
+"voice": "Matilda",
+"start": 154.5188,
+"dur": 0.9753
+},
+"bp-tsq": {
+"text": "to Times Square",
+"who": "safety",
+"voice": "Bill",
+"start": 155.6442,
+"dur": 1.1103
 }
 }
 }

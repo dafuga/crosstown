@@ -13,9 +13,9 @@ export const trunk = (r) => TRUNKS.find((t) => t.includes(String(r))) || String(
 // local or express, as each line runs through our part of the city (the same lists as data.lines[].local / express)
 export const KIND = { 1: 'local', 2: 'express', 3: 'express', 4: 'express', 5: 'express', 6: 'local', 7: 'local', A: 'express', C: 'local', E: 'local', B: 'express', D: 'express', F: 'local', M: 'local', N: 'express', Q: 'express', R: 'local', W: 'local', S: '' };
 // where each line is bound, the way the trains say it: [uptown way, downtown way]
-const BOUND_WORDS = { queens: 'Queens-bound', bronx: 'Bronx-bound', brooklyn: 'Brooklyn-bound', uptown: 'uptown', downtown: 'downtown', hy: 'Hudson Yards-bound' };
+const BOUND_WORDS = { queens: 'Queens-bound', bronx: 'Bronx-bound', brooklyn: 'Brooklyn-bound', uptown: 'uptown', downtown: 'downtown', hy: 'Hudson Yards-bound', gc: 'to Grand Central', tsq: 'to Times Square' };      // (gc, tsq: the shuttle's two ends, said AFTER the train: "the shuttle to Grand Central")
 export const BOUND = { 1: ['bronx', 'downtown'], 2: ['bronx', 'brooklyn'], 3: ['uptown', 'brooklyn'], 4: ['bronx', 'brooklyn'], 5: ['bronx', 'brooklyn'], 6: ['bronx', 'downtown'], 7: ['queens', 'hy'], A: ['uptown', 'brooklyn'], C: ['uptown', 'brooklyn'], E: ['queens', 'downtown'],
-  B: ['bronx', 'brooklyn'], D: ['bronx', 'brooklyn'], F: ['queens', 'brooklyn'], M: ['queens', 'brooklyn'], N: ['queens', 'brooklyn'], Q: ['uptown', 'brooklyn'], R: ['queens', 'brooklyn'], W: ['queens', 'downtown'], S: ['uptown', 'downtown'] };
+  B: ['bronx', 'brooklyn'], D: ['bronx', 'brooklyn'], F: ['queens', 'brooklyn'], M: ['queens', 'brooklyn'], N: ['queens', 'brooklyn'], Q: ['uptown', 'brooklyn'], R: ['queens', 'brooklyn'], W: ['queens', 'downtown'], S: ['gc', 'tsq'] };
 export const boundOf = (route, dir) => (BOUND[route] || ['uptown', 'downtown'])[dir > 0 ? 0 : 1];
 // transfers: in the 18-station data the records that share st.cx are one complex. The older 3-station data has no cx: its two true ones are written here.
 export const XFER = { herald: ['N', 'Q', 'R', 'W'], c602: [], bryant: ['7'] };
@@ -39,6 +39,7 @@ const trainWords = (r) => routeWord(r) + (KIND[r] ? ' ' + KIND[r] : '') + ' trai
 const EX = 'Forty-second Street, Bryant Park.';
 export const PARTS = {
   'c-this': ['car', 'This is', '', EX], 'c-next': ['car', 'The next stop is', 'This is a Queens-bound F local train.', EX],
+  'c-shuttle': ['car', 'This is the shuttle', '', 'to Grand Central.'],
   'c-thisa': ['car', 'This is a', '', 'Queens-bound F local train.'], 'c-thisan': ['car', 'This is an', '', 'uptown A express train.'],
   'c-xfer': ['car', 'Transfer is available to the', 'This is ' + EX, 'B, D, N and Q trains.'], 'w-and': ['car', 'and', 'Transfer is available to the B, D,', ''],
   'c-train': ['car', 'train.', 'Transfer is available to the seven', ''], 'c-trains': ['car', 'trains.', 'Transfer is available to the B, D, N and Q', ''],
@@ -56,7 +57,7 @@ export const stClip = (st) => 'st-' + slug(st.name || st), lClip = (r) => 'l-' +
 // every clip the game can ask for: [{ id, text, who, before, after }]
 export function clipList(data) {
   const L = Object.entries(PARTS).map(([id, p]) => ({ id, who: p[0], text: p[1], before: p[2], after: p[3] })), seen = new Set();
-  for (const [b, w] of Object.entries(BOUND_WORDS)) { const an = /^[aeiou]/i.test(w) ? 'an' : 'a'; L.push({ id: bClip('car', b), who: 'car', text: w, before: 'This is ' + an, after: '' }, { id: bClip('pa', b), who: 'safety', text: w, before: 'There is ' + an, after: b === 'hy' ? '' : 'F local train approaching the station.' }); }      // (no words-after for these: with them the voice ran on into the next word, heard by the recogniser as "Bronx-bound F-")
+  for (const [b, w] of Object.entries(BOUND_WORDS)) { if (/^to /.test(w)) { L.push({ id: bClip('car', b), who: 'car', text: w + '.', before: 'This is the shuttle', after: '' }, { id: bClip('pa', b), who: 'safety', text: w, before: 'There is a shuttle train', after: '' }); continue; } const an = /^[aeiou]/i.test(w) ? 'an' : 'a'; L.push({ id: bClip('car', b), who: 'car', text: w, before: 'This is ' + an, after: '' }, { id: bClip('pa', b), who: 'safety', text: w, before: 'There is ' + an, after: b === 'hy' ? '' : 'F local train approaching the station.' }); }      // (no words-after for these: with them the voice ran on into the next word, heard by the recogniser as "Bronx-bound F-")
   for (const r of ROUTES) { L.push({ id: rClip('car', r), who: 'car', text: trainWords(r) + '.', before: 'This is a Brooklyn-bound', after: 'The next stop is ' + EX }, { id: rClip('pa', r), who: 'safety', text: trainWords(r), before: 'There is a Brooklyn-bound', after: 'approaching the station.' });
     L.push({ id: lClip(r), who: 'car', text: routeWord(r).length === 1 ? r : routeWord(r), before: 'Transfer is available to the B,', after: r === 'W' || r === '7' ? '' : ', and Q trains.' }); }
   for (const st of data.stations) { const id = stClip(st); if (seen.has(id)) continue; seen.add(id); L.push({ id, who: 'car', text: spokenName(st.name) + '.', name: st.name, before: 'This is', after: '' }); }
@@ -71,7 +72,7 @@ export function transfers(st, route, data) { const own = trunk(route), all = [..
 // ---- the phrases. Each returns the list of clips; text(seq) gives the words.
 const AN = (b) => /^[aeiou]/i.test(BOUND_WORDS[b]);
 // platform loudspeakers, a train about a stop away
-export const arrival = (dir, route) => { const b = boundOf(route, dir); return [AN(b) ? 'a-therean' : 'a-there', bClip('pa', b), rClip('pa', route), 'a-appr', 0.3, 'a-edge']; };
+export const arrival = (dir, route) => { const b = boundOf(route, dir); if (route === 'S') return ['a-there', rClip('pa', 'S'), bClip('pa', b), 'a-appr', 0.3, 'a-edge'];      /* "There is a shuttle train to Grand Central approaching the station." */ return [AN(b) ? 'a-therean' : 'a-there', bClip('pa', b), rClip('pa', route), 'a-appr', 0.3, 'a-edge']; };
 // a train about to run through on a track with no platform here
 export const passing = () => ['a-edge'];
 // in the car, doors opening (+ the last-stop line where the map ends for this train)
@@ -79,7 +80,7 @@ export function thisIs(st, route, last, data) { const seq = ['c-this', stClip(st
   if (x.length) { seq.push(0.35, 'c-xfer'); x.forEach((r, i) => { if (i && i === x.length - 1) seq.push('w-and'); seq.push(lClip(r)); }); seq.push(x.length > 1 ? 'c-trains' : 'c-train'); }
   if (last) seq.push(0.5, 'c-last'); return seq; }
 // pulling out: what train this is and where it stops next (without a route: only the next stop)
-export const nextStop = (st, route, dir) => { const s = ['c-next', stClip(st)]; if (!route) return s; const b = boundOf(route, dir); return [AN(b) ? 'c-thisan' : 'c-thisa', bClip('car', b), rClip('car', route), 0.3, ...s]; };
+export const nextStop = (st, route, dir) => { const s = ['c-next', stClip(st)]; if (!route) return s; const b = boundOf(route, dir); if (route === 'S') return ['c-shuttle', bClip('car', b), 0.3, ...s];      /* "This is the shuttle to Times Square." */ return [AN(b) ? 'c-thisan' : 'c-thisa', bClip('car', b), rClip('car', route), 0.3, ...s]; };
 export const lastStop = () => ['c-last'];
 export const doorWarn = () => ['c-doors'];
 export const notice = (i) => [NOTICES[((i % NOTICES.length) + NOTICES.length) % NOTICES.length]];
