@@ -33,9 +33,13 @@ const WALKS = ['Walk', 'Walk2', 'Walk3', 'Walk4', 'Walk6', 'Walk7', 'Walk8'], ST
 const CLIPS = [...new Set([...WALKS, ...STANDS, ...SITS, 'TalkA', 'TalkB', 'WalkSlow'])];
 const rng = (s) => () => { s = (s + 0x6d2b79f5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 const srgb = (c) => (Math.round(clamp(c[0], 0, 1) * 255) << 16) | (Math.round(clamp(c[1], 0, 1) * 255) << 8) | Math.round(clamp(c[2], 0, 1) * 255);
+// under the warm lamps a pink, cream or tan garment reads as bare skin (a pink jacket was taken for a naked man on a still): those palette colours are not worn below
+const SKINLIKE = (c) => c[0] > 0.5 && c[0] >= c[1] && c[1] >= c[2] && c[0] - c[2] > 0.12 && c[0] - c[2] < 0.45;
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
-export async function install(game, S) { if (S.riders) return S.riders; const R = new Riders(game, S); S.riders = R; return R; }
+export async function install(game, S) { if (S.riders) return S.riders; const R = new Riders(game, S); S.riders = R;
+  // subway.js asks this before F sits him down: a seat a rider is in is not his to take
+  S.seatTaken = (t, q) => { try { const P = R.pops.get(t.u), O = P && P.occ.get(t), i = t.train.seats.indexOf(q); return !!(O && i >= 0 && O.seat[i]); } catch (e) { return false; } }; return R; }
 
 // ================================================================== the cast: clips + characters (+ what to draw them with)
 // from the game's crowd, as it stands in memory
@@ -217,7 +221,7 @@ class Pop {
     this.ready = true; }
 
   // ---------------------------------------------------------------- people
-  person(x, y, z, h) { const R = this.R, r = this.rand, k = Math.floor(r() * R.used.length) % R.used.length, ch = R.cast.chars[R.used[k]], pk = (p) => (p && p.length ? srgb(p[Math.floor(r() * p.length) % p.length]) : 0xffffff), scale = 0.975 + r() * 0.05;
+  person(x, y, z, h) { const R = this.R, r = this.rand, k = Math.floor(r() * R.used.length) % R.used.length, ch = R.cast.chars[R.used[k]], pk = (p) => { const q = p && p.length ? (p.cloth || (p.cloth = p.filter((c) => !SKINLIKE(c)))) : null, L = q && q.length ? q : p; return L && L.length ? srgb(L[Math.floor(r() * L.length) % L.length]) : 0xffffff; }, scale = 0.975 + r() * 0.05;
     const a = { born: this.R.time.toFixed(1) + (this.seeded ? '' : ' seed'), k, ch, tint: [pk(ch.top), pk(ch.bottom), pk(ch.hair)], scale, tall: ch.height * scale / 1.78, x, y, z, h, zo: 0, zo0: 0, zoT: -9, clip: null, ph: r(), clipB: null, phB: 0, blendEnd: -9, light: this.lightAt(x, y, z), lightT: r() * 0.5, mode: 'wait', plan: null, car: null, carI: 0, lx: 0, lz: 0, lh: 0, v: 0, vx: 0, vy: 0, stair: false, stuck: 0, blockT: 0, ghostT: 0, stillT: 0, home: null, spot: null, pair: null, place: null };
     a.walk = R.clip(this.pick(WALKS)) || R.anyWalk; a.v0 = a.walk.speed * a.tall * (0.92 + r() * 0.16); a.stand = R.clip(this.pick(STANDS)) || R.anyStand; this.setClip(a, a.stand, 0); return a; }
   waiter(P, s) { const a = this.person(s.x, s.y, this.meta.zP, s.h); a.home = P; a.spot = s; s.who = a; a.mode = 'wait'; P.n++; this.agents.push(a); return a; }
