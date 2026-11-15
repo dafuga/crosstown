@@ -164,6 +164,7 @@ export class Game {
     if (!/^(0|none|off)$/.test(this.P.get('guns') || '')) try { this.combat = await (await import('./combat/combat.js')).addCombat(this); } catch (e) { console.log('[guns] not loaded: ' + (e && (e.stack || e.message))); }     // gameplay lane: guns v1 (src/combat/, pistol and rifle); ?guns=0 off (nothing fetched)
     if (this.P.get('ems') !== '0') try { (await import('./ems/ems.js')).install(this); } catch (e) { console.log('[ems] not loaded: ' + (e && (e.stack || e.message))); }     /* gameplay lane (built by the progress lane): an ambulance or a fire truck after a person is struck, a car fire or a wreck (src/ems/ems.js); ?ems=0 off (nothing fetched, nothing wrapped) */
     if (this.P.get('moto') !== '0') import('./moto/moto.js').then((m) => m.install(this)).catch((e) => console.log('[moto] not loaded: ' + (e && (e.stack || e.message))));     // gameplay lane: the motorcycle (src/moto/: moto.js, motophys.js, motomodel.js); ?moto=0 off (nothing fetched)
+    if (this.P.get('riders') !== '0') import('./riders/riders.js').then((m) => m.install(this)).catch((e) => console.log('[riders] not loaded: ' + (e && (e.stack || e.message))));     // people lane: delivery riders on e-bikes (src/riders/); ?riders=0 off
     if (this.P.get('gps') !== '0') try { (await import('./gps/gps.js')).install(this); } catch (e) { console.log('[gps] not loaded: ' + (e && (e.stack || e.message))); }     // progress lane: GPS (src/gps/: waypoint from the full-screen map, route line on the road and the maps); ?gps=0 off (nothing fetched)
   }
 
