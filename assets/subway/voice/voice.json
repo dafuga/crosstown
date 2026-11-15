@@ -1,0 +1,708 @@
+{
+"file": "announcer.mp3",
+"format": "mp3 24 kHz mono 64 kbit/s",
+"secs": 134.88,
+"bytes": 1079808,
+"voices": [
+"Bill pqHfZKP75CvOlQylNhV4",
+"Matilda XrExE9yKIg1WjnnlVkGX"
+],
+"engine": "elevenlabs eleven_multilingual_v2 speech MIXED with our own bed, chime and call tones (tools/voice-sprite.py)",
+"mix": "every part: speech over our synthesised station bed (unbroken through the whole file, -40 dBFS); platform openers: our call tone in the 0.72 s before start (\"pre\")",
+"chime": [
+0,
+1.5
+],
+"bed": [
+1.6,
+3.0
+],
+"margin": 0.045,
+"clips": {
+"c-this": {
+"text": "This is",
+"who": "car",
+"voice": "Matilda",
+"start": 4.75,
+"dur": 0.4313
+},
+"c-next": {
+"text": "The next stop is",
+"who": "car",
+"voice": "Matilda",
+"start": 5.3313,
+"dur": 0.9565
+},
+"c-thisa": {
+"text": "This is a",
+"who": "car",
+"voice": "Matilda",
+"start": 6.4378,
+"dur": 0.4748
+},
+"c-thisan": {
+"text": "This is an",
+"who": "car",
+"voice": "Matilda",
+"start": 7.0626,
+"dur": 0.498
+},
+"c-xfer": {
+"text": "Transfer is available to the",
+"who": "car",
+"voice": "Matilda",
+"start": 7.7107,
+"dur": 1.3565
+},
+"w-and": {
+"text": "and",
+"who": "car",
+"voice": "Matilda",
+"start": 9.2172,
+"dur": 0.3154
+},
+"c-train": {
+"text": "train.",
+"who": "car",
+"voice": "Matilda",
+"start": 9.6826,
+"dur": 0.5172
+},
+"c-trains": {
+"text": "trains.",
+"who": "car",
+"voice": "Matilda",
+"start": 10.3498,
+"dur": 0.5436
+},
+"c-last": {
+"text": "This is the last stop on this train. Everyone please leave the train.",
+"who": "car",
+"voice": "Matilda",
+"start": 11.0434,
+"dur": 3.7139
+},
+"c-doors": {
+"text": "Stand clear of the closing doors, please.",
+"who": "safety",
+"voice": "Bill",
+"start": 14.9073,
+"dur": 2.1782
+},
+"a-there": {
+"text": "There is a",
+"who": "safety",
+"voice": "Bill",
+"pre": 0.72,
+"start": 17.9555,
+"dur": 0.4861
+},
+"a-therean": {
+"text": "There is an",
+"who": "safety",
+"voice": "Bill",
+"pre": 0.72,
+"start": 19.3116,
+"dur": 0.4323
+},
+"a-appr": {
+"text": "approaching the station.",
+"who": "safety",
+"voice": "Bill",
+"start": 19.8939,
+"dur": 1.2986
+},
+"a-edge": {
+"text": "Please stand away from the platform edge.",
+"who": "safety",
+"voice": "Bill",
+"pre": 0.72,
+"start": 22.0625,
+"dur": 2.3335
+},
+"n-1": {
+"text": "Ladies and gentlemen, for your safety, please do not lean on the doors, and do not hold the doors open.",
+"who": "safety",
+"voice": "Bill",
+"pre": 0.72,
+"start": 25.266,
+"dur": 6.8812
+},
+"n-2": {
+"text": "Backpacks and other large containers are subject to random search by the police.",
+"who": "safety",
+"voice": "Bill",
+"pre": 0.72,
+"start": 33.0172,
+"dur": 4.7003
+},
+"n-3": {
+"text": "Please be careful of the gap between the platform and the train.",
+"who": "safety",
+"voice": "Bill",
+"pre": 0.72,
+"start": 38.5875,
+"dur": 3.1753
+},
+"bc-queens": {
+"text": "Queens-bound",
+"who": "car",
+"voice": "Matilda",
+"start": 41.9129,
+"dur": 0.7337
+},
+"bp-queens": {
+"text": "Queens-bound",
+"who": "safety",
+"voice": "Bill",
+"start": 42.7966,
+"dur": 0.9046
+},
+"bc-bronx": {
+"text": "Bronx-bound",
+"who": "car",
+"voice": "Matilda",
+"start": 43.8512,
+"dur": 0.7865
+},
+"bp-bronx": {
+"text": "Bronx-bound",
+"who": "safety",
+"voice": "Bill",
+"start": 44.7877,
+"dur": 0.8599
+},
+"bc-brooklyn": {
+"text": "Brooklyn-bound",
+"who": "car",
+"voice": "Matilda",
+"start": 45.7976,
+"dur": 0.8022
+},
+"bp-brooklyn": {
+"text": "Brooklyn-bound",
+"who": "safety",
+"voice": "Bill",
+"start": 46.7498,
+"dur": 0.9528
+},
+"bc-uptown": {
+"text": "uptown",
+"who": "car",
+"voice": "Matilda",
+"start": 47.8526,
+"dur": 0.6372
+},
+"bp-uptown": {
+"text": "uptown",
+"who": "safety",
+"voice": "Bill",
+"start": 48.6399,
+"dur": 0.6277
+},
+"bc-downtown": {
+"text": "downtown",
+"who": "car",
+"voice": "Matilda",
+"start": 49.4176,
+"dur": 0.7873
+},
+"bp-downtown": {
+"text": "downtown",
+"who": "safety",
+"voice": "Bill",
+"start": 50.3549,
+"dur": 0.6277
+},
+"bc-hy": {
+"text": "Hudson Yards-bound",
+"who": "car",
+"voice": "Matilda",
+"start": 51.1326,
+"dur": 1.0817
+},
+"bp-hy": {
+"text": "Hudson Yards-bound",
+"who": "safety",
+"voice": "Bill",
+"start": 52.3643,
+"dur": 1.5011
+},
+"rc-1": {
+"text": "one local train.",
+"who": "car",
+"voice": "Matilda",
+"start": 54.0154,
+"dur": 1.0464
+},
+"rp-1": {
+"text": "one local train",
+"who": "safety",
+"voice": "Bill",
+"start": 55.2118,
+"dur": 1.185
+},
+"l-1": {
+"text": "one",
+"who": "car",
+"voice": "Matilda",
+"start": 56.5468,
+"dur": 0.3955
+},
+"rc-2": {
+"text": "two express train.",
+"who": "car",
+"voice": "Matilda",
+"start": 57.0924,
+"dur": 1.1497
+},
+"rp-2": {
+"text": "two express train",
+"who": "safety",
+"voice": "Bill",
+"start": 58.392,
+"dur": 1.3243
+},
+"l-2": {
+"text": "two",
+"who": "car",
+"voice": "Matilda",
+"start": 59.8664,
+"dur": 0.3962
+},
+"rc-3": {
+"text": "three express train.",
+"who": "car",
+"voice": "Matilda",
+"start": 60.4126,
+"dur": 1.1523
+},
+"rp-3": {
+"text": "three express train",
+"who": "safety",
+"voice": "Bill",
+"start": 61.715,
+"dur": 1.2315
+},
+"l-3": {
+"text": "three",
+"who": "car",
+"voice": "Matilda",
+"start": 63.0964,
+"dur": 0.4884
+},
+"rc-4": {
+"text": "four express train.",
+"who": "car",
+"voice": "Matilda",
+"start": 63.7348,
+"dur": 1.1655
+},
+"rp-4": {
+"text": "four express train",
+"who": "safety",
+"voice": "Bill",
+"start": 65.0504,
+"dur": 1.2779
+},
+"l-4": {
+"text": "four",
+"who": "car",
+"voice": "Matilda",
+"start": 66.4783,
+"dur": 0.442
+},
+"rc-5": {
+"text": "five express train.",
+"who": "car",
+"voice": "Matilda",
+"start": 67.0702,
+"dur": 1.1727
+},
+"rp-5": {
+"text": "five express train",
+"who": "safety",
+"voice": "Bill",
+"start": 68.393,
+"dur": 1.3707
+},
+"l-5": {
+"text": "five",
+"who": "car",
+"voice": "Matilda",
+"start": 69.9137,
+"dur": 0.4884
+},
+"rc-6": {
+"text": "six local train.",
+"who": "car",
+"voice": "Matilda",
+"start": 70.5521,
+"dur": 1.1128
+},
+"rp-6": {
+"text": "six local train",
+"who": "safety",
+"voice": "Bill",
+"start": 71.815,
+"dur": 1.2315
+},
+"l-6": {
+"text": "six",
+"who": "car",
+"voice": "Matilda",
+"start": 73.1964,
+"dur": 0.442
+},
+"rc-7": {
+"text": "seven local train.",
+"who": "car",
+"voice": "Matilda",
+"start": 73.7884,
+"dur": 1.1306
+},
+"rp-7": {
+"text": "seven local train",
+"who": "safety",
+"voice": "Bill",
+"start": 75.069,
+"dur": 1.2315
+},
+"l-7": {
+"text": "seven",
+"who": "car",
+"voice": "Matilda",
+"start": 76.4505,
+"dur": 0.6063
+},
+"rc-A": {
+"text": "A express train.",
+"who": "car",
+"voice": "Matilda",
+"start": 77.2068,
+"dur": 1.0378
+},
+"rp-A": {
+"text": "A express train",
+"who": "safety",
+"voice": "Bill",
+"start": 78.3946,
+"dur": 1.3828
+},
+"l-A": {
+"text": "A",
+"who": "car",
+"voice": "Matilda",
+"start": 79.9275,
+"dur": 0.3727
+},
+"rc-C": {
+"text": "C local train.",
+"who": "car",
+"voice": "Matilda",
+"start": 80.4502,
+"dur": 1.1526
+},
+"rp-C": {
+"text": "C local train",
+"who": "safety",
+"voice": "Bill",
+"start": 81.7528,
+"dur": 1.0921
+},
+"l-C": {
+"text": "C",
+"who": "car",
+"voice": "Matilda",
+"start": 82.9949,
+"dur": 0.4884
+},
+"rc-E": {
+"text": "E local train.",
+"who": "car",
+"voice": "Matilda",
+"start": 83.6333,
+"dur": 1.0185
+},
+"rp-E": {
+"text": "E local train",
+"who": "safety",
+"voice": "Bill",
+"start": 84.8018,
+"dur": 1.13
+},
+"l-E": {
+"text": "E",
+"who": "car",
+"voice": "Matilda",
+"start": 86.0818,
+"dur": 0.3955
+},
+"rc-B": {
+"text": "B express train.",
+"who": "car",
+"voice": "Matilda",
+"start": 86.6273,
+"dur": 1.1067
+},
+"rp-B": {
+"text": "B express train",
+"who": "safety",
+"voice": "Bill",
+"start": 87.884,
+"dur": 1.3243
+},
+"l-B": {
+"text": "B",
+"who": "car",
+"voice": "Matilda",
+"start": 89.3584,
+"dur": 0.4884
+},
+"rc-D": {
+"text": "D express train.",
+"who": "car",
+"voice": "Matilda",
+"start": 89.9968,
+"dur": 1.207
+},
+"rp-D": {
+"text": "D express train",
+"who": "safety",
+"voice": "Bill",
+"start": 91.3538,
+"dur": 1.3243
+},
+"l-D": {
+"text": "D",
+"who": "car",
+"voice": "Matilda",
+"start": 92.8281,
+"dur": 0.3955
+},
+"rc-F": {
+"text": "F local train.",
+"who": "car",
+"voice": "Matilda",
+"start": 93.3737,
+"dur": 1.0433
+},
+"rp-F": {
+"text": "F local train",
+"who": "safety",
+"voice": "Bill",
+"start": 94.567,
+"dur": 1.1386
+},
+"l-F": {
+"text": "F",
+"who": "car",
+"voice": "Matilda",
+"start": 95.8556,
+"dur": 0.3027
+},
+"rc-M": {
+"text": "M local train.",
+"who": "car",
+"voice": "Matilda",
+"start": 96.3083,
+"dur": 1.1098
+},
+"rp-M": {
+"text": "M local train",
+"who": "safety",
+"voice": "Bill",
+"start": 97.568,
+"dur": 1.277
+},
+"l-M": {
+"text": "M",
+"who": "car",
+"voice": "Matilda",
+"start": 98.995,
+"dur": 0.3027
+},
+"rc-N": {
+"text": "N express train.",
+"who": "car",
+"voice": "Matilda",
+"start": 99.4477,
+"dur": 1.0927
+},
+"rp-N": {
+"text": "N express train",
+"who": "safety",
+"voice": "Bill",
+"start": 100.6904,
+"dur": 1.3034
+},
+"l-N": {
+"text": "N",
+"who": "car",
+"voice": "Matilda",
+"start": 102.1438,
+"dur": 0.3027
+},
+"rc-Q": {
+"text": "Q express train.",
+"who": "car",
+"voice": "Matilda",
+"start": 102.5965,
+"dur": 1.1215
+},
+"rp-Q": {
+"text": "Q express train",
+"who": "safety",
+"voice": "Bill",
+"start": 103.868,
+"dur": 1.3243
+},
+"l-Q": {
+"text": "Q",
+"who": "car",
+"voice": "Matilda",
+"start": 105.3424,
+"dur": 0.5007
+},
+"rc-R": {
+"text": "R local train.",
+"who": "car",
+"voice": "Matilda",
+"start": 105.993,
+"dur": 1.1676
+},
+"rp-R": {
+"text": "R local train",
+"who": "safety",
+"voice": "Bill",
+"start": 107.3106,
+"dur": 1.2606
+},
+"l-R": {
+"text": "R",
+"who": "car",
+"voice": "Matilda",
+"start": 108.7212,
+"dur": 0.3027
+},
+"rc-W": {
+"text": "W local train.",
+"who": "car",
+"voice": "Matilda",
+"start": 109.1739,
+"dur": 1.2365
+},
+"rp-W": {
+"text": "W local train",
+"who": "safety",
+"voice": "Bill",
+"start": 110.5604,
+"dur": 1.2779
+},
+"l-W": {
+"text": "W",
+"who": "car",
+"voice": "Matilda",
+"start": 111.9882,
+"dur": 0.6093
+},
+"rc-S": {
+"text": "shuttle train.",
+"who": "car",
+"voice": "Matilda",
+"start": 112.7476,
+"dur": 0.7711
+},
+"rp-S": {
+"text": "shuttle train",
+"who": "safety",
+"voice": "Bill",
+"start": 113.6687,
+"dur": 0.767
+},
+"l-S": {
+"text": "shuttle",
+"who": "car",
+"voice": "Matilda",
+"start": 114.5857,
+"dur": 0.5345
+},
+"st-23-st": {
+"text": "Twenty-third Street.",
+"who": "car",
+"voice": "Matilda",
+"start": 115.2702,
+"dur": 0.9725
+},
+"st-34-st-herald-sq": {
+"text": "Thirty-fourth Street, Herald Square.",
+"who": "car",
+"voice": "Matilda",
+"start": 116.3927,
+"dur": 1.8685
+},
+"st-42-st-bryant-park": {
+"text": "Forty-second Street, Bryant Park.",
+"who": "car",
+"voice": "Matilda",
+"start": 118.4112,
+"dur": 1.7289
+},
+"st-47-50-sts-rockefeller-ctr": {
+"text": "Forty-seventh, Fiftieth Streets, Rockefeller Center.",
+"who": "car",
+"voice": "Matilda",
+"start": 120.2901,
+"dur": 2.6788
+},
+"st-28-st": {
+"text": "Twenty-eighth Street.",
+"who": "car",
+"voice": "Matilda",
+"start": 123.1189,
+"dur": 1.0088
+},
+"st-times-sq-42-st": {
+"text": "Times Square, Forty-second Street.",
+"who": "car",
+"voice": "Matilda",
+"start": 124.2777,
+"dur": 1.7695
+},
+"st-49-st": {
+"text": "Forty-ninth Street.",
+"who": "car",
+"voice": "Matilda",
+"start": 126.1971,
+"dur": 1.0303
+},
+"st-33-st": {
+"text": "Thirty-third Street.",
+"who": "car",
+"voice": "Matilda",
+"start": 127.3774,
+"dur": 0.9177
+},
+"st-34-st-penn-station": {
+"text": "Thirty-fourth Street, Penn Station.",
+"who": "car",
+"voice": "Matilda",
+"start": 128.4451,
+"dur": 1.7049
+},
+"st-42-st-port-authority": {
+"text": "Forty-second Street, Port Authority Bus Terminal.",
+"who": "car",
+"voice": "Matilda",
+"start": 130.3,
+"dur": 2.6037
+},
+"st-5-av-bryant-park": {
+"text": "Fifth Avenue, Bryant Park.",
+"who": "car",
+"voice": "Matilda",
+"start": 133.0537,
+"dur": 1.4772
+}
+}
+}
