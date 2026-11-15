@@ -100,7 +100,7 @@ export function install(game) {
       if (pl.busy) { if (pl.busy.v) car = pl.busy.kind === 'out' ? pl.busy.v : null; return; }
       if (car) { const c = car; car = null; try { footCheck(c); } catch (e) {} }
       if (outside(pl.x, pl.y, 0.05) && !(pl.alt > 2) && !(pl.alt < 0)) { if ((footOut += dt) >= T_FOOT) { footOut = footIn() ? 0 : T_FOOT - 1; } return; } footOut = 0;
-      if ((BX - Math.abs(pl.x - BCX) < 0.45 || BY - Math.abs(pl.y - BCY) < 0.45) && Math.hypot(I.mx, I.my) > 0.1 && !(pl.alt > 2)) say('END OF THE MAP', '', 0.6);
+      if ((BX - Math.abs(pl.x - BCX) < 0.45 || BY - Math.abs(pl.y - BCY) < 0.45) && Math.hypot(I.mx, I.my) > 0.1 && !(pl.alt > 2) && !(pl.alt < 0)) say('END OF THE MAP', '', 0.6);
       return; }
     car = v; if (off || v.wreck || (v._ck && v._ck.pow === 0)) { A.v = null; B.v = null; return; }      /* (dead engine: on fire or wrecked, src/cars: not wedged, never moved; on foot he is looked after by 3 and 4) */
     const fwd = I.throttle > 0.3, rev = I.brake > 0.3, sp = Math.hypot(v.vx, v.vy), c = Math.cos(v.h), s = Math.sin(v.h);

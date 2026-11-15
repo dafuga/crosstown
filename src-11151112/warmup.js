@@ -48,7 +48,14 @@ export function startWarmup(world, renderer, P) {
       const T = performance.now() - t; if (k >= need) { const v = +(T / k).toFixed(1); if (E.per === undefined || v < E.per) E.per = v; }
       if (k >= ps.length || T > 120000) done = true; else timer = setTimeout(look, 50); };
     watches.push(look); look(); };
-  const earlyPass = () => { if (!E.on) return; const t = performance.now(), n = r.info.programs ? r.info.programs.length : 0, old = r.getRenderTarget(); let lamp = null;
+  // handoff18 (light, Nov 15): THE SHOP-OPENING COPY OF THE BUILDING FRONT, EARLY. Measured on a Windows machine (lanes/light/win/WINBOX.md): Direct3D takes 30 to
+  // 50 s of one core for each of the three building-front programs; two are on the tiles and are linked by the first early pass, the third (interiors.js's
+  // copy that cuts the shop openings) was only made at the very end of game.init(), so the step after init waited about 34 s for it alone. With early
+  // linking on, the copy and its tiny warm-up mesh are now made here, before game.init() (interiors/hole.js earlyHole), the next early pass links it, and
+  // interiors.js takes that same material and mesh (world.__shopHole). If interiors.js never takes it, begin() removes it again. Only with early linking;
+  // ?holeearly=0 = the copy is made by interiors.js as before. Not made when the address rules the shops or the cut out (?interiors=0, ?ihole=0).
+  let HM = null; const holeTry = () => { if (!HM || !E.on || world.__shopHole) return; try { if (HM.earlyHole(world)) E.hole = E.passes + 1; } catch (e) { fail('early hole', e); } };
+  const earlyPass = () => { if (!E.on) return; holeTry(); const t = performance.now(), n = r.info.programs ? r.info.programs.length : 0, old = r.getRenderTarget(); let lamp = null;
     try { let has = false; world.scene.traverse((o) => { if (o.isPointLight) has = true; });
       if (!has) { lamp = new THREE.PointLight(0xffc27a, 0, 16, 2); lamp.castShadow = false; world.scene.add(lamp); }
       r.setRenderTarget(world.composer.readBuffer); r.compile(world.scene, world.camera);
@@ -56,9 +63,10 @@ export function startWarmup(world, renderer, P) {
       if (fc) { const m0 = fc.layers.mask; fc.layers.set(3); r.setRenderTarget(world.streetRT, 0); for (const top of world.scene.children) if (mirrored(top)) { try { r.compile(top, fc, world.scene); } catch (e) { fail('early mirror', e); } } fc.layers.mask = m0; }
     } catch (e) { fail('early', e); } finally { if (lamp) world.scene.remove(lamp); r.setRenderTarget(old); }
     const dt = performance.now() - t, got = (r.info.programs ? r.info.programs.length : 0) - n; E.passes++; E.added += got; E.ms += dt; perWatch(t, n); if (E.on) earlyT = setTimeout(earlyPass, Math.max(2500, dt * 10)); };
-  if ((E.arm === 1 || E.arm === 2) && world.composer) { E.on = true; earlyT = setTimeout(earlyPass, 2500); }
+  if ((E.arm === 1 || E.arm === 2) && world.composer) { E.on = true; earlyT = setTimeout(earlyPass, 2500);
+    if (P.get('holeearly') !== '0' && P.get('ihole') !== '0' && P.get('interiors') !== '0') import('./interiors/hole.js').then((m) => { HM = m; holeTry(); }, (e) => fail('early hole file', e)); }
   // begin(): called just BEFORE main.js's compile-ahead step, so the two batches are one and are built side by side. Links only; waits for nothing.
-  const begin = () => { if (E.on) { E.on = false; clearTimeout(earlyT); E.ms = Math.round(E.ms); } t0 = performance.now(); n0 = r.info.programs ? r.info.programs.length : 0; const old = r.getRenderTarget();
+  const begin = () => { if (E.on) { E.on = false; clearTimeout(earlyT); E.ms = Math.round(E.ms); } if (HM && E.hole) { const H = world.__shopHole; try { if (H && H.taken) E.holeTaken = 1; else if (HM.dropEarlyHole(world)) E.holeTaken = 0; } catch (e) { fail('early hole drop', e); } }     /* handoff18: an early shop-opening copy nobody took leaves the scene before the compile-ahead */ t0 = performance.now(); n0 = r.info.programs ? r.info.programs.length : 0; const old = r.getRenderTarget();
     try {
       // 1. the street mirror's variants
       const fc = !world.streetOff && !world.streetFull && world.streetCam && world.streetRT ? world.streetCam.children[0] : null;
@@ -80,7 +88,7 @@ export function startWarmup(world, renderer, P) {
       for (let i = 0; i < 6000 && !ready() && performance.now() - t1 < 60000; i++) await sleep(10); } catch (e) { fail('wait', e); }
     S.waitMs = Math.round(performance.now() - t1); for (const w of watches) w();     /* the early passes' watchers get their last look now that everything is ready */
     S.perProg = E.passes ? (E.per !== undefined ? E.per : 99) : (performance.now() - t0) / Math.max(1, (r.info.programs ? r.info.programs.length : 0) - n0);     /* ms per program of the whole batch: about 15 on an M2 Max that has never seen them, 2 to 3 when the machine's shader cache has them (ramp() reads it) */
-    console.log('[game] warm-up ahead: ' + (E.passes ? 'linked early while the game was set up: ' + E.added + ' programs in ' + E.passes + ' passes (page time ' + E.ms + ' ms), ' + ((r.info.programs ? r.info.programs.length : 0) - E.added) + ' more by the end; ' : '') + S.added + ' more programs in the batch (page time ' + S.linkMs + ' ms, waited ' + S.waitMs + ' ms more after the compile-ahead; street mirror: ' + S.mirror + ' groups; picture passes: ' + S.quads + ' quads)' + (S.errors ? ', errors ' + S.errors + ' (' + lastErr + ')' : '')); };
+    console.log('[game] warm-up ahead: ' + (E.passes ? 'linked early while the game was set up: ' + E.added + ' programs in ' + E.passes + ' passes (page time ' + E.ms + ' ms), ' + ((r.info.programs ? r.info.programs.length : 0) - E.added) + ' more by the end; ' + (E.hole ? 'the shop-opening copy of the building front was made before pass ' + E.hole + (E.holeTaken ? ' and taken by interiors.js; ' : ' and NOT taken (removed); ') : '') : '') + S.added + ' more programs in the batch (page time ' + S.linkMs + ' ms, waited ' + S.waitMs + ' ms more after the compile-ahead; street mirror: ' + S.mirror + ' groups; picture passes: ' + S.quads + ' quads)' + (S.errors ? ', errors ' + S.errors + ' (' + lastErr + ')' : '')); };
   // a group that joins the scene later (the landmark buildings, hero.js): its mirror variants as one batch, before it is added
   const late = async (obj) => { const fc = !(S.ramping ? S.rampOff0 : world.streetOff) && !world.streetFull && world.streetCam && world.streetRT ? world.streetCam.children[0] : null; if (!fc || !obj) return; const old = r.getRenderTarget(), t0 = performance.now();
     try { fc.layers.set(3); r.setRenderTarget(world.streetRT, 0); r.compile(obj, fc, world.scene); S.late = (S.late || 0) + 1; } catch (e) { fail('late', e); } finally { r.setRenderTarget(old); }

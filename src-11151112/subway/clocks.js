@@ -11,14 +11,13 @@ export const TERMINAL = {      // [uptown / +s bound, downtown / -s bound]: real
   F: ['Jamaica-179 St', 'Coney Island'], M: ['Forest Hills-71 Av', 'Middle Village'], N: ['Astoria-Ditmars Blvd', 'Coney Island'], Q: ['96 St', 'Coney Island'], R: ['Forest Hills-71 Av', 'Bay Ridge-95 St'], W: ['Astoria-Ditmars Blvd', 'Whitehall St'], S: ['Times Sq', 'Grand Central'] };
 const W = 512, H = 128, BW = 1.72, BH = 0.43, IN_TIME = 23, ROUND = 105;      // IN_TIME: seconds a train takes from its start in the tunnel to its stop; ROUND: about one whole round of a train (in, stand, out, wait)
 // the rows of one platform, from the trains' state. -> [{ route, dest, text, hot }]
-let ENDS = null;      /* set by install: (train) => true when its line has no station beyond this one: the board then says so ("Last stop", "ends here") instead of a place it never goes */
+let ENDS = null, DIRN = null;      /* set by install: ENDS(train, route) => true when that route has no station beyond this one: the board then says so ("Last stop", "ends here") instead of a place it never goes; DIRN(train, route) => +1 when the route runs its uptown way on this track */
 export function rowsFor(trains, plat) { const rows = [];
-  for (const t of trains) { if (t.T.plat !== plat) continue; const R = t.T.routes, n = R.length, waiting = t.state === 'wait', cur = R[(t.routeI + n - 1) % n], next = R[t.routeI % n], gone = t.state === 'out';
-    const secs = waiting ? t.t + IN_TIME : gone ? ROUND - 20 : 0, route = waiting || gone ? next : cur, di = t.T.dir > 0 ? 0 : 1;
-    let ends = false; try { ends = !!(ENDS && ENDS(t)); } catch (e) {}
-    if (ends) { rows.push({ route, dest: 'Last stop', secs, text: t.state === 'dwell' ? 'ends here' : t.state === 'in' ? 'arriving' : Math.max(1, Math.round(secs / 60)) + ' min', hot: t.state === 'dwell' || t.state === 'in' }); continue; }
-    rows.push({ route, dest: (TERMINAL[route] || ['Uptown', 'Downtown'])[di], secs, text: t.state === 'dwell' ? 'boarding' : t.state === 'in' ? 'arriving' : Math.max(1, Math.round(secs / 60)) + ' min', hot: t.state === 'dwell' || t.state === 'in' });
-    rows.push({ route: R[(R.indexOf(route) + 1) % n], dest: (TERMINAL[R[(R.indexOf(route) + 1) % n]] || ['Uptown', 'Downtown'])[di], secs: secs + ROUND, text: Math.max(1, Math.round((secs + ROUND) / 60)) + ' min', hot: false }); }
+  for (const t of trains) { if (t.T.plat !== plat) continue; const R = t.T.routes, n = R.length, waiting = t.state === 'wait', cur = t.route || R[(t.routeI + n - 1) % n], next = R[t.routeI % n], gone = t.state === 'out';
+    const secs = waiting ? t.t + IN_TIME : gone ? ROUND - 20 : 0, route = waiting || gone ? next : cur;
+    const row = (rt, sc, live) => { let ends = false, di = t.T.dir > 0 ? 0 : 1; try { ends = !!(ENDS && ENDS(t, rt)); if (DIRN) di = DIRN(t, rt) > 0 ? 0 : 1; } catch (e) {}
+      rows.push({ route: rt, dest: ends ? 'Last stop' : (TERMINAL[rt] || ['Uptown', 'Downtown'])[di], secs: sc, text: live && t.state === 'dwell' ? (ends ? 'ends here' : 'boarding') : live && t.state === 'in' ? 'arriving' : Math.max(1, Math.round(sc / 60)) + ' min', hot: live && (t.state === 'dwell' || t.state === 'in') }); };
+    row(route, secs, true); row(R[(Math.max(0, R.indexOf(route)) + 1) % n], secs + ROUND, false); }
   rows.sort((a, b) => a.secs - b.secs); return rows.slice(0, 2); }
 export function drawClock(ctx, rows) { ctx.fillStyle = '#050607'; ctx.fillRect(0, 0, W, H); const rh = H / 2;
   rows.forEach((r, i) => { const y = i * rh; if (i) { ctx.fillStyle = '#1c1e21'; ctx.fillRect(10, y - 1, W - 20, 2); }
@@ -40,9 +39,9 @@ export function makeClocks(THREE, st, meta, plat, layer) { const cv = document.c
   group.traverse((o) => { o.layers.enable(layer); }); let last = '';
   const update = (trains) => { const rows = rowsFor(trains, plat), key = rows.map((r) => r.route + r.dest + r.text).join('|'); if (key === last) return false; last = key; drawClock(ctx, rows); map.needsUpdate = true; return true; };
   return { group, update, rows: () => last, dispose() { map.dispose(); face.dispose(); dark.dispose(); for (const g of geos) g.dispose(); } }; }
-export async function install(game, S) { if (S.clocks) return S.clocks; ENDS = (t) => !!(S.nextStation && t.u && t.u.st && !S.nextStation(t.u.st, t.T.dir, t.T.key)); const THREE = S.THREE, all = new Map(); let acc = 1;
+export async function install(game, S) { if (S.clocks) return S.clocks; ENDS = (t, r) => !!(S.nextStation && t.u && t.u.st && !S.nextStation(t.u.st, t.T.dir, t.T.key, r)); DIRN = (t, r) => (S.dirOf ? S.dirOf(t, r) : t.T.dir); const THREE = S.THREE, all = new Map(); let acc = 1;
   const add = (u) => { try { if (all.has(u) || !u.res || !u.st.tc) return; const list = u.st.tc.map((_, i) => makeClocks(THREE, u.st, S.meta, i, S.LAYER)); for (const c of list) { u.res.core.add(c.group); c.update(u.trains); } all.set(u, list); } catch (e) { console.log('[subway] clocks: ' + (e && e.message)); } };
   const drop = (u) => { const list = all.get(u); if (!list) return; for (const c of list) { c.group.removeFromParent(); c.dispose(); } all.delete(u); };
   S.on('unit', add); S.on('drop', drop); S.on('step', (dt) => { acc += dt; if (acc < 1) return; acc = 0; for (const [u, list] of all) for (const c of list) c.update(u.trains); });
   for (const u of S.units.values()) if (u.state === 'ready') add(u);
-  S.clocks = { all, TERMINAL, ROUTES }; return S.clocks; }
+  S.clocks = { all, TERMINAL, ROUTES, rows: (u, plat) => rowsFor(u.trains, plat).map((r) => r.route + ' ' + r.dest + ' ' + r.text) }; return S.clocks; }

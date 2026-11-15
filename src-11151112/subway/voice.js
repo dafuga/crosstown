@@ -106,7 +106,7 @@ export async function install(game, S) {
   const platOf = (u) => { const f = S.floor; if (!f || f.k !== 'platform' || !u.st.tc) return -1; const F = u.st.frame, tt = -(pl.x - F.x) * Math.sin(F.a) + (pl.y - F.y) * Math.cos(F.a); let b = 0; for (let i = 1; i < u.st.tc.length; i++) if (Math.abs(tt - u.st.tc[i]) < Math.abs(tt - u.st.tc[b])) b = i; return b; };
   // can he hear this train's own speakers: 1 aboard, less through its open doors from the platform beside it, 0 otherwise
   const carHear = (t, u) => { if (riding(t)) return 1; if (S.ride || !t || t.state !== 'dwell' || t.u !== u) return 0; const d = rel(t, u).dist; return d < 14 ? 0.5 * prox(d, 7) : 0; };
-  const routeNow = (t) => { if (riding(t) && rideRoute) return rideRoute; const n = t.T.routes.length; return t.T.routes[(((t.routeI || 0) - 1) % n + n) % n]; };
+  const routeNow = (t) => { if (riding(t) && rideRoute) return rideRoute; if (t.route) return t.route; const n = t.T.routes.length; return t.T.routes[(((t.routeI || 0) - 1) % n + n) % n]; };
   const routeNext = (t) => t.T.routes[(t.routeI || 0) % t.T.routes.length];
   const start = (it, u) => { const ac = A.ac; let at = ac.currentTime + 0.06; const dst = it.place === 'pa' ? A.paIn : A.carIn, t0 = at;
     // a platform announcement opens with our call tone: it is IN the file before the parts that can open one (c.lead). Parts overlap by their margins of
@@ -131,18 +131,18 @@ export async function install(game, S) {
   const loadX = () => (xP ||= fetch(new URL('../subway.json', BASE)).then((r) => (r.ok ? r.json() : null)).then((j) => { if (j && j.stations) { xdata = { stations: j.stations.map((q) => ({ id: q.id, name: q.name, routes: q.routes, cx: q.cx })) }; xmap = new Map(xdata.stations.map((q) => [q.id, q])); } }).catch((e) => warn('index', e)));
   const xst = (st) => (xmap && xmap.get(st.id)) || { id: st.id, name: st.name, routes: st.routes, cx: typeof st.cx === 'string' ? st.cx : null };
   const xd = () => xdata || { stations: [] };
-  const nextOf = (u, t) => S.nextStation(u.st, t.T.dir, t.T.key);      // (the track key: an express skips the stations where it has no platform; older data has no keys)
-  const preload = (u) => { if (!A || !u) return; const nx = [S.nextStation(u.st, 1), S.nextStation(u.st, -1)]; for (const T of u.st.tracks || []) if (!(T.plat < 0)) nx.push(S.nextStation(u.st, T.dir, T.key)); const go = () => { if (A) for (const id of PH.clipsFor(xst(u.st), xd(), nx)) load(id, A.ac); }; go(); if (!xdata) loadX().then(go); };
+  const nextOf = (u, t) => S.nextStation(u.st, t.T.dir, t.T.key, routeNow(t)), dirOf = (t, r) => (S.dirOf ? S.dirOf(t, r) : t.T.dir);      /* (the route: where it leaves its line, handover-15) */      // (the track key: an express skips the stations where it has no platform; older data has no keys)
+  const preload = (u) => { if (!A || !u) return; const nx = [S.nextStation(u.st, 1), S.nextStation(u.st, -1)]; for (const T of u.st.tracks || []) if (!(T.plat < 0)) { nx.push(S.nextStation(u.st, T.dir, T.key)); for (const r of T.routes || []) nx.push(S.nextStation(u.st, T.dir, T.key, r)); } const go = () => { if (A) for (const id of PH.clipsFor(xst(u.st), xd(), nx)) load(id, A.ac); }; go(); if (!xdata) loadX().then(go); };
   const announceArrival = (t, u, ttl) => { if (t._va || S.ride) { t._va = 1; return; } t._va = 1; const p = platOf(u);
     if (t.T.plat < 0) { if (p >= 0) say('pa', PH.passing(), { ttl: 5, prio: 2, key: 'thru' }); return; }      /* a track with no platform here: the train runs through */ if (p >= 0 && t.T.plat !== p) return;      /* on a platform: only that platform's two tracks; in the halls: all of them */
-    say('pa', PH.arrival(t.T.dir, t.state === 'wait' ? routeNext(t) : routeNow(t)), { ttl, prio: 2, key: 'arr' + t.T.id }); };
+    say('pa', PH.arrival(dirOf(t, t.state === 'wait' ? routeNext(t) : routeNow(t)), t.state === 'wait' ? routeNext(t) : routeNow(t)), { ttl, prio: 2, key: 'arr' + t.T.id }); };
   S.on('train', (kind, t, u) => { try { if (!A || u !== S.unit) { if (kind === 'gone') t._va = 0; return; }
       if (kind === 'arrive') announceArrival(t, u, 9);
       else if (kind === 'stop') { const r = rel(t, u), k = riding(t) ? 0.5 : prox(r.dist, 12); if (k > 0.02) A.hiss(A.panTo(riding(t) ? 0 : panOf(r.sx, r.sy)), A.ac.currentTime + 0.25, 0.04, 0.9, 0.11 * k, 'highpass', 2600); }
       else if (kind === 'doors-open') { t._vw = 0; if (carHear(t, u) > 0.02) say('car', PH.thisIs(xst(u.st), routeNow(t), !nextOf(u, t), xd()), { t, ttl: 5, prio: 3, key: 'car' }); if (riding(t)) lastT = clock; }
-      else if (kind === 'leave') { if (riding(t)) { const n = nextOf(u, t); if (n) { say('car', PH.nextStop(n, routeNow(t), t.T.dir), { t, delay: 3.2, ttl: 14, prio: 3, key: 'car' }); load(PH.stClip(n), A.ac); } } }
+      else if (kind === 'leave') { if (riding(t)) { const n = nextOf(u, t); if (n) { say('car', PH.nextStop(n, routeNow(t), dirOf(t, routeNow(t))), { t, delay: 3.2, ttl: 14, prio: 3, key: 'car' }); load(PH.stClip(n), A.ac); } } }
       else if (kind === 'gone') t._va = 0; } catch (e) { warn('train event', e); } });
-  S.on('board', (t) => { try { const n = t.T.routes.length; rideRoute = t.T.routes[(((t.routeI || 0) - 1) % n + n) % n]; Q = Q.filter((q) => q.place !== 'pa'); const u = S.unit; lastT = clock;
+  S.on('board', (t) => { try { const n = t.T.routes.length; rideRoute = t.route || t.T.routes[(((t.routeI || 0) - 1) % n + n) % n]; Q = Q.filter((q) => q.place !== 'pa'); const u = S.unit; lastT = clock;
       if (A && u && t.state === 'dwell' && !nextOf(u, t)) say('car', PH.lastStop(), { t, delay: 1.2, ttl: 9, prio: 2, key: 'car' }); } catch (e) { warn('board', e); } });
   S.on('alight', () => { rideRoute = null; Q = Q.filter((q) => q.place !== 'car'); });
   S.on('hop', (from, to, nt) => { try { nt._va = 1; nt._vw = 0; for (const t of from.trains) t._va = 0; if (A) { for (const v of A.voices.values()) v.dead = true; preload(to); } } catch (e) { warn('hop', e); } });

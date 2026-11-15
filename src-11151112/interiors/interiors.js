@@ -14,6 +14,7 @@ import * as THREE from 'three';
 import { fitRoom, planShop, toSim, toLocal, simHeading } from './plan.js';
 import { buildShop, shopMaterial } from './build.js';
 import { paintAtlas } from './art.js';
+import { holeMaterial, holeWarmMesh } from './hole.js';
 
 const Q = new URLSearchParams(location.search), num = (k, d) => (Q.has(k) && isFinite(+Q.get(k)) ? +Q.get(k) : d);
 const NEAR = num('inear', 60), FAR = NEAR + 15, PEOPLE = Q.get('ipeople') !== '0', HOLE = Q.get('ihole') !== '0', TILE = 128;
@@ -46,18 +47,8 @@ function roomSegs(d, P) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------- the facade cut
-function holeMaterial(base) {
-  const m = base.clone(), ob = base.onBeforeCompile, key = typeof base.customProgramCacheKey === 'function' ? base.customProgramCacheKey.bind(base) : () => '';
-  const U = { uHoleA: { value: [0, 1, 2, 3].map(() => new THREE.Vector4()) }, uHoleB: { value: [0, 1, 2, 3].map(() => new THREE.Vector4()) }, uHoleN: { value: 0 } };
-  m.onBeforeCompile = (sh, r) => { if (ob) ob.call(base, sh, r); Object.assign(sh.uniforms, U);
-    sh.fragmentShader = sh.fragmentShader.replace('void main() {', `uniform vec4 uHoleA[4]; uniform vec4 uHoleB[4]; uniform int uHoleN;
-      bool inShopHole(vec3 p) { for (int i = 0; i < 4; i++) { if (i >= uHoleN) break; vec3 q = p - uHoleA[i].xyz; vec2 ax = uHoleB[i].xy; float a = dot(q.xz, ax), n = dot(q.xz, vec2(-ax.y, ax.x));
-        if (abs(a) < uHoleA[i].w && abs(q.y) < uHoleB[i].z && abs(n) < uHoleB[i].w) return true; } return false; }
-      void main() { if (inShopHole(vWPos)) discard;`); };
-  m.customProgramCacheKey = () => key() + '-shophole';
-  m.userData = Object.assign({}, base.userData, { shopHole: true });
-  return { m, U };
-}
+// holeMaterial (the copy of the building-front material with the shop-hole test) and its warm-up mesh live in ./hole.js since light handoff18, so that
+// warmup.js's early linking can make them before game.init(); addInteriors below takes that ready-made copy when there is one.
 
 // ---------------------------------------------------------------------------------------------------------------------- the layer
 export async function addInteriors(game, { doors, meshes, ctx }) {
@@ -81,12 +72,15 @@ export async function addInteriors(game, { doors, meshes, ctx }) {
   const matGlass = new THREE.MeshStandardMaterial({ color: 0xc8d4d6, transparent: true, opacity: 0.14, roughness: 0.04, metalness: 0, side: THREE.DoubleSide, depthWrite: false, envMapIntensity: 1.2 });
   const tileMeshes = () => (w.buildingMeshes || []).filter((m) => m.userData && m.userData.tile);
   let facade = null; for (const m of tileMeshes()) if (m.material && m.material.onBeforeCompile) { facade = m.material; break; }
-  const hole = facade && HOLE ? holeMaterial(facade) : null;
+  // light handoff18: with early linking on, warmup.js has already made the copy from this same facade material and its program is being built (or is built):
+  // take that one (same material object, same mesh, so three makes no second program). ?holeearly=0, or no early copy = made here, as before.
+  const EH = facade && HOLE && Q.get('holeearly') !== '0' && w.__shopHole && !w.__shopHole.taken && w.__shopHole.base === facade ? w.__shopHole : null;
+  const hole = EH ? { m: EH.m, U: EH.U } : facade && HOLE ? holeMaterial(facade) : null;
   // shader warm-up: tiny meshes far under the street with each new material, so the start screen's compile covers them (no hitch at the first shop)
   const warm = new THREE.Group(); warm.name = 'interiors_warm'; warm.position.set(game.player.x, -60, -game.player.y);
   { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0.01, 0, 0, 0, 0.01, 0], 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(new Array(9).fill(0), 3)); g.setAttribute('aUV', new THREE.Float32BufferAttribute(new Array(6).fill(0), 2)); g.setAttribute('aCell', new THREE.Float32BufferAttribute(new Array(12).fill(0), 4)); g.setAttribute('normal', new THREE.Float32BufferAttribute([0, 1, 0, 0, 1, 0, 0, 1, 0], 3));
     for (const m of [matShop, matGlass]) { const o = new THREE.Mesh(g, m); o.frustumCulled = false; warm.add(o); } }
-  if (hole) { const src = tileMeshes()[0].geometry, g = new THREE.BufferGeometry(); for (const k in src.attributes) { const a = src.attributes[k]; g.setAttribute(k, new THREE.BufferAttribute(a.array.slice(0, a.itemSize * 3), a.itemSize, a.normalized)); } g.setIndex([0, 1, 2]); const o = new THREE.Mesh(g, hole.m); o.frustumCulled = false; o.scale.setScalar(0.001); warm.add(o); }
+  if (hole) { warm.add(EH ? EH.mesh : holeWarmMesh(tileMeshes()[0].geometry, hole.m)); if (EH) { EH.taken = true; scene.remove(EH.group); } }
   scene.add(warm); setTimeout(() => { warm.visible = false; }, 45000);
 
   // ---- the storefront's own door and glass instances of a shop (hidden while it is open)

@@ -179,6 +179,7 @@ export function waterInit(game, wreg, sets) {
   const group = new THREE.Group(); group.name = 'streets_ground_water'; const st = game.statics, own = st ? st.owner : null, rep = { water: 0, wall: 0, segs: 0, trimmed: 0 }; if (st) st.owner = null;     /* the wall belongs to no area: it stays when an area's things are taken out */
   try { for (const n in regions) { const r = addWater(game, group, regions[n]); if (r) { rep.water += r.water; rep.wall += r.wall; rep.segs += r.segs; } } } finally { if (st) st.owner = own; }
   world.scene.add(group);
+  if (!(game.P && game.P.get && game.P.get('bank') === '0')) import('./bank.js').then((m) => m.bankInit(game, waterOf(game.city))).catch((e) => console.log('[water] far bank not built: ' + (e && e.message)));     /* the land and buildings across the water (bank.js; ?bank=0 off): scenery, not waited for */
   const trim = (c) => { try { c.traverse((o) => { if (o.userData && o.userData.set !== undefined && !o.userData.waterTrim) { trimModel(game, o, regions); if (o.userData.waterTrim) rep.trimmed++; } }); } catch (e) { console.log('[water] model ground not trimmed: ' + (e && e.message)); } };
   if (world.cityRoot) trim(world.cityRoot);
   const T = world.tiles; if (T) { const prev = T.onGround; T.onGround = (c) => { if (prev) prev(c); trim(c); }; }     /* a tile set that comes in later */
