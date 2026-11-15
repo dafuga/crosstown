@@ -18,6 +18,11 @@ const LOOSE = ['pchair', 'ptable', 'pbin', 'basket', 'basketFull', 'cone', 'afra
 // v3 (Nov 13): things that are FIXED to the ground and stand until a car at speed or a blast breaks them off: sign posts, parking meters, fence panels.
 // The plates on a post (PLATE) come down with it. A walking player and a bullet leave all of these alone.
 const FIXED = ['spost', 'meter', 'fence'], PLATE = ['psign', 'psignP', 'blade', 'oneway', 'hblade', 'honeway', 'hpsign'], BREAK_SPEED = 5;
+// gameplay/world c3, Nov 15 (public report e25543, "Collision is wrong": three of his seven sudden stops were sidewalk bike racks, 28 -> 2, 25 -> 1 and 13 -> 0 km/h):
+// a bike rack is FIXED like a sign post: it stands, solid, until the player's car or a police car going at it at BREAK_SPEED or more (18 km/h) breaks it off; it goes
+// over with the bike(s) locked to it and the player's car keeps RACK_KEEP of its speed. Both kinds the map draws: the street furniture's ('rack', drawn st_rack, three
+// circles) and the dressing set's ('rack' in assets/dressing, one circle). Slower than that, on foot, or a bullet: it stands and blocks as before. ?rackbreak=0 = as before.
+const RACK_KEEP = 0.8;
 const TWINS = { bike: ['bikeM', 'bikeL'], bikeB: ['bikeM', 'bikeL'], psign: ['psignL'], psignP: ['psignL'] };
 const G = 9.81, SUB = 1 / 120, CELL = 4, MAXB = 360, PLAYER_R = 0.34, PLAYER_M = 80;
 const _v = new THREE.Vector3(), _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3(), _d = new THREE.Vector3(), _r = new THREE.Vector3(), _n = new THREE.Vector3(), _q = new THREE.Quaternion(), _qi = new THREE.Quaternion(), _e = new THREE.Euler(), _m = new THREE.Matrix4(), _s = new THREE.Vector3(), _o = {};
@@ -30,11 +35,13 @@ export function install(game, opts = {}) {
   if (game.P && game.P.get('props') === '0') { S.on = false; return S; }
   const F = game.streets && game.streets.parts && game.streets.parts.furniture, st = game.statics, world = game.world;
   if (!F || !F.kinds || !F.meshes || !st) { S.on = false; S.why = 'no furniture'; return S; }
+  const WAKE2 = !(game.P && game.P.get('propwake') === '0');
 
   // ---------------------------------------------------------------- what is loose, and where
   const hash = new Map(), hk = (x, y) => Math.floor(x / CELL) * 100003 + Math.floor(y / CELL), byName = new Map();
   for (const m of F.meshes) { const nm = m.name || (m.userData && m.userData.kind) || ''; let a = byName.get(nm); if (!a) byName.set(nm, (a = [])); a.push(m); }      // v4: by userData.kind when a mesh has no name (the names were lost in the 12:57 Nov 13 build and every prop went dead)
   const shapes = new Map();
+  const RACKS = !(game.P && game.P.get('rackbreak') === '0'), FIXD = RACKS ? FIXED.concat('rack') : FIXED; S.racks = 0; S.dracks = 0;
   function shapeFrom(geos, k) {       // a model's own outline: its box, and the vertex furthest out in each of 26 directions
     const box = new THREE.Box3(), best = DIRS.map(() => ({ d: -1e9, p: new THREE.Vector3() })); let any = false;
     for (const geo of geos) { const pos = geo && geo.attributes.position; if (!pos) continue; const stp = Math.max(1, Math.floor(pos.count / 4000));
@@ -46,10 +53,14 @@ export function install(game, opts = {}) {
   }
   function shapeOf(name) { let sh = shapes.get(name); if (sh === undefined) { const K = F.kinds[name]; sh = K ? shapeFrom((K.parts || []).map((q) => q.geometry), K.scale || 1) : null; shapes.set(name, sh); } return sh; }
   const shOf = (rec) => rec.sh || shapeOf(rec.name);
-  for (const name of LOOSE.concat(FIXED, PLATE)) { const K = F.kinds[name], fx = FIXED.includes(name) ? 1 : PLATE.includes(name) ? 2 : 0; if (!K || !K.list || !K.list.length || !shapeOf(name)) continue;
+  for (const name of LOOSE.concat(FIXD, PLATE)) { const K = F.kinds[name], fx = FIXD.includes(name) ? 1 : PLATE.includes(name) ? 2 : 0; if (!K || !K.list || !K.list.length || !shapeOf(name)) continue;
     for (const it of K.list) { const o = it[4]; if (o && o.tilt && Math.abs(o.tilt[0]) > 1) continue;       // (already lying on its side as set dressing: left as it is)
-      const rec = { name, x: it[0], y: it[1], z: it[2], h: it[3], o, body: null, fx }, k = hk(rec.x, rec.y); let a = hash.get(k); if (!a) hash.set(k, (a = [])); a.push(rec); S.recs++; } }
+      const rec = { name, x: it[0], y: it[1], z: it[2], h: it[3], o, body: null, fx }, k = hk(rec.x, rec.y); let a = hash.get(k); if (!a) hash.set(k, (a = [])); a.push(rec); S.recs++; if (name === 'rack') S.racks++; } }
   const add = (rec) => { const k = hk(rec.x, rec.y); let a = hash.get(k); if (!a) hash.set(k, (a = [])); a.push(rec); S.recs++; };
+  // c3: the dressing set's bike racks (dressing.js: instanced meshes of kind 'rack', one solid circle each, tag 'dressing'): fixed like the furniture's racks
+  const DRS = game.dressing;
+  if (RACKS && DRS && DRS.meshes) for (const m of DRS.meshes) { if (!m.isInstancedMesh || !m.userData || m.userData.kind !== 'rack' || !m.geometry) continue; const sh = shapeFrom([m.geometry], 1); if (!sh || !(sh.size.x > 0 && sh.size.y > 0 && sh.size.z > 0)) continue; const a = m.instanceMatrix.array;      /* (no readable outline: these stay solid as before) */
+    for (let i = 0; i < m.count; i++) { const o = i * 16; if (a[o] === 0 && a[o + 1] === 0 && a[o + 2] === 0) continue; add({ name: 'rack', x: a[o + 12], y: -a[o + 14], z: a[o + 13], h: Math.atan2(-a[o + 2], a[o]), o: null, body: null, fx: 1, dr: m, di: i, sh }); S.dracks++; } }
   // the streets lane's clutter.js draws its own bins, boxes, crates, cans and cones in the hero blocks (parts.clutter.dyn): those are loose too
   const CL = game.streets.parts.clutter; S.clutter = 0;
   if (CL && CL.dyn && CL.take) for (const D of CL.dyn) { if (!/^(basket|crate|cbox|can|barrel|cone|newsbox|box|bottle|cup|bucket|pail|pallet)/i.test(D.name) || !D.hi || !D.hi.ms || !D.hi.ms.length) continue; const sh = shapeFrom(D.hi.ms.map((m) => m.geometry), 1); if (!sh) continue;
@@ -88,6 +99,10 @@ export function install(game, opts = {}) {
   function takeOut(rec) {
     if (rec.cl) { const D = rec.cl, i = rec.ci, M = CL.take(D.name, i); if (!M) return null; return { meshes: D.hi.ms, M, attr: (j, name, size) => { const a = (D.attrs || []).find((q) => q.name === name); return a && a.data ? a.data.subarray(i * a.size, i * a.size + a.size) : null; } }; }
     const x = rec.x, z = -rec.y, own = [];
+    if (rec.dr) { const m = rec.dr, i = rec.di, a = m.instanceMatrix.array, o = i * 16; if (a[o] === 0 && a[o + 1] === 0 && a[o + 2] === 0) return null;      /* c3, a dressing rack: its one instance (gone already if a hero building's footprint took it) */
+      const M = a.slice(o, o + 16), vals = {}; for (const n in m.geometry.attributes) { const at = m.geometry.attributes[n]; if (at.isInstancedBufferAttribute) vals[n] = at.array.slice(i * at.itemSize, i * at.itemSize + at.itemSize); }
+      zero(m, i); for (const [nm, list] of byName) { if (nm !== 'st_blob' && !nm.startsWith('st_sh_')) continue; for (const bm of list) { const bi = findIn(bm, x, z, 0.02); if (bi >= 0) zero(bm, bi); } }
+      return { meshes: [m], M, attr: (j, name) => vals[name] || null }; }
     for (const m of byName.get('st_' + rec.name) || []) { const i = findIn(m, x, z, 0.02); if (i >= 0) { own.push([m, i]); } }
     if (!own.length) return null;
     for (const sfx of ['L', 'Lod']) for (const m of byName.get('st_' + rec.name + sfx) || []) { const i = findIn(m, x, z, 0.02); if (i >= 0) zero(m, i); }
@@ -107,7 +122,7 @@ export function install(game, opts = {}) {
     if (rec.body) { const b = rec.body; if (!b.awake) { b.awake = true; b.rest = 0; S.awake++; if (b.circle) { b.circle.on = false; b.circle = null; } } return b; }
     if (S.bodies.length >= MAXB && !retire()) return null;
     const own = takeOut(rec); if (!own) { if (PZ && PZ.loose && (rec.name === 'pchair' || rec.name === 'ptable') && (rec.miss = (rec.miss || 0) + 1) < 40) return null;      /* a hero-plaza piece is only in its near mesh close to the camera: try again later */ rec.dead = true; return null; }
-    const P = poolOf(rec.name, own.meshes); if (P.n >= P.cap) grow(P, P.cap * 2); const sh = P.sh || shOf(rec);
+    const P = poolOf(rec.name, own.meshes); if (P.n >= P.cap) grow(P, P.cap * 2); const sh = (rec.dr && rec.sh) || P.sh || shOf(rec);      // c3: a dressing rack keeps the outline taken at install: by now memfree.js has emptied the dressing model's vertex arrays, and an outline read from them here is NaN (laptop, Nov 15: the car and the picture went NaN)
     // the instance as the game drew it
     _m.fromArray(own.M); const pos = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3(); _m.decompose(pos, q, sc);
     const slot = P.n++; for (let k = 0; k < P.parts.length; k++) { const part = P.parts[k]; for (const a of part.inst) { const v = own.attr(k, a.name, a.size); if (v) { a.data.set(v, slot * a.size); part.g.attributes[a.name].needsUpdate = true; } } part.im.count = P.n; }
@@ -118,7 +133,7 @@ export function install(game, opts = {}) {
       awake: true, rest: 0, circle: null, sw: st.onSidewalk(rec.x, rec.y), g0: 0, t: 0, mu: rec.name === 'bag' ? 0.9 : 0.55, e: rec.name === 'bag' ? 0.02 : 0.22 };
     let lo = 1e9; for (const p of pts) { const y = _v.copy(p).applyQuaternion(q).y; if (y < lo) lo = y; } b.g0 = b.p.y + lo;       // the ground it stands on is where its lowest point is
     // its static circle(s) go
-    const R = b.rh + 0.25, c = st.cell; for (let i = Math.floor((rec.x - R) / c); i <= Math.floor((rec.x + R) / c); i++) for (let j = Math.floor((rec.y - R) / c); j <= Math.floor((rec.y + R) / c); j++) { const a = st.circ.get(st.key(i, j)); if (a) for (const o of a) if (o.on && (o.tag === 'furniture' || o.tag === 'clutter') && Math.hypot(o.x - rec.x, o.y - rec.y) < R && o.r < 0.7) o.on = false; }
+    const R = b.rh + 0.25, c = st.cell; for (let i = Math.floor((rec.x - R) / c); i <= Math.floor((rec.x + R) / c); i++) for (let j = Math.floor((rec.y - R) / c); j <= Math.floor((rec.y + R) / c); j++) { const a = st.circ.get(st.key(i, j)); if (a) for (const o of a) if (o.on && (((o.tag === 'furniture' || o.tag === 'clutter') && Math.hypot(o.x - rec.x, o.y - rec.y) < R && o.r < 0.7) || (rec.dr && o.tag === 'dressing' && o.r < 0.2 && Math.hypot(o.x - rec.x, o.y - rec.y) < 0.1))) o.on = false; }
     rec.body = b; S.bodies.push(b); S.awake++; S.woken++; write(b); return b;
   }
   function retire() {       // room for one more: the body at rest furthest from the player goes (never one in view range)
@@ -175,6 +190,13 @@ export function install(game, opts = {}) {
     const pl = game.player;
     if (!pl.vehicle) { const sp = pl.speed || 0; if (sp > 0.05) { const fx = Math.cos(pl.h), fy = Math.sin(pl.h); near(pl.x, pl.y, 1.6, (rec) => { if (rec.body || rec.dead) return; const sh = shOf(rec), dx = rec.x - pl.x, dy = rec.y - pl.y, d = Math.hypot(dx, dy), rr = 0.5 * Math.max(sh.size.x, sh.size.z) * sh.k; if (d < Math.max(rr, 0.32) + PLAYER_R + 0.16 && dx * fx + dy * fy > 0) wake(rec); }); } }
     carList();
+    // gameplay/world c2, Nov 15 (public report e25543, "Collision is wrong"): a prop that was knocked about and came to rest standing gets a circle again (sleep()), and
+    // nothing here took that circle away before the car's body met it: the look-ahead below only knows props that never moved, and contacts() runs after the car has
+    // already been stopped dead by the circle (laptop, real keys: a bike at rest 49 -> 12 km/h in one step, a plaza chair 59 -> 16). A resting prop in the path of the
+    // player's car or a loose car now wakes as an untouched one does, and is scattered again. ?propwake=0 = as before.
+    if (WAKE2) for (const k of cars) { const c = k.c; if (c.vx === undefined || !c.def) continue; const sp = Math.hypot(k.vx, k.vy), I = game.input;
+      if (sp < 0.4 && !(k.own && I && (I.throttle > 0 || I.brake > 0))) continue; const L = c.def.len / 2 + (sp < 0.4 ? 0.2 : 0.5 + sp * 0.12), W = c.def.wid / 2 + 0.45, ch = Math.cos(c.h), shn = Math.sin(c.h);
+      for (const b of S.bodies) { if (b.awake || !b.circle) continue; const dx = b.p.x - c.x, dy = -b.p.z - c.y, rb = Math.min(b.rh, 0.4); if (Math.abs(dx * ch + dy * shn) < L + rb && Math.abs(-dx * shn + dy * ch) < W + rb) { wake(b.rec); S.rewoken = (S.rewoken || 0) + 1; } } }
     for (const k of cars) { const sp = Math.hypot(k.vx, k.vy); if (sp < 0.4) continue; const c = k.c, L = (c.def ? c.def.len : 4.4) / 2 + 0.5 + sp * 0.12, W = (c.def ? c.def.wid : 1.8) / 2 + 0.45, ch = Math.cos(c.h), shn = Math.sin(c.h);
       near(c.x, c.y, L + 1, (rec) => { if (rec.body || rec.dead || rec.fx === 2) return; const dx = rec.x - c.x, dy = rec.y - c.y, lx = dx * ch + dy * shn, ly = -dx * shn + dy * ch;
         if (!rec.fx) { if (Math.abs(lx) < L && Math.abs(ly) < W) wake(rec); return; }
@@ -184,11 +206,17 @@ export function install(game, opts = {}) {
           const s = rec.seg, sx = s[2] - s[0], sy = s[3] - s[1], sl = Math.hypot(sx, sy) || 1, W3 = (c.def ? c.def.wid : 1.8) / 2 + 0.2; if (Math.abs(k.vx * -sy + k.vy * sx) / sl < 3) return;
           let hit = false; for (let q = 0; q <= 4 && !hit; q++) { const px = s[0] + sx * q / 4 - c.x, py = s[1] + sy * q / 4 - c.y, qx = px * ch + py * shn, qy = -px * shn + py * ch; if (Math.abs(qx) < L2 && Math.abs(qy) < W3 && px * k.vx + py * k.vy > 0) hit = true; }
           if (!hit) return;
+        } else if (rec.name === 'rack') {      // c3: the hoop is 0.65 m long: broken where the car's outline meets its middle or either foot, the car moving towards it. Lane traffic (c.vx undefined: it rides its lane and no rack ever stopped it) leaves racks alone
+          if (c.vx === undefined) return; const ax = Math.cos(rec.h) * 0.3, ay = Math.sin(rec.h) * 0.3; let hit = false;
+          for (let q = -1; q <= 1 && !hit; q++) { const px = dx + ax * q, py = dy + ay * q; if (Math.abs(px * ch + py * shn) < L2 && Math.abs(-px * shn + py * ch) < W2 + 0.1 && px * k.vx + py * k.vy > 0) hit = true; }
+          if (!hit) return;
         } else if (Math.abs(lx) > L2 || Math.abs(ly) > W2 || (dx * k.vx + dy * k.vy) < 0) return;
-        S.force = true; let b = null; try { b = wake(rec); if (b) { S.broken++; near(rec.x, rec.y, 0.5, (pl2) => { if (pl2.fx === 2 && !pl2.body && !pl2.dead && Math.hypot(pl2.x - rec.x, pl2.y - rec.y) < 0.35) { const b2 = wake(pl2); if (b2) b2.v.set(k.vx * 0.5, 0.5, -k.vy * 0.5); } }); } } finally { S.force = false; }
+        S.force = true; let b = null; try { b = wake(rec); if (b) { S.broken++; near(rec.x, rec.y, 0.5, (pl2) => { if (pl2.fx === 2 && !pl2.body && !pl2.dead && Math.hypot(pl2.x - rec.x, pl2.y - rec.y) < 0.35) { const b2 = wake(pl2); if (b2) b2.v.set(k.vx * 0.5, 0.5, -k.vy * 0.5); } });
+          if (rec.name === 'rack') { S.rackBroken = (S.rackBroken || 0) + 1; near(rec.x, rec.y, 1.2, (bk) => { if ((bk.name === 'bike' || bk.name === 'bikeB') && !bk.fx && !bk.body && !bk.dead && Math.hypot(bk.x - rec.x, bk.y - rec.y) < 0.6) { const b2 = wake(bk); if (b2) b2.v.set(k.vx * 0.45, 0.6, -k.vy * 0.45); } }); } } } finally { S.force = false; }
         if (!b) return; if (rec.name === 'fence') unwall(rec);
         b.v.set(k.vx * 0.4, 0.9 + sp * 0.04, -k.vy * 0.4); b.w.set(-k.vy / sp * 2.2, 0, -k.vx / sp * 2.2);
-        const lose = rec.name === 'fence' ? 0.9 : 0.86; if (c.vx !== undefined) { c.vx *= lose; c.vy *= lose; } else if (c.v !== undefined) c.v *= lose;
+        if (rec.name === 'rack' && !k.own) return;      // c3: a police car or a loose car takes the rack down and is neither slowed nor dented by it (a rack used to push it aside and scrub its speed)
+        const lose = rec.name === 'fence' ? 0.9 : rec.name === 'rack' ? RACK_KEEP : 0.86; if (c.vx !== undefined) { c.vx *= lose; c.vy *= lose; } else if (c.v !== undefined) c.v *= lose;
         if (game.__crash && game.__crash.hit) { try { game.__crash.hit(c, _v.set(rec.x, (c.z || 0) + 0.5, -rec.y), _a.set(-k.vx / sp, 0, k.vy / sp), sp * 0.7, rec.name === 'fence' ? undefined : { narrow: true }); } catch (e) {} } }); }
   }
   function contacts(dt) {
@@ -208,6 +236,7 @@ export function install(game, opts = {}) {
         const rel = (k.vx - b.v.x) * nx + (k.vy + b.v.z) * ny; if (rel <= 0) continue;
         const jit = ((b.slot * 7919) % 13) / 13 - 0.5, kk = 1.15 * rel + 0.3; _d.set((nx * kk + (k.vx / sp) * 0.2 * rel - ny * jit * 0.25 * rel) * b.m, Math.min(5, 0.6 + 0.16 * sp) * (0.7 + 0.6 * (jit + 0.5)) * b.m, -(ny * kk + (k.vy / sp) * 0.2 * rel + nx * jit * 0.25 * rel) * b.m);
         _a.set(b.p.x - nx * rb, (c.z || 0) + 0.45, b.p.z + ny * rb); push(b, _d, _a);
+        if (b.rec.name === 'rack' && b.v.y > 0.9 + sp * 0.04) b.v.y = 0.9 + sp * 0.04;      // c3: the car that carries on into a knocked rack does not toss it up: it keeps no more upward speed than the break itself gives a rack or a sign post (it went up to 3-6 m, over the car)
         if (k.own && sp > 2) { const lose = Math.min(0.02, b.m / 2500); c.vx *= 1 - lose; c.vy *= 1 - lose; if (S.sound) S.sound(b, sp); } } }
     // bodies against each other, and against props still asleep (a thrown chair wakes the table it lands on)
     for (let i = 0; i < B.length; i++) { const a = B[i]; if (!a.awake) continue;
@@ -246,6 +275,6 @@ export function install(game, opts = {}) {
     if (!best) return null; const b = best.rec ? (best.awake ? best : wake(best.rec)) : wake(best); if (!b) return null; const at = new THREE.Vector3().copy(origin).addScaledVector(d, bt); push(b, _d.copy(d).multiplyScalar(impulse), at); return { point: at, kind: b.rec.name }; };
   // a break at `point` (the breakable pass calls this): true when a loose prop took the blow
   S.strike = (point, dir, power = 2) => { if (!S.on) return false; const n = S.impulse(point, _c.copy(dir).normalize().multiplyScalar(30 * power).setY(8 * power), 0.25); if (power >= 3) S.blast(point, power * 0.5, 2 + power); return n > 0; };
-  S.stats = () => ({ recs: S.recs, clutter: S.clutter, plazaMeshes: S.plaza, bodies: S.bodies.length, awake: S.awake, woken: S.woken, broken: S.broken, unwalled: S.unwalled, pools: pools.size });
+  S.stats = () => ({ recs: S.recs, clutter: S.clutter, plazaMeshes: S.plaza, bodies: S.bodies.length, awake: S.awake, woken: S.woken, broken: S.broken, racks: S.racks, dracks: S.dracks, rackBroken: S.rackBroken || 0, unwalled: S.unwalled, pools: pools.size });
   return S;
 }
