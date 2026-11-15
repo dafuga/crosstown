@@ -67,14 +67,53 @@ export function startWarmup(world, renderer, P) {
   const holeMirror = (fc, after) => { if (HMQ === '0' || (HMQ === '1') === !!after) return; let n = 0; const n1 = r.info.programs ? r.info.programs.length : 0;
     for (const top of world.scene.children) if (/^interiors_warm/.test(top.name || '')) for (const o of top.children) if (o.material && o.material.userData && o.material.userData.shopHole) { try { r.compile(o, fc, world.scene); n++; } catch (e) { fail('hole mirror', e); } }
     if (n) S.holeMirror = n; if (after) for (const p of (r.info.programs || []).slice(n1)) bg.add(p); };
-  const earlyPass = () => { if (!E.on) return; holeTry(); const t = performance.now(), n = r.info.programs ? r.info.programs.length : 0, old = r.getRenderTarget(); let lamp = null;
-    try { let has = false; world.scene.traverse((o) => { if (o.isPointLight) has = true; });
+  // handoff22 (light, Nov 15): THE CAP, ON BY DEFAULT WITH EARLY LINKING. Measured on the Windows machine (lanes/light/win/H22.md, H24.md): an early pass that
+  // hands Direct3D's compiler every program of the scene at once takes 6 to 7 of 8 cores for seconds, and game set-up beside it is 15 to 20 s slower. So an
+  // early pass (0.2 s apart while there is work, else 1 s) hands over the building fronts first and all at once (the 20 to 40 s programs), then other
+  // things' materials only while fewer than N programs are still building. N = half the logical cores, 2 at least; ?earlycap=N sets it, ?earlycap=0 = the
+  // all-at-once passes of before, statement for statement. capGo hands the compiler up to `room` things whose materials it has not been handed yet (a bag:
+  // a plain container listing them, their parents untouched; three's compile only walks .children); capFill repeats that until `lim` programs are
+  // building, nothing new is left, or `ms` of page time are gone.
+  // A REPEAT VISIT (CH, "the chain"): there is nothing to protect, programs come from the machine's shader cache in a few ms each. While EVERYTHING handed
+  // over so far was ready by the next look (the pass's own end, 60 ms later, the next pass), the next pass may hand over four times as much (N, 4N, 16N,
+  // 64N things, page time 40, 160, 400 ms), and a batch of 8 programs or more that was all ready T ms after its pass began feeds E.per = T / k as perWatch
+  // does. Under 8 ms (ramp()'s own line) the visit is a repeat one: E.fast, and from then on the passes are the all-at-once ones, perWatch and all. On a
+  // first visit the building fronts are not ready by the second pass, the chain ends there and the cap holds for good.
+  // ROUNDS: a material is handed over once, but its program changes when the lamps in the scene change (and a second kind of mesh can wear it), so when
+  // the scene's lamps change, and every 10 s once nothing new is found, the "handed over" marks are dropped and everything is walked again under the
+  // same cap (what is built already costs page time only: 40 ms a pass at most). ?earlyround=0 = handed over once, as the H22 trial did.
+  const capQ = P.get('earlycap'), CAP = capQ !== null && capQ !== '' && +capQ >= 0 ? Math.floor(+capQ) : Math.max(2, Math.round((+navigator.hardwareConcurrency || 8) / 2));
+  let capA = new WeakSet(), capM = new WeakSet(), capSig = null, capT = 0, capIdle = false; E.cap = CAP; E.capMax = 0; E.rounds = 0; const ROUND = P.get('earlyround') !== '0';
+  const CH = { on: CAP > 0, grow: 1, ps: null, t: 0 }; let capPar = null;
+  const chainLook = () => { if (!CH.on || !CH.ps) return; let k = 0; try { for (const p of CH.ps) if (!p.usedTimes || p.isReady()) k++; } catch (e) { CH.on = false; return; } if (k < CH.ps.length) return;
+    const T = performance.now() - CH.t; if (k >= 8) { const v = +(T / k).toFixed(1); if (E.per === undefined || v < E.per) E.per = v; if (v < 8) { E.fast = E.passes; CH.on = false; } } CH.ps = null; CH.grow = Math.min(64, CH.grow * 4); };
+  const capGo = (seen, cam, tops, room, only) => { const bag = new THREE.Object3D(); for (const top of tops) top.traverse((o) => { if (bag.children.length >= room || !(o.isMesh || o.isPoints || o.isLine) || !o.material || (only && !only(o))) return; const ms = [].concat(o.material); if (ms.every((m) => !m || seen.has(m))) return; for (const m of ms) if (m) seen.add(m); bag.children.push(o); }); if (bag.children.length) r.compile(bag, cam, world.scene); return bag.children.length; };
+  const capFill = (seen, cam, tops, b, lim, ms) => { let size = Math.max(1, lim - b), k = 1; const t1 = performance.now(); while (b < lim && k && performance.now() - t1 < ms) { const n1 = r.info.programs.length; k = capGo(seen, cam, tops, size); const got = r.info.programs.length - n1; b += got; size = got ? Math.max(1, lim - b) : Math.min(32, size * 2); } return [b, k]; };
+  const earlyPass = () => { if (!E.on) return; holeTry(); const t = performance.now(), n = r.info.programs ? r.info.programs.length : 0, old = r.getRenderTarget(); let lamp = null, more = false;
+    if (capPar === null) { try { capPar = !!r.getContext().getExtension('KHR_parallel_shader_compile'); } catch (e) { capPar = false; } if (!capPar) { CH.on = false; E.cap = 0; } }     /* a browser that cannot be asked "is it built yet" without waiting: no count, so no cap */
+    if (CAP && capPar && !E.fast) { chainLook(); if (CH.on && CH.ps) CH.on = false; }     /* the last batch is still building at this pass: a first visit, the cap holds from here on */
+    const capped = CAP && capPar && !E.fast;
+    try { let has = false; const sig = []; world.scene.traverse((o) => { if (o.isPointLight) has = true; if (o.isLight) sig.push(o.type + (o.castShadow ? 1 : 0) + (o.visible ? 1 : 0)); });
+      if (!has) sig.push('PointLight01');
       if (!has) { lamp = new THREE.PointLight(0xffc27a, 0, 16, 2); lamp.castShadow = false; world.scene.add(lamp); }
-      r.setRenderTarget(world.composer.readBuffer); r.compile(world.scene, world.camera);
       const fc = !world.streetOff && !world.streetFull && world.streetCam && world.streetRT ? world.streetCam.children[0] : null;
-      if (fc) { const m0 = fc.layers.mask; fc.layers.set(3); r.setRenderTarget(world.streetRT, 0); for (const top of world.scene.children) if (mirrored(top)) { try { r.compile(top, fc, world.scene); } catch (e) { fail('early mirror', e); } } holeMirror(fc); fc.layers.mask = m0; }
+      if (capped) {     /* never more than N programs building at once, so the graphics process does not take every core in bursts */
+        const lim = CH.on ? CAP * CH.grow : CAP, ms = CH.on ? Math.min(400, 40 * CH.grow) : 40, sg = sig.sort().join(' ');
+        if (capSig === null) { capSig = sg; capT = t; } else if (ROUND && (sg !== capSig || (capIdle && t - capT > 10000))) { capA = new WeakSet(); capM = new WeakSet(); capSig = sg; capT = t; capIdle = false; E.rounds++; }
+        // the building fronts first and all at once (three or four programs, the longest by far: 20 to 40 s each), whatever the cap says
+        const isTile = (o) => !!(o.userData && o.userData.tile), isHeavy = (o) => isTile(o) || !!(o.material.userData && o.material.userData.shopHole);
+        r.setRenderTarget(world.composer.readBuffer); capGo(capA, world.camera, [world.scene], 99, isHeavy);
+        if (fc) { const m0 = fc.layers.mask; fc.layers.set(3); r.setRenderTarget(world.streetRT, 0); try { capGo(capM, fc, world.scene.children.filter(mirrored), 99, isTile); } catch (e) { fail('early mirror', e); } fc.layers.mask = m0; }
+        let b = 0; for (const p of r.info.programs || []) if (!p.isReady()) b++; if (b > E.capMax) E.capMax = b;
+        if (b < lim) { r.setRenderTarget(world.composer.readBuffer); let k; [b, k] = capFill(capA, world.camera, [world.scene], b, lim, ms); if (k) more = true; }
+        if (fc && b < lim) { const m0 = fc.layers.mask; fc.layers.set(3); r.setRenderTarget(world.streetRT, 0); let k; try { [b, k] = capFill(capM, fc, world.scene.children.filter(mirrored), b, lim, ms); if (k) more = true; } catch (e) { fail('early mirror', e); } if (!more) holeMirror(fc); fc.layers.mask = m0; }
+        if (!more) capIdle = true; if (b >= lim) more = true; if (b > E.capMax) E.capMax = b;
+        if (CH.on) { const ps = (r.info.programs || []).slice(n); CH.ps = ps.length ? ps : null; CH.t = t; }
+      } else {
+      r.setRenderTarget(world.composer.readBuffer); r.compile(world.scene, world.camera);
+      if (fc) { const m0 = fc.layers.mask; fc.layers.set(3); r.setRenderTarget(world.streetRT, 0); for (const top of world.scene.children) if (mirrored(top)) { try { r.compile(top, fc, world.scene); } catch (e) { fail('early mirror', e); } } holeMirror(fc); fc.layers.mask = m0; } }
     } catch (e) { fail('early', e); } finally { if (lamp) world.scene.remove(lamp); r.setRenderTarget(old); }
-    const dt = performance.now() - t, got = (r.info.programs ? r.info.programs.length : 0) - n; E.passes++; E.added += got; E.ms += dt; perWatch(t, n); if (E.on) earlyT = setTimeout(earlyPass, Math.max(2500, dt * 10)); };
+    const dt = performance.now() - t, got = (r.info.programs ? r.info.programs.length : 0) - n; E.passes++; E.added += got; E.ms += dt; if (!capped) perWatch(t, n); else if (CH.on && CH.ps) { chainLook(); setTimeout(chainLook, 60); } if (E.on) earlyT = setTimeout(earlyPass, capped && !E.fast ? (more ? 200 : 1000) : Math.max(2500, dt * 10)); };
   if ((E.arm === 1 || E.arm === 2) && world.composer) { E.on = true; earlyT = setTimeout(earlyPass, 2500);
     if (P.get('holeearly') !== '0' && P.get('ihole') !== '0' && P.get('interiors') !== '0') import('./interiors/hole.js').then((m) => { HM = m; holeTry(); }, (e) => fail('early hole file', e)); }
   // begin(): called just BEFORE main.js's compile-ahead step, so the two batches are one and are built side by side. Links only; waits for nothing.
@@ -121,7 +160,7 @@ export function startWarmup(world, renderer, P) {
     // slow run of frames would only hold the landmark buildings back (they load one texture a frame): everything is drawn at once, as before. ?warmramp=1 forces the ramp.
     if (P.get('warmramp') !== '1' && S.perProg !== undefined && S.perProg < (E.passes ? 8 : 5)) {     /* after early linking the figure is an early pass's own (perWatch above: 3.6 against 22 to 37), taken while game.init() works beside it: under 8 */ S.rampSkipped = +S.perProg.toFixed(1); console.log('[game] warm-up ramp: not needed (the batch took ' + S.rampSkipped + ' ms a program: shader cache warm)'); return false; }
     const gl = r.getContext(), now = () => performance.now(), T0 = now(), R = (S.ramp = { log: [], tex: 0, frames: 0, idle: 0, steps: 0, objs: 0, progs: 0, mObjs: 0, mSteps: 0, maxStep: 0, hid: 0 });
-    const isDrawn = (o) => o.isMesh || o.isLine || o.isPoints || o.isSprite;
+    const isDrawn = (o) => o.isMesh || o.isLine || o.isPoints || o.isSprite; const RW = P.get('rampwait') === '1';
     const unitsOf = (o) => { const out = []; for (const m of [].concat(o.material || [])) { const mp = m && r.properties.has(m) ? r.properties.get(m) : null; if (mp && mp.programs && mp.programs.size) { for (const p of mp.programs.values()) out.push(p); } else if (m) out.push(m); } return out; };
     // phase 1: every drawn thing is held (no camera sees it) and let go batch by batch.
     // HELD (Nov 15, after the first handoff15 undid budget.js's hiding): while a thing waits its turn its .layers is a stand-in that answers every camera
@@ -146,7 +185,11 @@ export function startWarmup(world, renderer, P) {
         const u = unitsOf(o).filter((x) => !ph.seen.has(x)), nu = new Set(u).size; if (k && n + nu > ph.size && ph.i >= ph.must) break;
         for (const x of u) { if (!ph.seen.has(x)) { ph.seen.add(x); if (x.getUniforms) fresh.push(x); } } n += nu; k++; for (const m of [].concat(o.material || [])) if (m) mats.add(m); give(o); ph.i++; }
       // three's first-use questions for these programs are asked now, while the graphics process has nothing queued, so they do not wait behind the draws below
-      for (const p of fresh) { try { p.getUniforms(); } catch (e) {} }
+      // handoff21 (light, Nov 15): ... but never of a program that is still being built: three's questions WAIT for the build, with the page frozen. Since handoff19
+      // the shop-opening copy's street-mirror program is linked right after the wait in finish(), unwaited (20 to 50 s of Direct3D), and it hangs on the same
+      // material as the copy's main program, so unitsOf() handed it to this loop: players on Windows with early linking stood 21, 27 and 51 s between
+      // "ready" and Play (public build 12:36 Nov 15). A program not ready yet is left alone; three asks at its first draw, as it always did. ?rampwait=1 = as before.
+      for (const p of fresh) { try { if (RW || !p.isReady || p.isReady()) p.getUniforms(); else R.unready = (R.unready || 0) + 1; } catch (e) {} }
       // ... and their textures go up now for the same reason (an upload queued behind the draws waits for every pipeline before it)
       for (const m of mats) { for (const key in m) { const t = m[key]; if (t && t.isTexture) tex(t); } if (m.uniforms) for (const key in m.uniforms) { const u = m.uniforms[key], t = u && u.value; if (t && t.isTexture) tex(t); } }
       if (R.log.length < 80) R.log.push([Math.round(now() - T0), ph === main ? 'm' : 's', k, n, R.tex, Math.round(now() - tr)]);
