@@ -180,7 +180,7 @@ export async function install(game) {
   const lastStop = (t) => t.state === 'dwell' && !nextStation(t.u.st, t.T.dir, t.T.key);
   const rideStep = (dt, I, m, use) => {
     if (S.sit) { const R = S.ride, t = R.t, q = S.sit.seat; if (use) standUp(R); else { gunAway(); const [x, y] = tMap(t, q.x, q.z); pos.x = x; pos.y = y; pos.z = t.T.z + t.train.floorY; pl.h = Math.atan2(t.ux * q.face, -t.uy * q.face); pl.speed = 0; hint(lastStop(t) ? 'Stand up: last stop' : 'Stand up'); return; } }
-    else { const q = seatNear(S.ride); if (q && use) { sitDown(S.ride, q); return; } if (q) hint('Sit'); else if (lastStop(S.ride.t)) hint('Last stop: this train goes no further', true); else hint(null); } const R = S.ride, t = R.t, tr = t.train, open = t.state === 'dwell' && t.doors > 0.85;
+    else { const q = seatNear(S.ride); if (q && use) { sitDown(S.ride, q); return; } if (q) hint(lastStop(S.ride.t) ? 'Sit (last stop: this train goes no further)' : 'Sit'); else if (lastStop(S.ride.t)) hint('Last stop: this train goes no further', true); else hint(null); } const R = S.ride, t = R.t, tr = t.train, open = t.state === 'dwell' && t.doors > 0.85;
     if (!open && Math.abs(R.lx) > tr.width / 2 - 0.5) R.lx = Math.sign(R.lx) * (tr.width / 2 - 0.5);      // the doors are closing: he is inside
     if (m > 0.1) { const sp = (I.run ? 3.2 : 1.7) * Math.min(1, m), dx = Math.cos(pl.h) * sp * dt, dy = Math.sin(pl.h) * sp * dt, dlx = -dx * t.uy + dy * t.ux, dlz = dx * t.ux + dy * t.uy;
       for (const [a, b] of [[dlx, dlz], [dlx, 0], [0, dlz]]) { if (!a && !b) continue; const nx = R.lx + a, nz = R.lz + b;
