@@ -24,6 +24,7 @@ import { clamp } from '../geo.js';
 
 class Scare {
   constructor(game, combat) {
+    this.dodgeOld = !!(game.P && game.P.get && game.P.get('crowddodge') === '0');
     this.g = game; this.c = combat; this.on = true; this.t = 0; this.threats = []; this.pending = []; this.afraid = []; this.downs = []; this.seedN = 90210; this.sim = null; this.B = null; this.cower = null; this.duck = null;
     this.gunT = 0; this.carT = 0; this.bodT = 0; this.adoptT = 0; this._shotAt = null; this._t = {}; this._crash = { x: 0, y: 0, t: -9 }; this.listeners = []; this.drivers = null; this.ms = 0;
     this.stats = { wary: 0, alarmed: 0, panic: 0, shots: 0, crashes: 0, pedhits: 0, carScares: 0, bodyLooks: 0, cower: 0, duck: 0, look: 0 };
@@ -215,7 +216,7 @@ class Scare {
     p.talk = null; p.path = null; p.noPlan = null; p.trip = 1e9; p.door = 0;
     if (easy) { try { cs.pace(p, 1.7 + u * 0.45); } catch (e) {} F.v = p.v0; cs.setClip(p, p.walkClip); }      // a brisk walk away, not a run
     else { try { cs.hold(p, null); } catch (e) {} p.walkClip = cs.jog; const k = lv === 0 ? 0.95 + u * 0.2 : lv === 1 || F.far ? 1.02 + u * 0.4 : 1.1 + u * 0.66;      // a hurry ... flat out: no two alike
-      F.v = p.v0 = Math.min(5.5, cs.jog.speed * p.tall * k); p.v = Math.max(p.v, lv >= 2 && !F.far ? 2.1 + rnd() * 1.3 : 1.3 + rnd() * 0.9);      /* off the mark: the crowd's own pick-up is a stroller's */ cs.setClip(p, cs.jog); p.ph = rnd(); }
+      F.v = p.v0 = Math.min(5.5, cs.jog.speed * p.tall * (F.veh && !this.dodgeOld ? Math.min(k, 1.12) : k));      /* lead, Nov 15 (Matt's report 204836-6d34a5): from a car on the sidewalk people ran at up to 1.76 x the jog clip (6.2 m/s seen, the clip sped up to match); a car now gets a run at the clip's own pace or just over (about 3 m/s). Gunfire is unchanged. ?crowddodge=0 = before. */ p.v = Math.max(p.v, lv >= 2 && !F.far ? 2.1 + rnd() * 1.3 : 1.3 + rnd() * 0.9);      /* off the mark: the crowd's own pick-up is a stroller's */ cs.setClip(p, cs.jog); p.ph = rnd(); }
     if (th) this.steer(p, F, th, true);
   }
   // keep going away from it: along the walk one is on; turn round if that walk leads back toward it

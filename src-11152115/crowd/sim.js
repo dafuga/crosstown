@@ -57,7 +57,7 @@ export class CrowdSim {
     this.kids = []; this.adults = []; this.chars.forEach((c, i) => ((c.height || 1.75) < 1.45 ? this.kids : this.adults).push(i)); if (!this.adults.length) this.adults = this.chars.map((c, i) => i);
     this.head = new Int16Array(GN * GN); this.nxt = new Int16Array(4096); this.cells = []; this.gx0 = 0; this.gy0 = 0;
     this.cx = 1e9; this.cy = 1e9; this.fx = 1; this.fy = 0; this.cosCone = 0.5; this.cosSee = 0.5; this.waysNear = [];
-    { const P = opts.P || (game && game.P), on = (k) => !(P && P.get && (P.get(k) === '0' || P.get('crowdfb') === '0')); this.fbCars = on('crowdcars'); this.fbWalls = on('crowdwalls'); this.fbTwins = on('crowdtwins'); this.fbKeep = on('crowdkeep'); }
+    { const P = opts.P || (game && game.P), on = (k) => !(P && P.get && (P.get(k) === '0' || P.get('crowdfb') === '0')); this.fbCars = on('crowdcars'); this.fbWalls = on('crowdwalls'); this.fbTwins = on('crowdtwins'); this.fbKeep = on('crowdkeep'); this.dodgeOld = !!(P && P.get && P.get('crowddodge') === '0'); }
     this.kg = new Map(); this.kv = 1; this.tcars = []; this.slowCars = []; this.slowOwn = []; this.lying = []; this.lyT = 0; this.kn = { wall: 0, slide: 0, round: 0, soft: 0, car: 0, detour: 0, held: 0, turned: 0, body: 0, unstuck: 0 };
     // the collision world changes (an area's street layer lands after ready, a set comes or goes, a fence breaks): the cells are read again
     try { const st = game.statics; if (st && !st.__crowdV) { st.__crowdV = 1; for (const k of ['addSeg', 'addPoly', 'addCircle', 'removeSet']) { const f = st[k]; if (typeof f === 'function') st[k] = function () { st.__crowdV++; return f.apply(st, arguments); }; } } } catch (e) {}
@@ -651,11 +651,13 @@ export class CrowdSim {
   cars(a, dt) {
     const g = this.g;
     for (const v of g.vehicles) {
-      const dx = a.x - v.x, dy = a.y - v.y; if (Math.abs(dx) > 16 || Math.abs(dy) > 16) continue; const sp = Math.hypot(v.vx, v.vy);
+      const dx = a.x - v.x, dy = a.y - v.y; if (Math.abs(dx) > 24 || Math.abs(dy) > 24) continue; const sp = Math.hypot(v.vx, v.vy);
       if (sp > 2.2) { const fx = Math.cos(v.h), fy = Math.sin(v.h), f = dx * fx + dy * fy, s = -dx * fy + dy * fx;
         if (Math.abs(f) < v.def.len / 2 + 0.3 && Math.abs(s) < v.def.wid / 2 + 0.25) { this.leaveGroup(a); if (a.state === 'stand') this.nStand--; if (a.wq) { a.wq.w.wait[a.wq.end][a.wq.n] = 0; a.wq = null; } a.state = 'down'; a.t = 0; a.vx = v.vx * 0.9 - fy * Math.sign(s || 1) * 2; a.vy = v.vy * 0.9 + fx * Math.sign(s || 1) * 2; a.v = 0; this.hits++; try { g.onPedHit(a, v); } catch (e) {} return true; } }
-      if (sp > 3 && a.state !== 'flee') { const dd = Math.hypot(dx, dy); if (dd > 14) continue; const f = (dx * v.vx + dy * v.vy) / sp, side = Math.abs(dx * v.vy - dy * v.vx) / sp;
-        if (f > -1 && f < 5 + sp * 1.1 && side < v.def.wid / 2 + 0.75) { const sg = (dx * -v.vy + dy * v.vx) > 0 ? 1 : -1; this.leaveGroup(a); if (a.state === 'stand') this.nStand--; if (a.wq) { a.wq.w.wait[a.wq.end][a.wq.n] = 0; a.wq = null; } a.state = 'flee'; a.t = 0; a.vx = (-v.vy / sp) * sg; a.vy = (v.vx / sp) * sg; this.setClip(a, this.jog); } }
+      if (sp > 3 && a.state === 'flee' && a.dg && !a.dg.urg) { const f = (dx * v.vx + dy * v.vy) / sp, sd = (dx * -v.vy + dy * v.vx) / sp;      /* lead: the car is nearly on them and they are still in its path: the last-moment leap, at the old full pace, straight out to the nearer side */
+        if (f > -1 && f < 2.5 + sp * 0.6 && Math.abs(sd) < v.def.wid / 2 + 0.6) { const sg = sd > 0 ? 1 : -1, D = a.dg; D.urg = true; D.top = 4.2; if (a.t < D.d) { D.d = a.t; } a.vx = (-v.vy / sp) * sg; a.vy = (v.vx / sp) * sg; } }
+      if (sp > 3 && a.state !== 'flee') { const dd = Math.hypot(dx, dy); if (dd > (this.dodgeOld ? 14 : 22)) continue;      /* lead: they notice the car about half a second sooner, which pays for the reaction time */ const f = (dx * v.vx + dy * v.vy) / sp, side = Math.abs(dx * v.vy - dy * v.vx) / sp;
+        if (f > -1 && f < 5 + sp * (this.dodgeOld ? 1.1 : 1.6) && side < v.def.wid / 2 + 0.75) { const sg = (dx * -v.vy + dy * v.vx) > 0 ? 1 : -1; this.leaveGroup(a); if (a.state === 'stand') this.nStand--; if (a.wq) { a.wq.w.wait[a.wq.end][a.wq.n] = 0; a.wq = null; } a.v0 = a.v || 0; a.state = 'flee'; a.t = 0; a.vx = (-v.vy / sp) * sg; a.vy = (v.vx / sp) * sg; if (this.dodgeOld) { a.dg = null; this.setClip(a, this.jog); } else a.dg = { d: 0.16 + ((a.id * 37) % 100) * 0.0026, top: Math.min(clamp(1.9 + sp * 0.1, 2.1, 3.3), this.jog.speed * a.tall * 1.1), on: false };      /* lead, Nov 15 (Matt's report 204836-6d34a5, 'people run away from a coming car unnaturally quickly'): a person in a car's path used to snap round and sprint at up to 4.2 m/s in the same frame. Now: a reaction time of 0.16-0.42 s (by who they are) in which they only slow, then a quick step or a short run that builds up over about half a second to a pace set by the car's speed (2.1 m/s for a slow car, 3.3 at most and never more than 1.1 x the jog clip's own pace, so the legs are not sped up), turning at a human rate. ?crowddodge=0 = before. A run from gunfire is unchanged. */ } }
     }
     return false;
   }
@@ -689,7 +691,7 @@ export class CrowdSim {
   rise(a, vx, vy) {
     if (!a || a.gone || a.state !== 'sit') return false; const q = a.seatOf, mate = a.lead || (a.fol && a.fol[0]);
     this.leaveGroup(a); if (q) { if (q.who === a) q.who = mate && !mate.gone && mate.state === 'sit' ? mate : null; a.z = q.z; a.x += Math.cos(a.h) * 0.35; a.y += Math.sin(a.h) * 0.35; } a.seatOf = null; a.t = 0; a.standT = 0;
-    if (vx !== undefined) { const L = Math.hypot(vx, vy) || 1; a.state = 'flee'; a.vx = vx / L; a.vy = vy / L; this.setClip(a, this.jog); } else { a.state = 'walk'; this.rejoin(a); }
+    if (vx !== undefined) { const L = Math.hypot(vx, vy) || 1; a.dg = null; a.state = 'flee'; a.vx = vx / L; a.vy = vy / L; this.setClip(a, this.jog); } else { a.state = 'walk'; this.rejoin(a); }
     return true;
   }
   // nowhere to walk to from here without a wall between: stay, standing, until the camera cannot see (populate then takes them away)
@@ -764,7 +766,9 @@ export class CrowdSim {
           if (a.t > a.standT && !a.lead && a.w) { a.state = 'walk'; this.nStand--; a.path = null; bandAt(a.w, clamp(a.s, 0, a.w.len), B); a.lt = clamp((B.lo + B.hi) / 2 + (this.rand() - 0.5), B.lo, B.hi); a.la = 0; if (a.fol) for (const f of a.fol) { f.state = 'walk'; this.nStand--; f.talk = null; } a.talk = null; }
           break; }
         case 'flee': {
-          const sp = Math.min(4.2, this.jog.speed * a.tall * 1.25); a.v = sp;
+          let sp = Math.min(4.2, this.jog.speed * a.tall * 1.25); const D = a.dg;
+          if (D) { if (a.t < D.d) sp = (a.v0 || 0) * 0.5 * (1 - a.t / D.d); else { if (!D.on) { D.on = true; a.v = D.top; this.setClip(a, D.top < 2.6 ? this.walks.reduce((x, y) => (x.speed > y.speed ? x : y)) : this.jog); } sp = Math.min(sp, D.top, 0.8 + (a.t - D.d) * 6); } }
+          a.v = sp;
           if (!this.fbWalls) { g.statics.resolve(a.x + a.vx * sp * dt, a.y + a.vy * sp * dt, 0.3, _o, true); a.x = _o.x; a.y = _o.y; }
           else {
             // Public feedback ("when I shoot at people sometimes they walk through buildings"): a run used to keep ONE direction for its whole
@@ -778,7 +782,7 @@ export class CrowdSim {
             a.x = _o.x; a.y = _o.y;
             a.fq = (a.fq || 0) + dt; if (a.fq > 0.7 || a.fpx === undefined) { if (a.fpx !== undefined && a.fq < 2 && Math.hypot(a.x - a.fpx, a.y - a.fpy) < 1.1 && a.wnx !== undefined) { const u = (a.id & 1 ? 0.6 : -0.6), L = Math.hypot(a.wnx - a.wny * u, a.wny + a.wnx * u) || 1; a.vx = (a.wnx - a.wny * u) / L; a.vy = (a.wny + a.wnx * u) / L; } a.fq = 0; a.fpx = a.x; a.fpy = a.y; }
           }
-          a.h += clamp(wrapPi(Math.atan2(a.vy, a.vx) - a.h), -9 * dt, 9 * dt);
+          { const tr = !D ? 9 : a.t < D.d ? 0 : 5.5; a.h += clamp(wrapPi(Math.atan2(a.vy, a.vx) - a.h), -tr * dt, tr * dt); }
           a.onRoad = !g.statics.onSidewalk(a.x, a.y); a.z += ((a.onRoad ? 0 : 0.15) - a.z) * Math.min(1, dt * 12);
           if (a.t > 1.6) { let threat = false; for (const v of g.vehicles) if (Math.hypot(v.vx, v.vy) > 3 && Math.hypot(a.x - v.x, a.y - v.y) < 9) threat = true; if (!threat) this.rejoin(a); }
           break; }
