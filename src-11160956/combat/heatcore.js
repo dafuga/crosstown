@@ -171,10 +171,13 @@ export class Heat {
       const zs = m.zWalk ?? 0.15, tz = pz + dz; if (ez <= zs + 0.05) return false; if (tz >= zs) return true; const t = (zs - ez) / (tz - ez), qx = ex + (pl.x - ex) * t, qy = ey + (pl.y - ey) * t;
       const ca = f.ca ?? Math.cos(f.a), sa = f.sa ?? Math.sin(f.a), u = (qx - f.x) * ca + (qy - f.y) * sa, v = -(qx - f.x) * sa + (qy - f.y) * ca, d = (f.z0 > f.z1 ? 1 : -1) * u + f.l / 2;
       return d > 0.05 && d < (m.lOpen ?? 4.2) - 0.05 && Math.abs(v) < f.w / 2 - 0.05; } catch (e) { return false; } }
+  /* gameplay/heli, Nov 15: a WANTED player flying the helicopter (off its skids): the police against him are in heatheli.js, fetched the first time this is true. null = everything as before (always, with ?heliheat=0) */
+  airOn() { const hl = this.g.heli; if (!hl || !hl.piloted || !hl.f || hl.f.onGround || !hl.f.pos || !this.level || this.g.P.get('heliheat') === '0') return null; if (this.HA) return this.HA; if (!this._haP) this._haP = import('./heatheli.js').then((m) => { this.HA = m.addHeliHeat(this, { WIDE, D2R }); }).catch((e) => this.oops('heatheli', e)); return null; }
   sight() {
-    const g = this.g, pl = g.player; let seen = false; const hl = g.heli, up = !!(hl && hl.piloted && hl.f && hl.f.pos && hl.f.pos.y > 22) /* in the air above the roofs nobody on the street has him */;
-    for (const k of this.cops) { if (k.hp <= 0) continue; const d = Math.hypot(k.x - pl.x, k.y - pl.y); k.dist = d; k.see = !up && d < this.eyeR(80) * (k.saw ? 1.2 : 1) && this.los(k.x, k.y, pl.x, pl.y) && (this.und(k) || this.stairLine(k.x, k.y, (k.z || 0) + 0.55 + 1.05 * (k.up ?? 1)) !== false); if (k.see) { seen = true; k.onT += 0.1; if (!k.saw) k.thinkT = Math.min(k.thinkT, 0.12); } else k.onT = 0; k.saw = k.see; }
-    for (const car of this.cars) if (!up && car.drive && !car.away && !car.wreck && Math.hypot(car.x - pl.x, car.y - pl.y) < (pl.vehicle && !this.swapK ? Math.max(62, this.eyeR(80)) : this.eyeR(60)) && this.los(car.x, car.y, pl.x, pl.y) && this.stairLine(car.x, car.y, 1.25) !== false) seen = true;
+    const g = this.g, pl = g.player; let seen = false; const hl = g.heli, up = !!(hl && hl.piloted && hl.f && hl.f.pos && hl.f.pos.y > 22) /* in the air above the roofs nobody on the street has him */, A = this.airOn();
+    for (const k of this.cops) { if (k.hp <= 0) continue; const d = Math.hypot(k.x - pl.x, k.y - pl.y); k.dist = d; k.see = A ? A.sees(k, d) : !up && d < this.eyeR(80) * (k.saw ? 1.2 : 1) && this.los(k.x, k.y, pl.x, pl.y) && (this.und(k) || this.stairLine(k.x, k.y, (k.z || 0) + 0.55 + 1.05 * (k.up ?? 1)) !== false); if (k.see) { seen = true; k.onT += 0.1; if (!k.saw) k.thinkT = Math.min(k.thinkT, 0.12); } else k.onT = 0; k.saw = k.see; }
+    for (const car of this.cars) if (A ? A.carSees(car) : !up && car.drive && !car.away && !car.wreck && Math.hypot(car.x - pl.x, car.y - pl.y) < (pl.vehicle && !this.swapK ? Math.max(62, this.eyeR(80)) : this.eyeR(60)) && this.los(car.x, car.y, pl.x, pl.y) && this.stairLine(car.x, car.y, 1.25) !== false) seen = true;
+    if (A && A.eye()) seen = true;
     if (this.level === 0) seen = false;
     if (seen) { if (!this.seen && this.unseenT > 4) this.shout(this.pick(['There! Suspect in sight!', 'Got eyes on him!', 'Contact! He is right there!']), 1); this.lkp.x = pl.x; this.lkp.y = pl.y; this.lkp.h = pl.vehicle ? pl.vehicle.h : pl.h; this.lkp.t = this.t; this.lkp.vx = pl.vehicle ? pl.vehicle.vx : 0; this.lkp.vy = pl.vehicle ? pl.vehicle.vy : 0; this.unseenT = 0; this.coolT = pl.vehicle ? Math.max(0, this.coolT - 0.4) : 0; this.onScene = false; this.swapK = false; this.seenVeh = pl.vehicle || null; this.trailS = this.trailN || 0; this.est = null;
       /* driving on the sidewalk at speed in front of them */ const pv = pl.vehicle; if (pv && this.t - (this.reckT || -9) > 6 && Math.hypot(pv.vx, pv.vy) > 9 && g.statics.onSidewalk(pv.x, pv.y)) { this.reckT = this.t; this.crime('reckless', pv.x, pv.y, 2); } }
@@ -188,6 +191,7 @@ export class Heat {
   step(dt) {
     const g = this.g, pl = g.player, c = this.c; this.t += dt;
     if (this.dead) { this.stepDead(dt); }
+    if (this.HA) this.HA.step(dt);
     /* ?heatqa=<step>: for looking at it: that much heat at once, a pair a few metres ahead, a car (and at 4+ a heavy unit) from the next block */
     if (!this.qa && g.P.has('heatqa') && this.t > 0.4) { this.qa = true; const L = clamp(+g.P.get('heatqa') || 2, 1, 5); this.pts = TH[L]; this.setLevel(); this.lkp.x = pl.x; this.lkp.y = pl.y; this.lkp.h = pl.h; this.lastCrimeT = this.t; this.firedSeenT = this.t;
       for (let i = 0; i < 2 && g.P.get('heatqp') !== '0'; i++) { const a = pl.h + (i ? -0.16 : 0.13), d = +(g.P.get('heatqd') || 9) + i * 3, k = this.addCop(pl.x + Math.cos(a) * d, pl.y + Math.sin(a) * d, i && L >= 3 ? 'shotgun' : 'pistol', null, i); k.mode = 'hold'; k.post = { x: k.x, y: k.y }; }
@@ -216,7 +220,7 @@ export class Heat {
       if (!this.seen && pl.vehicle && !this.swapK && this.unseenT > 9 && g.P.get('heatsearch') !== '0') { this.estT = (this.estT || 0) - dt; if (this.estT <= 0 || !this.est) { this.estT = this.level < 3 ? 8 : 4; const r = Math.min(SRCH[this.level], 40 + (this.unseenT - 9) * 4), a = this.rnd() * 6.283, B = g.bounds; this.est = { x: clamp(pl.x + Math.cos(a) * r, (B.cx || 0) - B.x + 30, (B.cx || 0) + B.x - 30), y: clamp(pl.y + Math.sin(a) * r, (B.cy || 0) - B.y + 30, (B.cy || 0) + B.y - 30), h: 0 }; } } else this.est = null;
       if (!this.seen) { this.unseenT += dt; const out = Math.hypot(pl.x - this.lkp.x, pl.y - this.lkp.y) > AREA[this.level];
         if (!this.onScene && this.cops.some((k) => k.hp > 0 && Math.hypot(k.x - this.lkp.x, k.y - this.lkp.y) < 14)) this.onScene = true;
-        if (this.unseenT > 2 && this.t - this.lastCrimeT > 5) this.coolT += dt * (out || (pl.vehicle && !this.cars.some((q) => q.drive && !q.away && !q.left && !q.wreck && Math.hypot(q.x - pl.x, q.y - pl.y) < 150)) ? (pl.vehicle && !this.swapK ? [0, 1, 1, 1.6, 1.3, 1.2] : [0, 2, 2, 1.6, 1.3, 1.2])[this.level] : this.onScene ? 1 : this.unseenT > 10 && !(Math.hypot(pl.x - this.lkp.x, pl.y - this.lkp.y) < 12 && this.t - this.lastCrimeT < 45 && (this.cops.some((k) => k.hp > 0 && k.mode !== 'leave') || this.cars.some((v) => v.drive && !v.away && !v.left))) ? 0.6 : 0);
+        if (this.unseenT > 2 && this.t - this.lastCrimeT > 5) this.coolT += dt * (this.airOn() ? 0.7 : 1) * (out || (pl.vehicle && !this.cars.some((q) => q.drive && !q.away && !q.left && !q.wreck && Math.hypot(q.x - pl.x, q.y - pl.y) < 150)) ? (pl.vehicle && !this.swapK ? [0, 1, 1, 1.6, 1.3, 1.2] : [0, 2, 2, 1.6, 1.3, 1.2])[this.level] : this.onScene ? 1 : this.unseenT > 10 && !(Math.hypot(pl.x - this.lkp.x, pl.y - this.lkp.y) < 12 && this.t - this.lastCrimeT < 45 && (this.cops.some((k) => k.hp > 0 && k.mode !== 'leave') || this.cars.some((v) => v.drive && !v.away && !v.left))) ? 0.6 : 0);
         if (this.coolT >= COOL[this.level]) { this.coolT = 0; this.pts = TH[this.level - 1]; this.setLevel(); this.say('cooled to ' + this.level); if (this.level === 0) { this.stats.escapes++; this.note = { title: 'IN THE CLEAR', sub: 'They lost you', t: 0 }; this.clear('escaped'); } } }
       this.dispatch(dt);
     }
@@ -515,6 +519,7 @@ export class Heat {
   }
   canFire(k) {
     if (this.t < (this.holdFire || 0)) return false;
+    { const A = this.airOn(); if (A) return A.canFire(k); }
     const c = this.c, L = this.level, pl = this.g.player; if (L < 1) return false;
     /* at the first two steps nobody fires on a man who has done no violence lately and is in a car or has empty hands: they want him out of the car, or in cuffs */ if (L <= 2 && (pl.vehicle || c.slot === 'unarmed') && this.t - (this.violT ?? -99) > (pl.vehicle ? 25 : 5)) return false;
     if (L >= 2) return true;
@@ -657,6 +662,7 @@ export class Heat {
     /* w7: a subway rider on the line down the stair to a man below (by height too: the line drops with the stair) */ { const uz = this.plZ(); if (uz < -0.6 && this.c.riders) { const oz = (k.z || 0) + 1.4; try { for (const r of this.c.riders()) { const px = r.x - ox, py = r.y - oy, f = px * ux + py * uy; if (f < 0.7 || f > d + 6 || Math.abs(px * uy - py * ux) > 0.5 + 0.055 * Math.min(f, d)) continue; const lz = oz + (uz + 1.2 - oz) * (f / d); if (lz > r.z - 0.5 && lz < r.z + r.hgt + 0.5) return 1; } } catch (e) {} } }
     return 0; }
   copShoot(k) {
+    { const A = this.airOn(); if (A) return A.copShoot(k); }
     const g = this.g, c = this.c, pl = g.player, G = k.G, W = k.W, mz = this.muzzleOf(k, new THREE.Vector3()), ox = mz.x, oy = -mz.z, oz = mz.y;
     const uz = this.plZ(), sub = uz < -0.6 && !this.und(k), pz = uz < -0.6 ? uz : (g.statics.onSidewalk(pl.x, pl.y) ? 0.15 : 0), inCar = !!pl.vehicle, ex = pl.x - ox, ey = pl.y - oy; let tz = pz + (inCar ? 0.95 : 1.2), ez = tz - oz, L = Math.hypot(ex, ey, ez) || 1;
     /* a man below the street: only down through the open top of the stair he is on; anything else is the street itself */ if (sub && this.stairLine(ox, oy, oz) !== true) { k.burst = 0; k.fireCd = this.rr(0.5, 1.0); k.blockedT = this.t; this.stats.blocked++; this.stats.subHeld = (this.stats.subHeld || 0) + 1; return false; }
@@ -696,6 +702,7 @@ export class Heat {
     fx.spawn({ add: true, x: from.x + _v4.x * st, y: from.y + _v4.y * st, z: from.z + _v4.z * st, vx: _v4.x * sp, vy: _v4.y * sp, vz: _v4.z * sp, life: Math.max(0.03, (L - st - len) / sp), s0: 0.034, r: 6.5, g: 3.6, b: 1.2, a: 0.7, frame: 8, len, fade: 0 });
   }
   castCops(H, ox, oy, oz, dx, dy, dz, tmin) {
+    if (this.HA) this.HA.cast(H, ox, oy, oz, dx, dy, dz, tmin);
     const A = dx * dx + dy * dy; if (A < 1e-9) return; if (oz < -0.6 && this.plZ() < -0.6 && !this.c.slabOpen) return;     /* fired from under the street: the slab is between (with the guns' own slab test in combat.js, mksubgun.py, the ray has already been stopped there, or let through a stair's open top, and this is not needed) */
     for (const k of this.cops) { if (k.hp <= 0) continue; const rx = ox - k.x, ry = oy - k.y, B = rx * dx + ry * dy; if (-B / A < -1 || -B / A > H.t + 1) continue; const r = 0.24, Cc = rx * rx + ry * ry - r * r, disc = B * B - A * Cc; if (disc < 0) continue;
       const t = (-B - Math.sqrt(disc)) / A; if (t < tmin || t >= H.t) continue; const hgt = 1.0 + 0.76 * k.up, z = oz + dz * t - k.z; if (z < 0 || z > hgt) continue;
@@ -1066,6 +1073,7 @@ float heatFold(vec3 p, float lg, float arm) {
   }
   anim(k, name, rate) { const v = k.vis; if (!v.mixer) return; if (!v.acts[name]) name = v.acts.idle ? 'idle' : null; if (!name) return; if (v.cur !== name) { if (v.cur && v.acts[v.cur]) v.acts[v.cur].fadeOut(0.18); v.acts[name].reset().fadeIn(0.18).play(); v.cur = name; } v.mixer.timeScale = rate; }
   preSync(dt) {
+    if (this.HA && REAL) this.HA.draw(dt);
     if (!REAL || this.idle) return; if (this._Cap === undefined) { this._Cap = null; import('./dress.js').then((m) => { this._Cap = m.Cap; }).catch(() => {}); }
     if (this._fig === undefined) { this._fig = null; /* the scanned officer figure did no better than the kit's people in a like-for-like blind test (rounds 21-24) and carries a 'needs a look before public use' tag: it is only loaded when asked for with ?heatfig=scan; nothing is fetched otherwise */ this._figDone = true; }
     /* blood on the ground: the people code's pool is a lit, glossy 0.13 red; in full sun under the film pass it came out 'magenta paint-splat', 'pink blot' (rounds 13, 14). A third of that, less gloss, almost no sky in it (?heatblood=0 leaves it) */

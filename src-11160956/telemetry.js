@@ -26,6 +26,16 @@
 //                message per cause, the place in `at` ("x,y street, lanes, one-way"), what then happened in `why` (freed by the game, drove
 //                off, got out, still there). It carries the replay log and the canvas picture like any error. The only report with a position
 //                outside the log.
+// Nov 15, third round (who stays): every summary also carries ONE short plain string in the field `at` (the servers already keep it; summaries
+//   did not use it): "P1 e=10,2,1 a=30,58,24,3,1,180 b=90,60,33,5,2,140 in=car md=12,40,0,0,3 lw=1 cb=3 ch=42 bk=1".
+//   e = the first 10 s of play: seconds in it so far, frames over 50 ms, over 100 ms (so that a player who left after 12 s can be set beside one who stayed);
+//   a = the FIRST 30 s of play on their own: seconds in it so far, median fps, 1% low fps, frames over 50 ms, over 100 ms, the longest frame (ms);
+//   b = the same for seconds 30-120 of play, once reached; in = what he was in at the last second of play (foot, car, heli, sub), pz=1 when the
+//   game was paused (menu, map) at the last second the tab was seen; md = seconds so far on foot, in a car, in the helicopter, in the subway,
+//   paused; lw = src/loadwait.js was there; cb = its call-back title was shown (1 "almost ready", 2 "ready to play", 3 both); ch = seconds from
+//   the call-back's start to the tab coming back (or to this summary); bk = 1 the tab came back after it. pg = src/playgate.js's own record when
+//   it is there (absent = nothing sent): on (1/0), seconds on the page's clock when PLAY lit, what lit it (rule, early, return, cap), seconds when
+//   Play was pressed; x = not yet. Numbers and nine fixed words only.
 // Every report carries: build id, graphics card string, browser string, and a random id made new on every page load and kept only in
 // this page's memory (it joins an error to its summary; it is never stored in the browser).
 // PRIVACY: nothing that identifies a player. No cookie (credentials are left out), no referrer, no page address or query string, no
@@ -203,11 +213,31 @@ const loadPack = (l) => 'L1' + [['fb', l.fb], ['wo', l.world], ['in', l.init], [
 // ---- the summary: frame times while really playing (not loading, not the start screen, not paused, not hidden), from feedback.js's histogram
 const B = [8, 12, 17, 20, 25, 33, 50, 67, 100, 200, 500], ph = new Array(12).fill(0), prev = new Array(12).fill(0), fpsS = [];
 const PH = Q.get('tmphase') !== '0', phased = {}; let playSecs = 0, wasPlay = false, summaries = 0, lastSumAt = -1e9, lastSumPlay = -1, did3 = false, did15 = false, gpuDev = null;
+// who stays (third round): the first 30 s of play and seconds 30-120 as their own windows, what he is in, and loadwait.js's call-back. All of it
+// in the once-a-second timer below (playTick: a scan of feedback.js's at most 60 hitches and three additions); nothing per frame.
+const MODES = ['foot', 'car', 'heli', 'sub', 'menu'], md = [0, 0, 0, 0, 0], mx = [0, 0]; let h10 = null, h30 = null, h120 = null, hT = 0, mode = 0, inMenu = 0;
+const modeNow = (g) => (g.heli && g.heli.piloted ? 2 : g.subway && g.subway.own ? 3 : g.player && g.player.vehicle ? 1 : 0);
+function playTick(g) {     // once per counted second of play, after playSecs++
+  if (playSecs <= 120) { const k = playSecs <= 30 ? 0 : 1; for (const e of rec.hitches || []) if (e[0] > hT && e[1] > mx[k]) mx[k] = e[1]; if (playSecs === 10) h10 = ph.slice(); else if (playSecs === 30) h30 = ph.slice(); else if (playSecs === 120) h120 = ph.slice(); }
+  inMenu = 0; try { mode = modeNow(g); } catch (e) {} md[mode]++;
+}
+export function win(h, f, m) {     // one window: [seconds, median fps, 1% low fps, frames over 50 ms, over 100 ms, longest frame ms] or null
+  const n = h.reduce((a, b) => a + b, 0); if (!n || !f.length) return null; let c = 0, p = 11, top = 11; for (let i = 0; i < 12; i++) { c += h[i]; if (c >= n * 0.99) { p = i; break; } } while (top > 6 && !h[top]) top--;
+  f = f.slice().sort((a, b) => a - b); return [f.length, f[f.length >> 1], Math.round(1000 / (p < 11 ? B[p] : 1000)), h[7] + h[8] + h[9] + h[10] + h[11], h[9] + h[10] + h[11], Math.round(Math.max(m, top > 6 ? B[top - 1] : 0))];     // the longest frame is at least its histogram bucket's floor (feedback.js keeps only its 12 worst hitches when it has seen 60)
+}
+function playPack() {
+  const a = win(h30 || ph, fpsS.slice(0, 30), mx[0]), b = h30 ? win((h120 || ph).map((x, i) => x - h30[i]), fpsS.slice(30, 120), mx[1]) : null, lw = window.__loadwait, t = performance.now() / 1000, e = h10 || ph;
+  let s = 'P1' + (a ? ' e=' + [Math.min(10, playSecs), e[7] + e[8] + e[9] + e[10] + e[11], e[9] + e[10] + e[11]] + ' a=' + a : '') + (b ? ' b=' + b : '') + (playSecs ? ' in=' + MODES[mode] : '') + (inMenu ? ' pz=1' : '') + (playSecs || md[4] ? ' md=' + md : '') + ' lw=' + (lw ? 1 : 0);
+  if (lw && lw.callAt > 0) s += ' cb=' + ((lw.kinds | 0) & 3) + ' ch=' + Math.max(0, Math.min(99999, Math.round((lw.backAt > 0 ? lw.backAt : t) - lw.callAt))) + ' bk=' + (lw.backAt > 0 ? 1 : 0);
+  const pg = window.__playgate; if (pg && typeof pg === 'object') s += ' pg=' + [pg.on ? 1 : 0, pgn(pg.litAt), /^(rule|early|return|cap)$/.test(pg.litBy) ? pg.litBy : 'x', pgn(pg.pressedAt)];     /* the playgate helper's own record, when it is there */
+  return s;
+}
+const pgn = (x) => (typeof x === 'number' && x >= 0 && x < 1e5 ? Math.round(x * 10) / 10 : 'x');
 function summary(why) {
-  if (OFF || summaries >= MAX_SUMMARIES) return; summaries++; sumN++; lastSumAt = performance.now(); lastSumPlay = playSecs; let ld = null; try { ld = loadInfo(); } catch (e) {}
+  if (OFF || summaries >= MAX_SUMMARIES) return; summaries++; sumN++; lastSumAt = performance.now(); lastSumPlay = playSecs; let ld = null, pp = null; try { ld = loadInfo(); } catch (e) {} try { pp = playPack(); } catch (e) {}
   const n = ph.reduce((a, b) => a + b, 0), at = (q) => { let c = 0; for (let i = 0; i < 12; i++) { c += ph[i]; if (c >= n * q) return i < 11 ? B[i] : 1000; } return null; };
   const f = fpsS.slice().sort((a, b) => a - b), m = rec.marks || {}, p99 = n ? at(0.99) : null, L = window.__load;
-  send(Object.assign(head('summary'), { why, reason: ld ? loadPack(ld) : null, load: ld, upSecs: sec(), readySecs: window.__readyAt || null, warmSecs: m.warm || null, playAtSecs: m.play || null, playSecs,
+  send(Object.assign(head('summary'), { why, reason: ld ? loadPack(ld) : null, at: pp, load: ld, upSecs: sec(), readySecs: window.__readyAt || null, warmSecs: m.warm || null, playAtSecs: m.play || null, playSecs,
     fpsMed: f.length ? f[f.length >> 1] : null, fpsLow1: p99 ? Math.round(1000 / p99) : null, ftMedMs: n ? at(0.5) : null, ft99Ms: p99, frames: n, bucketsMs: B, hist: ph.slice(),
     hitches50: ph[7] + ph[8] + ph[9] + ph[10] + ph[11], hitches100: ph[9] + ph[10] + ph[11], longTasks: (rec.longs || []).length,
     tier: tier(), screen: [screen.width, screen.height, +(+devicePixelRatio).toFixed(2)], picture: picture(), cores: navigator.hardwareConcurrency || null, memGB: navigator.deviceMemory || null,
@@ -243,7 +273,7 @@ function stuckTick() {
 }
 
 function start() {
-  window.__telemetry = { sid, on: !OFF, to: TO, scrub, summary, pack, snap, bytes: () => lastBytes, loadInfo, loadPack, stuck: SK };
+  window.__telemetry = { sid, on: !OFF, to: TO, scrub, summary, pack, snap, bytes: () => lastBytes, loadInfo, loadPack, playPack, stuck: SK };
   if (OFF) return;
   try { post('build.txt', { cache: 'no-store' }).then((r) => (r.ok ? r.text() : '')).then((x) => { buildTxt = String(x || '').trim().slice(0, 40); }).catch(() => {}); } catch (e) {}
   // a load that follows a page which never said goodbye: the tab was killed (memory) or crashed. feedback.js keeps the tab's sign of life.
@@ -268,7 +298,9 @@ function start() {
   let loadErr = false;
   setInterval(() => {
     const g = window.game, h = rec.hist, playing = !!(g && window.__ready && !g.paused && !window.__startScreen && !window.__warming && !document.hidden && !lost);
-    if (playing && wasPlay) { for (let i = 0; i < 12; i++) ph[i] += h[i] - prev[i]; playSecs++; if (fpsS.length < 7200) fpsS.push(Math.round(g.fps || 0)); }
+    if (playing && wasPlay) { for (let i = 0; i < 12; i++) ph[i] += h[i] - prev[i]; playSecs++; if (fpsS.length < 7200) fpsS.push(Math.round(g.fps || 0)); playTick(g); }
+    else if (g && window.__ready && g.paused && !window.__startScreen && !window.__warming && !document.hidden && !lost) { md[4]++; inMenu = 1; }     /* paused with the tab in view: the menu or the map */
+    hT = (performance.now() - rec.t0) / 1000;
     for (let i = 0; i < 12; i++) prev[i] = h[i]; wasPlay = playing;
     if (!did3 && playSecs >= FIRST_SUMMARY) { did3 = true; summary('played' + FIRST_SUMMARY); } else if (!did15 && playSecs >= SECOND_SUMMARY) { did15 = true; summary('played' + SECOND_SUMMARY); }
     if (!OFF && PH) { const m = rec.marks || {}; for (const k of ['init', 'ready', 'warm']) if (m[k] && !phased[k]) { phased[k] = 1; const a = lastSumAt, b = lastSumPlay; summary('at-' + k); lastSumAt = a; lastSumPlay = b; break; } }     /* light handoff16: one summary as the load passes "game set up", "ready" and "Play lit", so a load that dies in between is seen without the tab having to say goodbye; they do not count against the goodbye summaries' own spacing; ?tmphase=0 off */

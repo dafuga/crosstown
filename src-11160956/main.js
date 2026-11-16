@@ -40,7 +40,7 @@ if (/[?&]replay=/.test(location.search)) import('./replay.js').catch((e) => cons
     if (binOn && typeof u === 'string' && BINRE.test(u) && !/^(data|blob):/.test(u)) { u = u.replace(BINRE, '.$1.bin$2'); url = u; }
     if (!(o && o.method && o.method !== 'GET') && !/^(data|blob):/.test(url)) { const k = pfKey(u), p = PF.get(k); pfSeen.add(k); if (p) { PF.delete(k); if (pfW) pfW.postMessage({ want: k }); try { const e = await p; L.pf.used++; if (pfW) pfW.postMessage({ used: e.size }); return new Response(e.blob, { status: 200, headers: e.type ? { 'content-type': e.type } : {} }); } catch (e) { /* the prefetch failed: ask again the plain way */ } } }
     if ((o && o.method && o.method !== 'GET') || /^(data|blob):/.test(url) || /api\/|build\.txt|loadtotal/.test(url) || window.__ready) return plain0(u, o);
-    let r; try { r = await plain0(u, o); } catch (e) { L.failed++; throw e; } if (!r.ok) { if (!/\.gz(\.p\d+(\.bin)?)?$|people\.json/.test(url)) L.failed++; return r; } if (!r.body) return r; L.files++; L.now = what(url);
+    let r; try { r = await LR.rfetch(plain0, u, o); } catch (e) { L.failed++; throw e; } if (!r.ok) { if (!/\.gz(\.p\d+(\.bin)?)?$|people\.json/.test(url)) L.failed++; return r; } if (!r.body) return r; L.files++; L.now = what(url);
     const rd = r.body.getReader(); return new Response(new ReadableStream({ async pull(c) { try { const { done, value } = await rd.read(); if (done) { c.close(); return; } L.done += value.byteLength; L.last = performance.now(); c.enqueue(value); } catch (e) { L.failed++; c.error(e); } }, cancel(why) { return rd.cancel(why); } }), { status: r.status, statusText: r.statusText, headers: r.headers }); };
   const ui = setInterval(() => { const bar = document.getElementById('loadbar'), txt = document.getElementById('loadtxt'); if (!bar) { if (window.__ready && !window.__warming) clearInterval(ui); return; }
     if (window.__ready && !window.__warming) { bar.style.width = '100%'; txt.textContent = 'Ready'; document.getElementById('loadwrap').style.opacity = 0; clearInterval(ui); return; }
@@ -50,11 +50,13 @@ if (/[?&]replay=/.test(location.search)) import('./replay.js').catch((e) => cons
     bar.style.width = (building ? 99 : Math.max(2, pct)) + '%'; txt.textContent = building ? '99% · ' + mb(L.done) + ' MB in · building the city on your graphics card (' + Math.round(secs) + ' s)' : pct + '% · ' + mb(L.done) + ' of ' + mb(tot) + ' MB · loading ' + (L.now || 'the city') + (L.failed ? ' · ' + L.failed + ' failed' : ''); }, 150); }
 import * as THREE from 'three';
 import { World } from './world.js';
+import * as LR from './loadretry.js';     // progress lane, Nov 15: a file that failed to download is asked for again, and a load that cannot start says so with a Try again button (src/loadretry.js; ?loadretry=0 off)
 import { memfree } from './memfree.js';     // audit lane, Nov 11: frees the page's copies of vertex arrays and texture data after upload (?memfree=0 off)
 
 const P = new URLSearchParams(location.search);
 if (window.__CFG && window.__CFG.heatedge === 0 && !P.has('heatedge')) P.set('heatedge', '0');
-if (window.__CFG && window.__CFG.emsvol === 0 && !P.has('emsvol')) P.set('emsvol', '0');     // lead, Nov 15, CHIEF 12:22: the public build keeps the ambulance and fire engine sirens silent until Matt has heard them (PUBLIC_EMSVOL=0 -> __CFG.emsvol = 0; ?emsvol=1 plays them there)     // lead, Nov 15: the public build holds gameplay p2 + p3 (police at the map's edge) off until shown on its map (PUBLIC_HEATEDGE=0 -> __CFG.heatedge = 0; ?heatedge=1 shows it there)
+if (window.__CFG && window.__CFG.emsvol === 0 && !P.has('emsvol')) P.set('emsvol', '0');
+if (window.__CFG && window.__CFG.public) { if (!P.has('handling')) P.set('handling', '0'); P.delete('grapple'); P.set('heliheat', '0'); P.delete('helicop'); }      /* lead, Nov 16: gameplay's handling retune (r4) and grappler are on Matt's link only until CHIEF says public: the public site keeps the live car (?handling=1 tries the new one there) and has no grappler */     // lead, Nov 15, CHIEF 12:22: the public build keeps the ambulance and fire engine sirens silent until Matt has heard them (PUBLIC_EMSVOL=0 -> __CFG.emsvol = 0; ?emsvol=1 plays them there)     // lead, Nov 15: the public build holds gameplay p2 + p3 (police at the map's edge) off until shown on its map (PUBLIC_HEATEDGE=0 -> __CFG.heatedge = 0; ?heatedge=1 shows it there)
 // Big plain-data files are served gzip-packed (the link's uplink is ~2 MB/s): any fetch of these names reads <name>.gz and unpacks it in the page, falling back to the plain file.
 { const plain = window.fetch.bind(window), packed = /(dressing\.bin|city\.json)$/;
   window.fetch = async (u, o) => { if (typeof u === 'string' && packed.test(u) && self.DecompressionStream && !(o && o.method && o.method !== 'GET')) { try { const r = await plain(u + '.gz', o); if (r.ok) return new Response(r.body.pipeThrough(new DecompressionStream('gzip')), { status: 200 }); } catch (e) {} } return plain(u, o); }; }
@@ -98,7 +100,7 @@ try { const gl0 = renderer.getContext(), x0 = gl0.getExtension('WEBGL_debug_rend
     const go = document.getElementById('shfailgo'); if (go) go.onclick = (ev) => { ev.preventDefault(); d.remove(); }; }; window.__shFail = renderer.debug.onShaderError; }
 renderer.outputColorSpace = THREE.LinearSRGBColorSpace; renderer.toneMapping = THREE.NoToneMapping;
 memfree.lean(renderer); renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-await (await import('./ktx2hook.js')).installKTX2(renderer);     // lead, Nov 10: Basis/KTX2 textures (see ktx2hook.js)
+await (await LR.imp(() => import('./ktx2hook.js'), new URL('./ktx2hook.js', import.meta.url))).installKTX2(renderer);     // lead, Nov 10: Basis/KTX2 textures (see ktx2hook.js)
 const world = new World(renderer);
 // lead, Nov 10: which build is this? Shown bottom-left for the first 25 s (publish.sh writes build.txt), so a stale tab can be told from a new one.
 fetch('build.txt', { cache: 'no-store' }).then((r) => (r.ok ? r.text() : '')).then((t) => { if (!t || /capture|shot|crowd=none/.test(location.search)) return; window.__build = t.trim(); const d = document.createElement('div'); d.textContent = 'build ' + t.trim(); d.style.cssText = 'position:fixed;left:10px;bottom:8px;font:12px system-ui,sans-serif;color:#fff;opacity:.75;text-shadow:0 1px 2px #000;z-index:50;pointer-events:none;transition:opacity 2s'; document.body.appendChild(d); setTimeout(() => { d.style.opacity = 0; }, 25000); }).catch(() => {});
@@ -120,7 +122,7 @@ try {
     document.getElementById('boot').remove(); window.__ready = true; if (window.__mark) window.__mark('ready'); window.__readyAt = +(performance.now() / 1000).toFixed(1);
   } else {
     let warm = null; if (P.get('warmup') !== '0' && !P.has('nocompile')) try { warm = (await import('./warmup.js')).startWarmup(world, renderer, P); } catch (e) { console.log('[game] warm-up ahead not loaded: ' + (e && e.message)); }     /* light lane, Nov 15: on a first visit the street mirror's and the picture passes' shader programs are linked as one batch before the first frame, not one by one in the first drawn frames (src/warmup.js; ?warmup=0 = the old way) */
-    const { Game } = await import('./game.js');
+    const { Game } = await LR.imp(() => import('./game.js'), new URL('./game.js', import.meta.url));
     const game = new Game(world, P); window.game = game; await game.init(); if (window.__mark) window.__mark('init'); window.__heroGo = true;     /* lead: the landmarks' files may start coming down now, while the shaders compile (hero.js fetchBytes) */
     // Start screen (Matt, Nov 11): before play, a short note that this is an early preview, how to give feedback, a Play button and a tiny credits
     // link. Skipped for films, stills, judged captures and test tools (?demo ?capture ?peds=0 ?crowd=none ?play=1, or window.__noStart set by a tool).
@@ -157,4 +159,4 @@ try {
     if (P.has('capture')) { const { capture } = await import('./capture.js'); window.capture = (o) => capture(game, o); }
     window.__ready = true; if (window.__mark) window.__mark('ready'); window.__readyAt = +(performance.now() / 1000).toFixed(1); if (warm && warm.ramp && !skip) try { warm.ramp(figs); } catch (e) { console.log('[game] warm-up ramp not started: ' + (e && e.message)); }     /* light handoff15: behind the start screen the first frames let the scene in a few shader programs at a time, so a first visit has no 9 s frozen frame (src/warmup.js; ?warmramp=0 = all at once) */ game.start(); memfree.start(world); if (window.__armPlay) window.__armPlay();
   }
-} catch (e) { msg.textContent = 'error: ' + e.message; console.error(e); window.__error = String(e.stack || e); }
+} catch (e) { msg.textContent = 'error: ' + e.message; console.error(e); window.__error = String(e.stack || e); LR.fail(e); }

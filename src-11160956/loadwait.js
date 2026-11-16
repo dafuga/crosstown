@@ -70,7 +70,7 @@ const SLIDES = [
 
 function start() {
   const W = window, D = document, T0 = D.title || 'CROSSTOWN', now = () => performance.now() / 1000;
-  const S = (W.__loadwait = { title: T0, phase: 'dl', eta: null, slides: 0, called: false, chime: 'no', pics: [] });
+  const S = (W.__loadwait = { title: T0, phase: 'dl', eta: null, slides: 0, called: false, kinds: 0 /* 1 "almost ready" shown, 2 "ready to play" shown */, callAt: 0, backAt: 0, chime: 'no', pics: [] });
   const icon = D.querySelector('link[rel="icon"]'), icon0 = icon ? icon.getAttribute('href') : null;
   let saved = null; try { saved = JSON.parse(localStorage.getItem('crosstown.loadwait') || 'null'); } catch (e) {}
   const ok = (x) => typeof x === 'number' && x >= 2 && x <= 150;
@@ -107,7 +107,7 @@ function start() {
   const tick = () => { if (over) return; try {
     const L = W.__load; if (W.__blocked || !L) { done(); return; }     // phones and no-WebGL visitors: the plain message, untouched
     const t = now(), sb = D.getElementById('startbox'), shown = !!sb && sb.style.display !== 'none', boot = D.getElementById('boot');
-    if (D.hidden) hidSeen = true;
+    if (D.hidden) hidSeen = true; else if (S.callAt && !S.backAt) S.backAt = t;     /* for src/telemetry.js: the tab came back after the call-back (seconds on the page's clock) */
     if (W.__ready && !W.__warming && !W.__startScreen) { done(); return; }     // playing (or a tool that skips the start screen)
     const tot = Math.max(L.total || 250e6, L.done * 1.02), pct = Math.min(99, Math.floor(L.done / tot * 100));
     const building = (L.total && L.done >= L.total * 0.985) || (/game|compiled|warming/.test(L.stage) && performance.now() - (L.last || 0) > 1500);
@@ -126,7 +126,7 @@ function start() {
     // been hidden through 4 s of that step, the player is called back for it too (truthfully: "almost ready").
     if (phase === 'warm' && D.hidden) { if (tHidWarm == null) tHidWarm = t; } else tHidWarm = null;
     const call = D.hidden && (phase === 'ready' || (tHidWarm != null && t - tHidWarm >= 4));
-    if (call) { if (!S.called) { S.called = true; chime(); } flip++; const a = phase === 'ready' ? '▶ Ready to play · ' + T0 : '▶ Almost ready · ' + T0, b = phase === 'ready' ? T0 + ' · ready ▶' : '● Come back to start · ' + T0; setTitle(Math.floor(flip / 3) % 2 ? b : a); setIcon(true); }
+    if (call) { if (!S.called) { S.called = true; S.callAt = t; chime(); } S.kinds |= phase === 'ready' ? 2 : 1; flip++; const a = phase === 'ready' ? '▶ Ready to play · ' + T0 : '▶ Almost ready · ' + T0, b = phase === 'ready' ? T0 + ' · ready ▶' : '● Come back to start · ' + T0; setTitle(Math.floor(flip / 3) % 2 ? b : a); setIcon(true); }
     else { setIcon(false); if (phase === 'ready') setTitle(T0); else if (L.done > 0) setTitle((phase === 'dl' ? Math.max(1, pct) : 99) + '% · ' + T0); }
   } catch (err) { /* never in the game's way */ } };
   const iv = setInterval(tick, 500); D.addEventListener('visibilitychange', tick);

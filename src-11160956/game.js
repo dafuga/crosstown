@@ -9,6 +9,7 @@ import { Autopilot } from './demo.js';
 import { Sound } from './audio.js';
 import { Fly } from './fly.js';
 import { LookCtl } from './look.js';
+import { imp as lrImp } from './loadretry.js';     // progress lane, Nov 15: a code file that failed to download is asked for again (src/loadretry.js; ?loadretry=0 off)
 
 const DT = 1 / 60;
 const SPEC = {   // per car type: top speed m/s, acceleration m/s2, grip
@@ -116,7 +117,7 @@ export class Game {
     for (const k of ['light', 'tree', 'signal', 'hydrant']) for (const p of city.props[k] || []) st.addCircle(p[0], p[1], k === 'tree' ? 0.22 : k === 'hydrant' ? 0.2 : 0.14, k);
     this.propMeshes = addProps(w.scene, this.kit, city, extra);
     this.setupSignals();
-    this.dressing = await (await import('./dressing.js')).addDressing(this);   // street dressing layer (pipeline/dressing)
+    this.dressing = await (await lrImp(() => import('./dressing.js'), new URL('./dressing.js', import.meta.url))).addDressing(this);   // street dressing layer (pipeline/dressing)
     this.batches = {}; for (const t of CAR_TYPES) if (this.kit.cars[t]) this.batches[t] = new CarBatch(w.scene, this.kit.cars[t], t === 'bus' ? 16 : 340);
     this.parked = new Parked(this); this.traffic = new Traffic(this); this.peds = new Peds(this);
     // someone at the wheel of every car in traffic near the camera: seated figures baked from the Drive pose
@@ -134,14 +135,14 @@ export class Game {
     this.bindInput();
     this.fly = new Fly(this);
     if (this.P.get('menu') !== '0') try { (await import('./menu/menu.js')).install(this); } catch (e) { console.log('[menu] not loaded: ' + (e && (e.stack || e.message))); }     // progress lane: pause and settings menu (src/menu/: Esc / P / Start; game.settings, game.menu); ?menu=0 off (nothing fetched, P pauses as before)
-    this.streets = this.P.get('streets') === 'none' ? null : await (await import('./streets.js')).addStreets(this);
+    this.streets = this.P.get('streets') === 'none' ? null : await (await lrImp(() => import('./streets.js'), new URL('./streets.js', import.meta.url))).addStreets(this);
     // the people lane's crowd (hundreds of GPU-instanced walkers); with it on, the game's own heavy skinned pedestrians (about 0.3 ms each on the M2 Pro) drop to a handful near the player
-    this.crowd = this.P.get('crowd') === 'none' ? null : await (await import('./crowd.js')).addCrowd(this).catch((e) => { console.log('[crowd] not loaded: ' + (e && e.message)); return null; });
+    this.crowd = this.P.get('crowd') === 'none' ? null : await lrImp(() => import('./crowd.js'), new URL('./crowd.js', import.meta.url), { optional: true }).then((m) => m.addCrowd(this)).catch((e) => { console.log('[crowd] not loaded: ' + (e && e.message)); return null; });
     // people/near: standing scans of real people (assets/near). MATT'S PRIVATE LINK ONLY: never on the public build (window.__CFG.public, set by tools/public_build.sh, which also leaves near.js and assets/near out of the site). ?near=none off
     this.near = null; if (!(window.__CFG && window.__CFG.public) && this.P.get('near') !== 'none') try { this.near = await (await import('./near.js')).addNear(this); } catch (e) { console.log('[near] not loaded: ' + (e && (e.stack || e.message))); }
     if (this.crowd && !this.P.has('peds')) { this.peds.target = 14; while (this.peds.list.length > 14) { const q = this.peds.list.pop(); q.vis.used = false; q.vis.object.visible = false; } }
     if (this.P.has('peds')) { this.peds.target = +this.P.get('peds'); while (this.peds.list.length > this.peds.target) { const q = this.peds.list.pop(); q.vis.used = false; q.vis.object.visible = false; } }     // ?peds=0: nobody, from the first frame (the scene gauntlet's no-people captures)
-    this.budget = new (await import('./budget.js')).Budget(this);     // the streets lane's layer (ground, trees, furniture, storefronts, vehicles)
+    this.budget = new (await lrImp(() => import('./budget.js'), new URL('./budget.js', import.meta.url))).Budget(this);     // the streets lane's layer (ground, trees, furniture, storefronts, vehicles)
     // heli lane: the helicopter (src/heli/). ?heli=none leaves it out.
     this.heli = this.P.get('heli') === 'none' ? null : await (await import('./heli/heli.js')).addHeli(this).catch((e) => { console.log('[heli] not loaded: ' + (e && (e.stack || e.message))); return null; });
     try { (await import('./pedhit.js')).install(this); } catch (e) { console.log('[game] pedhit not loaded: ' + (e && e.message)); }     // item 14: pedestrian hits (ragdoll) from nyc-breakable; ?pedhit=0 off
@@ -150,7 +151,9 @@ export class Game {
     try { (await import('./crash.js')).install(this); } catch (e) { console.log('[game] crash not loaded: ' + (e && e.message)); }     // car crash deformation v2 from nyc-breakable (crash.js 4d945bfd); ?crash=0 off
     try { (await import('./ram.js')).install(this); } catch (e) { console.log('[game] ram not loaded: ' + (e && e.message)); }     // rammed cars are thrown (breakable ram.js; ?ram=0)
     if (this.P.get('overhead') !== '0') try { (await import('./overhead.js')).install(this); } catch (e) { console.log('[overhead] not loaded: ' + (e && e.message)); }     /* lead/h-jump, Nov 14: game.statics.overhead, the list of what is over the sidewalk with underside heights (built on first use); ?overhead=0 off */
+    if (this.P.get('handling') !== '0') try { (await import('./move/handling.js')).install(this, Vehicle); } catch (e) { console.log('[handling] not loaded: ' + (e && (e.stack || e.message))); }     /* gameplay lane, Nov 15 (19 player reports on car handling): the steering and grip of the car the player drives (src/move/handling.js). It must stay ABOVE the cars.js line: it wraps Vehicle.step first, cars.js wraps it. ?handling=0 off (nothing fetched; the car is the live one) */
     if (this.P.get('jump') !== '0') try { (await import('./move/jump.js')).install(this); } catch (e) { console.log('[jump] not loaded: ' + (e && (e.stack || e.message))); }     // gameplay lane: jump on foot, Space / controller A (src/move/jump.js, jumpcore.js); ?jump=0 off (nothing fetched)
+    if (this.P.get('grapple') === '1') try { (await import('./move/grapple.js')).install(this); } catch (e) { console.log('[grapple] not loaded: ' + (e && (e.stack || e.message))); }     // gameplay lane: grappling hook, X on foot (src/move/grapple.js); default OFF, ?grapple=1 on (without it nothing is fetched)
     if (this.P.get('entry') !== '0') try { await (await import('./entry/entry.js')).addEntry(this); } catch (e) { console.log('[entry] not loaded: ' + (e && (e.stack || e.message))); }     // gameplay lane: real car entry and exit (door, seat, camera); ?entry=0 off
     if (this.P.get('unwedge') !== '0') try { (await import('./combat/unwedge.js')).install(this); } catch (e) { console.log('[unwedge] not loaded: ' + (e && e.message)); }     /* gameplay lane, Nov 13 (public report 1b7ddd, car held by the invisible wall at the map's edge): the edge says so and turns the car round; a wedged car is set on the nearest clear lane; ?unwedge=0 off */
     if (this.P.get('edgeclose') !== '0') try { (await import('./edgeclose.js')).install(this); } catch (e) { console.log('[edgeclose] not loaded: ' + (e && e.message)); }     /* lead, Nov 13 (CHIEF 23:3xZ): road-closed barricades where roads meet the invisible wall at the map's edge; ?edgeclose=0 off */
@@ -161,6 +164,7 @@ export class Game {
     try { (await import('./feedback.js')).install(this); } catch (e) { console.log('[game] feedback not loaded: ' + (e && e.message)); }     // lead: Feedback link + session trace (src/feedback.js)
     if (this.P.get('cars') !== '0') try { (await import('./cars/cars.js')).install(this); } catch (e) { console.log('[cars] not loaded: ' + (e && (e.stack || e.message))); }     /* progress lane, Nov 14: each kind of car drives differently; damage carries through to a burnt wreck (src/cars/cars.js); ?cars=0 off */
     if (this.P.get('runhint') !== '0') try { (await import('./runhint.js')).install(this); } catch (e) { console.log('[runhint] not loaded: ' + (e && e.message)); }     /* progress lane, Nov 15: says "Hold SHIFT to run" in play to a player who has walked 8 s and never run (three players never found it); ?runhint=0 off */
+    if (this.P.get('hints') !== '0') try { (await import('./hints.js')).install(this); } catch (e) { console.log('[hints] not loaded: ' + (e && e.message)); }     /* progress lane, Nov 15: one line in play for what a new player must find (get in a car, the helicopter, the subway stairs, the menu, the map, feedback), each when the need is seen, twice at most, never after he has done it; shares runhint's place, never with it; ?hints=0 off */
     if (!/^(0|none|off)$/.test(this.P.get('guns') || '')) try { this.combat = await (await import('./combat/combat.js')).addCombat(this); } catch (e) { console.log('[guns] not loaded: ' + (e && (e.stack || e.message))); }     // gameplay lane: guns v1 (src/combat/, pistol and rifle); ?guns=0 off (nothing fetched)
     if (this.P.get('ems') !== '0') try { (await import('./ems/ems.js')).install(this); } catch (e) { console.log('[ems] not loaded: ' + (e && (e.stack || e.message))); }     /* gameplay lane (built by the progress lane): an ambulance or a fire truck after a person is struck, a car fire or a wreck (src/ems/ems.js); ?ems=0 off (nothing fetched, nothing wrapped) */
     if (this.P.get('moto') !== '0') import('./moto/moto.js').then((m) => m.install(this)).catch((e) => console.log('[moto] not loaded: ' + (e && (e.stack || e.message))));     // gameplay lane: the motorcycle (src/moto/: moto.js, motophys.js, motomodel.js); ?moto=0 off (nothing fetched)
