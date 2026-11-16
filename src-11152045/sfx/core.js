@@ -30,7 +30,8 @@ const ENG = [
   { cyl: 6, idle: 620, red: 2500, w0: 0.0034, w1: 0.0017, pat: [1, 0.82, 0.94, 0.78, 0.96, 0.8], res: [[66, 3, 1.2], [215, 2.6, 0.65], [1120, 2, 0.24]], intake: 0.3, clat: 0.8, lvl: 1.15, gears: [0.16, 0.3, 0.48, 0.72, 1.12] },
 ];
 const TAU = Math.PI * 2, clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
-const SMP_AS = { van: 'taxi', bus: 'taxi' }, SMP_LVL = [1, 1, 1, 1.7, 1, 1.7];      // lead: which kind's sampled loops a kind plays, and at what level (see setSamples)
+const SMP_AS = { van: 'taxi', bus: 'taxi', suv: 'taxi' }, SMP_LVL = [1, 1, 1, 1.7, 1, 1.7];      /* lead, Nov 15 (Matt's report 202702-87a7b3, in the Tucson: 'the sound for this vehicle (not others) is obscenely annoying'): the SUV's own low and mid loops carry 29 % and 36 % of their energy above 1.5 kHz with a narrow peak at 2.4-2.7 kHz (the taxi's: 4 %), and have no high loop, so the mid one is pitched up under load; SUVs now play the taxi's loops at their own firing rate, as vans and buses do. Way back: remove suv here. */
+//      // lead: which kind's sampled loops a kind plays, and at what level (see setSamples)
 const STARTS = ['petrol', 'v8', 'petrol', 'diesel', 'v8', 'diesel'];      // which start-up clip each car kind uses
 // a sample read between its points (four-point Hermite), wrapping: for loops
 function herm(d, n, p) { const i = p | 0, f = p - i, a = d[i > 0 ? i - 1 : n - 1], b = d[i], c = d[i + 1 < n ? i + 1 : i + 1 - n], e = d[i + 2 < n ? i + 2 : i + 2 - n]; const c1 = 0.5 * (c - a), c2 = a - 2.5 * b + 2 * c - 0.5 * e, c3 = 0.5 * (e - a) + 1.5 * (b - c); return ((c3 * f + c2) * f + c1) * f + b; }

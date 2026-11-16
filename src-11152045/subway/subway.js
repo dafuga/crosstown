@@ -90,7 +90,7 @@ export async function install(game) {
   const glowMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false, side: THREE.DoubleSide }); glowMat.name = 'railglow';
   const unitOf = (st) => { let u = S.units.get(st.id); if (!u) S.units.set(st.id, (u = { st, state: 'none', gen: null, res: null, group: null, trains: [] })); return u; };
   const startUnit = async (u) => { u.state = 'look'; try { if (!u.st.floors) { const r = await fetch(DIR + 'st/' + u.st.id + '.json'); if (!r.ok) throw new Error('station file ' + r.status); Object.assign(u.st, await r.json()); }      /* a station's underground is its own small file, fetched when he first comes near */
-      const L = await getLook(); u.gen = buildStation(THREE, u.st, meta, L, { glowMat, turnstile: P.get("turnstile") !== "0" }); u.state = 'building'; u.t0 = performance.now(); u.ms = 0; } catch (e) { fail('start ' + u.st.id, e); u.state = 'failed'; } };
+      const L = await getLook(); u.gen = buildStation(THREE, u.st, meta, L, { glowMat, turnstile: P.get("turnstile") === "1" /* lead, Nov 15 20:35: OFF by default after Matt was trapped in them (report 203006-de9413, 23 St at 31.2,-485.6); ?turnstile=1 = the real ones, until aufix hands over a fix */ }); u.state = 'building'; u.t0 = performance.now(); u.ms = 0; } catch (e) { fail('start ' + u.st.id, e); u.state = 'failed'; } };
   const finishUnit = (u, res) => { u.res = res; u.walk = res.walk; u.group = res.group; u.gen = null;
     // caps over the stair openings (depth only) and, for the view from below once the city is not drawn, a bright card of sky in each opening
     const cp = [], ci = [], sp = []; let n = 0;
