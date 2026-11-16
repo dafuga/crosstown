@@ -21,6 +21,8 @@ import * as G from './storefronts.glsl.js';
    recessed and the solid front line leaves the door open; layout() returns the door's instances and measurements (doors) and add() hands them to
    interiors/interiors.js, which swaps the closed door and glass for an open shop near the player. ?interiors=0 = exactly as before. */
 import { IN_SLOTS } from '../interiors/slots.js';
+import { GAR_SLOTS } from '../garages/slots.js';     /* garages */
+const GARS = (() => { try { return new URLSearchParams(location.search).get('garages') === '0' ? null : GAR_SLOTS; } catch (e) { return null; } })();     /* garages */
 const INS = (() => { try { return new URLSearchParams(location.search).get('interiors') === '0' ? null : IN_SLOTS; } catch (e) { return null; } })();
 
 const SW = 0.15, TILE = 128, FAR_MAJOR = 520, FAR_FINE = 150;
@@ -192,7 +194,7 @@ export function layout(C, opts = {}) {
   const solOut = (P, a, b2, z) => { let g = 1e9; for (const u of b2 - a > 0.8 ? [a + 0.35, (a + b2) / 2, b2 - 0.35] : [(a + b2) / 2]) { const ox = P.x + P.dx * u + P.nx * 0.03, oy = P.y + P.dy * u + P.ny * 0.03; if (inBuilding(ox, oy)) continue;     /* buried in the next building: nothing to keep open */
       const h = bgrid.ray(ox, oy, P.nx, P.ny, z + 0.9); if (h && h[0] < g) g = h[0]; }
     if (g > 1e8) return z; stats.solidCut++; return Math.min(z, g + 0.03 - 0.9); };
-  const tiles = new Map(), frames = [], shops = [], solid = [], doors = [];     /* interiors: doors */
+  const tiles = new Map(), frames = [], shops = [], solid = [], doors = [], gars = [];     /* interiors: doors */     /* garages */
   const stats = { buildings: 0, bays: 0, shops: 0, kinds: {}, signs: {}, samples: {}, solidCut: 0 };
   let tile = null, fi = 0;
   const bx = (major, x0, x1, y0, y1, z0, z1, kind, col, p0 = 0, p1 = 0, p2 = 0, p3 = 0) => bc(major, (x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2, x1 - x0, y1 - y0, z1 - z0, 0, 0, kind, col, p0, p1, p2, p3);
@@ -278,6 +280,7 @@ export function layout(C, opts = {}) {
     }
 
     { const IS = opts.interiors !== undefined ? opts.interiors : INS; if (IS) for (const P of pieces) { const t = IS[bid + ':' + P.key]; if (t && P.Lp >= 2.3) { P.inside = t; P.role = t.role; P.type = T[t.type] || (t.role === 'lobby' ? T.lobby : P.type); } } }     /* interiors */
+    { const GS = opts.garages !== undefined ? opts.garages : GARS; if (GS) for (const P of pieces) { const t = GS[bid + ':' + P.key]; if (t && P.Lp >= 5.6 && !P.inside) { P.gar = t; P.role = 'dock'; P.type = P.type || T.vacant; } } }     /* garages */
 
     // ---- emit
     const solG = new Map();                               // collision: per wall segment, [from, to, how far out] along the wall of everything drawn solid
@@ -324,13 +327,14 @@ export function layout(C, opts = {}) {
 
       if (P.role === 'service' || P.role === 'dock') {
         so(x0, x1, 0.16);
-        bx(1, x0, x1, 0, sHi, 0, 0.10, K.MAS, mul(baseCol, 0.92), mas === 3 ? 3 : (r(5) < 0.5 ? 1 : mas), 0, 0, seed);
+        const GA = P.role === 'dock' && P.gar ? P.gar : null, gw = GA ? Math.max(3.2, Math.min(W - 2.2, 6.4)) : Math.min(W - 0.5, 3.4), gt = Math.min(sLo - 0.05, GA ? 3.6 : 3.5), gm0 = tile.major.length + (GA ? 3 : 1) * BOX_STRIDE;     /* garages */
+        { const wc = mul(baseCol, 0.92), wm = mas === 3 ? 3 : (r(5) < 0.5 ? 1 : mas); if (GA) { bx(1, x0, -gw / 2, 0, sHi, 0, 0.10, K.MAS, wc, wm, 0, 0, seed); bx(1, gw / 2, x1, 0, sHi, 0, 0.10, K.MAS, wc, wm, 0, 0, seed); bx(1, -gw / 2, gw / 2, gt - 0.3, sHi, 0, 0.10, K.MAS, wc, wm, 0, 0, seed); } else bx(1, x0, x1, 0, sHi, 0, 0.10, K.MAS, wc, wm, 0, 0, seed); }     /* garages: the wall stands round the mouth; without a garage the one wall as before */
         if (P.role === 'dock') {
-          const gw = Math.min(W - 0.5, 3.4), gt = Math.min(sLo - 0.05, 3.5);
           bx(1, -gw / 2, gw / 2, 0, gt - 0.3, 0.10, 0.16, K.GATE, mix3([0.30, 0.31, 0.32], [0.12, 0.2, 0.3], r(7) < 0.3 ? 1 : 0), 0.11, 0, 0, seed);
           bx(1, -gw / 2 - 0.08, gw / 2 + 0.08, gt - 0.3, gt, 0.10, 0.34, K.PLAIN, STEEL, 0.5, 0.6, 1, seed);
           for (const s of [-1, 1]) { bx(0, s * (gw / 2 + 0.05) - 0.05, s * (gw / 2 + 0.05) + 0.05, 0, gt - 0.3, 0.10, 0.22, K.PLAIN, STEEL, 0.5, 0.6, 1, seed); bx(0, s * (gw / 2 + 0.32) - 0.08, s * (gw / 2 + 0.32) + 0.08, 0, 1.05, 0.34, 0.50, K.PLAIN, [0.62, 0.45, 0.03], 0.5, 0, 1, seed); bx(0, s * (gw / 2 + 0.32) - 0.085, s * (gw / 2 + 0.32) + 0.085, 0.62, 0.78, 0.335, 0.505, K.PLAIN, DARK, 0.5, 0, 1, seed); }
-          bx(0, -0.3, 0.3, gt + 0.12, gt + 0.72, 0.10, 0.125, K.SIGN, [0.6, 0.6, 0.57], 130, 0, pack([0.5, 0.03, 0.03]), seed);
+          if (!GA) bx(0, -0.3, 0.3, gt + 0.12, gt + 0.72, 0.10, 0.125, K.SIGN, [0.6, 0.6, 0.57], 130, 0, pack([0.5, 0.03, 0.03]), seed);
+          else gars.push({ id: bid + ':' + P.key, tile: tk, gate: gm0 / BOX_STRIDE, bi, bid, x: P.x, y: P.y, rot, dx: P.dx, dy: P.dy, nx: P.nx, ny: P.ny, kd: P.kd, Lp, W, x0, x1, ml: -gw / 2, mr: gw / 2, mh: gt - 0.3, sLo, sHi, Hh, h: b.h, room: GA.room, base: baseCol });     /* garages */
         } else {
           const dxs = (r(8) - 0.5) * Math.max(0, W - 1.6);
           if (W > 1.3) { bx(0, dxs - 0.56, dxs + 0.56, 0, 2.2, 0.10, 0.16, K.PLAIN, STEEL, 0.5, 0.5, 1, seed); bx(0, dxs - 0.48, dxs + 0.48, 0.02, 2.12, 0.10, 0.14, K.PLAIN, PAINT[Math.floor(r(9) * PAINT.length)], 0.55, 0.2, 1, seed); bx(0, dxs + 0.34, dxs + 0.40, 0.95, 1.12, 0.14, 0.2, K.PLAIN, CHROME, 0.3, 1, 0, seed); }
@@ -453,7 +457,7 @@ export function layout(C, opts = {}) {
     }
   });
   stats.shopsJson = shHit;
-  return { tiles, frames, stats, shops, solid, doors };     /* interiors: doors */
+  return { tiles, frames, stats, shops, solid, doors, gars };     /* interiors: doors */     /* garages */
 }
 
 // ------------------------------------------------------------------------------------------------ meshes
@@ -517,7 +521,7 @@ export async function add(game, ctx) {
   const hasDressing = !!(game.dressing && game.dressing.meshes && game.dressing.meshes.length);
   let shopsJ = null;                                    // lanes/shops: the survey (real kind of business per slot, invented names). ?shops=0: the old random mixes
   if (new URLSearchParams(location.search).get('shops') !== '0') { try { const r = await fetch(ctx.A + 'storefronts/shops.json'); if (r.ok) shopsJ = await r.json(); } catch (err) { console.warn('[storefronts] no shops.json', err); } }
-  const { tiles, frames, stats, shops, solid, doors } = layout(     /* interiors: doors */
+  const { tiles, frames, stats, shops, solid, doors, gars } = layout(     /* interiors: doors */     /* garages */
  C, { noDressing: !hasDressing, shops: shopsJ, core: new URLSearchParams(location.search).get('sfcore') === '1' });
   const tex = { mask: makeMask(THREE, shopsJ && shopsJ.names), rooms: makeRooms(THREE), props: makeProps(THREE) };
   const tune = { value: new THREE.Vector4(0.15, 2.8, 0.55, 0.6) };
@@ -580,5 +584,6 @@ export async function add(game, ctx) {
     sol.metres = Math.round(sol.metres);
   }
   if (doors && doors.length) try { game.interiors = await (await import('../interiors/interiors.js')).addInteriors(game, { doors, meshes, ctx }); } catch (e) { console.log('[interiors] not loaded: ' + (e && (e.stack || e.message))); }     /* interiors */
+  if (gars && gars.length) try { game.garages = await (await import('../garages/garages.js')).addGarages(game, { gars, meshes, ctx }); } catch (e) { console.log('[garages] not loaded: ' + (e && (e.stack || e.message))); }     /* garages */
   return { group, meshes, tune, stats, shops, solidSegs, report: { instances: inst, ktris: Math.round(tris / 1000), shopsJson: stats.shopsJson || 0, bays: stats.bays, shops: stats.shops, kinds: stats.kinds, signs: stats.signs, hid, solid: Object.assign(sol, { cornersHeldBack: stats.solidCut }) } };
 }

@@ -411,7 +411,7 @@ export async function add(game, ctx) {
     const tt = game.t;
     for (const c of game.traffic.cars) draw(c, c.type, c.x, c.y, 0, c.h, 0, 0, c.color, c.spin, c.steer, c.dbl ? (tt % 1.1) < 0.5 : c.brake, c.id);
     for (const v of game.vehicles) draw(v, v.type, v.x, v.y, v.z, v.h, v.roll, v.pitch, v.color, v.spin, v.steer, v.braking, v.vseed);
-    for (const s of game.parked.near(camX, -camZ, FAR, near)) draw(s, s.type, s.x, s.y, 0, s.h, 0, 0, s.color, 0, 0, false, s.vseed);
+    for (const s of game.parked.near(camX, -camZ, FAR, near)) draw(s, s.type, s.x, s.y, s.z || 0     /* garages: a parked car on a raised deck */, s.h, 0, 0, s.color, 0, 0, false, s.vseed);
     for (const t in types) for (const L of types[t].lods) { if (!L) continue; L.main.end(); if (L.livery) L.livery.end(); if (L.rack) L.rack.end(); if (L.wheels) L.wheels.end(); }
     for (const k in statics) statics[k].end(); for (const k in reals) { reals[k].body.end(); reals[k].wheels.end(); }
     blob.visible = blob.count > 0; blob.instanceMatrix.needsUpdate = true; tyreBlob.visible = tyreBlob.count > 0; tyreBlob.instanceMatrix.needsUpdate = true;

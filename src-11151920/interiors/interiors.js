@@ -93,9 +93,9 @@ export async function addInteriors(game, { doors, meshes, ctx }) {
   // ---- the facade cut: hole slots for the built shops, the tile meshes near them wear the cutting copy
   const holeBox = (S, i) => { const d = S.d, cu = (d.x0 + d.x1) / 2, [sx, sy] = toSim(d, cu, 0), top = d.sLo + 0.02;
     hole.U.uHoleA.value[i].set(sx, (0.15 + top - 0.3) / 2, -sy, (d.x1 - d.x0) / 2 + 0.04); hole.U.uHoleB.value[i].set(d.dx, -d.dy, (top + 0.15 + 0.3) / 2, 0.32); };
-  let holeT = 0;
+  let holeT = 0; const extraHoles = [];     /* garages: openings of other layers ({ d, doorAt }), cut with the same material */
   const syncHoles = () => {
-    if (!hole) return; const on = shops.filter((S) => S.built); hole.U.uHoleN.value = Math.min(4, on.length); on.slice(0, 4).forEach((S, i) => holeBox(S, i));
+    if (!hole) return; const on = extraHoles.concat(shops.filter((S) => S.built)); hole.U.uHoleN.value = Math.min(4, on.length); on.slice(0, 4).forEach((S, i) => holeBox(S, i));
     for (const m of tileMeshes()) { const c = m.userData.c; let want = false; if (c) for (const S of on) { const [x, y] = S.doorAt; if (Math.hypot(c[0] - x, c[1] + y) < c[2] + 6) { want = true; break; } }
       if (want && m.material !== hole.m) { m.userData.__imat = m.material; m.material = hole.m; } else if (!want && m.material === hole.m) { m.material = m.userData.__imat || facade; } }
   };
@@ -190,7 +190,7 @@ export async function addInteriors(game, { doors, meshes, ctx }) {
   rep.ms = Math.round(performance.now() - t0);
   console.log('[interiors] ' + shops.length + ' shops: ' + rep.shops.map((s) => s.id + ' ' + s.kind + (s.room ? ' ' + s.room[0] + 'x' + s.room[1] + ' m' : ' NO ROOM')).join(', ') + '; door walls cut ' + rep.cut + '; ' + rep.ms + ' ms');
   const api = {
-    shops, report: rep, uBright, matShop, matGlass, hole,
+    shops, report: rep, uBright, matShop, matGlass, hole, extraHoles, syncHoles,     /* garages */
     // tests: what is built and what it costs
     cost() { return shops.map((S) => ({ id: S.d.id, kind: S.d.kind, built: !!S.built, draws: S.built ? S.built.draws + S.people.reduce((a, q) => { let n = 0; q.v.object.traverse((c) => { if (c.isMesh && c.visible) n++; }); return a + n; }, 0) : 0, tris: S.built ? S.built.tris + S.people.reduce((a, q) => { let n = 0; q.v.object.traverse((c) => { if (c.isMesh && c.geometry && c.geometry.index) n += c.geometry.index.count / 3; }); return a + n; }, 0) : 0, people: S.people.length, buildMs: S.built ? S.built.ms : null })); },
     // tests: stand the player on the sidewalk in front of shop i (m metres out), facing the door
