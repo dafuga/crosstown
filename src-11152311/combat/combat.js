@@ -53,7 +53,7 @@ export async function addCombat(game) {
   const C = new Combat(game); await C.init(); return C;
 }
 
-class Combat {
+export class Combat {
   constructor(game) {
     this.g = game; if (game.P.get('gall') === '1') ORDER = ['pistol', 'rifle', 'smg', 'shotgun', 'unarmed']; for (const k in WEAPONS) { const i = ORDER.indexOf(k); WEAPONS[k].key = i >= 0 ? 'Digit' + (i + 1) : null; } this.slot = 'unarmed'; this.last = 'pistol'; this.ammo = {}; for (const k in WEAPONS) this.ammo[k] = { mag: WEAPONS[k].mag, reserve: WEAPONS[k].reserve };
     this.inp = { fire: false, aim: false, reload: false, want: null, wheel: 0 }; this.aimT = 0; this.stance = false; this.stanceT = 9; this.fireCd = 0; this.pressed = false; this.rel = null; this.drawT = 0; this.swap = null;
@@ -401,6 +401,27 @@ class Combat {
     if (r.k === 1) { if (h < 1.12) { const gap = (r.ue - 0.03) / 3, q = (u - 0.03) / gap; if (q > -0.5 && q < 3.5 && Math.abs(q - Math.round(q)) * gap <= 0.03) return false; } return !(h < 2.75 && u >= r.ue - 0.04); }
     if (v >= r.zr - (h < 1.12 ? 0.03 : 0.04) && h < 2.75) return false; return !(h >= 2.17 && h <= 2.67);
   }
+  fenceHit(segment, ox, oy, oz, dx, dy, dz, near, far) {
+    // Reuse the rendered two-metre panel, stretched and rotated to these map endpoints.
+    const panel = this._fenceMesh ||= new THREE.Mesh(undefined, new THREE.MeshBasicMaterial({side: THREE.DoubleSide}));
+    const ray = this._fenceRay ||= new THREE.Raycaster();
+    const sx = segment[2] - segment[0], sy = segment[3] - segment[1];
+    panel.geometry = segment.fenceGeometry;
+    panel.position.set(segment[0], segment.baseZ, -segment[1]);
+    panel.rotation.y = Math.atan2(sy, sx);
+    panel.scale.x = Math.hypot(sx, sy) / 2;
+    panel.updateMatrixWorld();
+    ray.ray.origin.set(ox, oz, -oy);
+    ray.ray.direction.set(dx, dz, -dy);
+    ray.near = near; ray.far = far;
+    const hit = ray.intersectObject(panel, false)[0];
+    if (hit) {
+      const normalMatrix = this._fenceNormal ||= new THREE.Matrix3();
+      hit.face.normal.applyNormalMatrix(normalMatrix.getNormalMatrix(panel.matrixWorld));
+      if (hit.face.normal.dot(ray.ray.direction) > 0) hit.face.normal.negate();
+    }
+    return hit;
+  }
   cast(ox, oy, oz, dx, dy, dz, tmin, tmax) {
     const g = this.g, st = g.statics, H = { kind: 'none', t: tmax, x: ox + dx * tmax, y: oy + dy * tmax, z: oz + dz * tmax, nx: -dx, ny: -dy, nz: -dz };
     const take = (t, kind, nx, ny, nz, obj, part) => { if (t < tmin || t >= H.t) return; H.t = t; H.kind = kind; H.x = ox + dx * t; H.y = oy + dy * t; H.z = oz + dz * t; H.nx = nx; H.ny = ny; H.nz = nz; H.obj = obj; H.part = part; };
@@ -411,18 +432,40 @@ class Combat {
     // walls and standing things, cell by cell along the ray on the map
     const hl = Math.hypot(dx, dy), far = Math.min(H.t, tmax), ex = ox + dx * far, ey = oy + dy * far, c = st.cell, steps = Math.ceil((hl * far) / (c * 0.5)) + 1, seen = this._seen || (this._seen = new Set()); seen.clear();
     const bx = g.bounds.x + 5.5, by = g.bounds.y + 5.5, bcx = g.bounds.cx || 0, bcy = g.bounds.cy || 0;     /* tiles lane: the playable box may sit off the origin */
-    if (hl > 1e-4) for (let q = 0; q <= steps; q++) {
+    const testFenceMesh = g.P.get('fenceshot') !== '0' && g.P.get('fencegaps') !== '0';
+    for (let q = 0; q <= steps; q++) {
       const fx = ox + ((ex - ox) * q) / steps, fy = oy + ((ey - oy) * q) / steps;
       for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) {
         if ((di || dj) && q % 2) continue; const k = st.key(Math.floor(fx / c) + di, Math.floor(fy / c) + dj); if (seen.has(k)) continue; seen.add(k);
         const a = st.segs.get(k);
         if (a) for (const s of a) {
           if ((Math.abs(s[0] - bcx) > bx && Math.abs(s[2] - bcx) > bx) || (Math.abs(s[1] - bcy) > by && Math.abs(s[3] - bcy) > by)) continue;      // the map's own edge is not a wall
+          if (testFenceMesh && s.fenceGeometry) {
+            const hit = this.fenceHit(s, ox, oy, oz, dx, dy, dz, tmin, H.t);
+            if (hit) {
+              const n = hit.face.normal;
+              take(hit.distance, 'prop', n.x, -n.z, n.y, s, hit.point.y <= s.baseZ + 0.100001 ? 'concrete' : 'metal');
+            }
+            continue;
+          }
+          if (hl <= 1e-4) continue;
           const sx = s[2] - s[0], sy = s[3] - s[1], den = dx * sy - dy * sx; if (Math.abs(den) < 1e-9) continue;
           const t = ((s[0] - ox) * sy - (s[1] - oy) * sx) / den, u = ((s[0] - ox) * dy - (s[1] - oy) * dx) / den; if (u < 0 || u > 1 || t < tmin || t >= H.t) continue;
           const z = oz + dz * t; if (z < 0) continue; if (s.set === 'subway' && g.P.get('railshot') !== '0' && this.railOpen(s, ox + dx * t, oy + dy * t, z, dz, den)) continue; let nx = sy, ny = -sx; const nl = Math.hypot(nx, ny); nx /= nl; ny /= nl; if (nx * dx + ny * dy > 0) { nx = -nx; ny = -ny; }
+          if (g.P.get('fenceshot') !== '0' && s.low && (s.kind === 'lawn' || s.kind === 'fence' || s.kind === 'guard')) {
+            let base = s.baseZ ?? 0.15, top = base + s.low;
+            if (s.wireTop && g.P.get('wireprofile') !== '0') {
+              const last = s.wireTop.length - 1, pos = u * last;
+              const i = Math.min(Math.floor(pos), last - 1);
+              base = s.wireBase;
+              top = s.wireTop[i] + (pos - i) * (s.wireTop[i + 1] - s.wireTop[i]);
+            }
+            if (z >= base && z <= top) take(t, 'prop', nx, ny, 0, s, 'metal');
+            continue;
+          }
           take(t, 'wall', nx, ny, 0, null, 'concrete');
         }
+        if (hl <= 1e-4) continue;
         const b = st.circ.get(k);
         if (b) for (const o of b) {
           if (!o.on || typeof o.tag !== 'string') continue; const top = o.tag === 'light' ? 9 : o.tag === 'signal' ? 7 : o.tag === 'tree' ? 3.4 : o.tag === 'hydrant' ? 0.85 : 1.1;

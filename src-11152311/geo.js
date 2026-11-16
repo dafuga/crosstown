@@ -56,6 +56,7 @@ export class StaticWorld {
     const c = this.cell, s = [ax, ay, bx, by]; if (this.owner) s.set = this.owner; if (low > 0) s.low = low; if (kind) s.kind = kind;
     const i0 = Math.floor(Math.min(ax, bx) / c), i1 = Math.floor(Math.max(ax, bx) / c), j0 = Math.floor(Math.min(ay, by) / c), j1 = Math.floor(Math.max(ay, by) / c);
     for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) { const k = this.key(i, j); let a = this.segs.get(k); if (!a) this.segs.set(k, (a = [])); a.push(s); }
+    return s;
   }
   addPoly(poly, low, kind) { for (let i = 0; i < poly.length; i++) { const a = poly[i], b = poly[(i + 1) % poly.length]; this.addSeg(a[0], a[1], b[0], b[1], low, kind); } }
   addCircle(x, y, r, tag) { const k = this.key(Math.floor(x / this.cell), Math.floor(y / this.cell)); let a = this.circ.get(k); if (!a) this.circ.set(k, (a = [])); const o = { x, y, r, tag, on: true }; if (this.owner) o.set = this.owner; a.push(o); return o; }

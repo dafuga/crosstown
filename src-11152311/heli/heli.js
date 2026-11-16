@@ -263,7 +263,11 @@ class Heli {
     else if (this.piloted) {
       const ax = (a, b) => (K.has(a) ? 1 : 0) - (K.has(b) ? 1 : 0), gp = navigator.getGamepads ? navigator.getGamepads()[0] : null, dz = (v, d = 0.12) => (Math.abs(v) > d ? (v - Math.sign(v) * d) / (1 - d) : 0);
       let pitch = ax('ArrowUp', 'ArrowDown') + ax('KeyI', 'KeyK') + ax('Numpad8', 'Numpad5'), roll = ax('ArrowRight', 'ArrowLeft') + ax('KeyL', 'KeyJ') + ax('Numpad6', 'Numpad4'), yaw = ax('KeyD', 'KeyA'), lift = ax('KeyW', 'KeyS') + ax('Space', 'ShiftLeft');
-      if (gp) { pitch -= dz(gp.axes[1]); roll += dz(gp.axes[0]); yaw += (gp.buttons[5]?.value || 0) - (gp.buttons[4]?.value || 0); lift += (gp.buttons[7]?.value || 0) - (gp.buttons[6]?.value || 0);
+      if (gp) { pitch -= dz(gp.axes[1]); roll += dz(gp.axes[0]); const shoulder = i => {
+          const button = gp.buttons[i], value = button?.value || 0;
+          return g.P.get('helipadnoise') === '0' || button?.pressed || value > 0.12 ? value : 0;
+        };
+        yaw += shoulder(5) - shoulder(4); lift += (gp.buttons[7]?.value || 0) - (gp.buttons[6]?.value || 0);
         const b = (i) => gp.buttons[i]?.pressed, was = this.keysWere; if (b(2) && !was.has(2)) c.engine = true; if (b(11) && !was.has(11)) this.nextCamera(); if (b(3) && !was.has(3)) I.use = true; for (const i of [2, 3, 11]) b(i) ? was.add(i) : was.delete(i);
         { const ls = g.lookS;     /* progress lane: stick look speed and invert (settings menu) */ this.cam.yaw -= dz(gp.axes[2]) * dt * 2.6 * (ls ? ls.px : 1); this.cam.pitch = clamp(this.cam.pitch + dz(gp.axes[3]) * dt * 1.6 * (ls ? ls.py : 1), -0.6, 1.2); } if (Math.abs(gp.axes[2]) > 0.12 || Math.abs(gp.axes[3]) > 0.12) this.cam.lookT = 0; }
       // keys are switches; a hand is not: the command eases in and out (quicker to let go than to push)

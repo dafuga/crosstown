@@ -242,7 +242,7 @@ export class World {
       fragmentShader: `uniform sampler2D tSky; uniform float uRot; uniform float uEnv; uniform float uGain, uGnd, uSkyGain; varying vec3 vDir;
         void main(){ vec3 d = normalize(vDir); float a = atan(d.z, d.x) - uRot; vec2 uv = vec2(a / 6.2831853 + 0.5, asin(clamp(d.y, -1., 1.)) / 3.14159265 + 0.5);
           vec3 c = textureLod(tSky, vec2(fract(uv.x), clamp(uv.y, 0.001, 0.999)), 0.0).rgb;
-          vec3 horizon = textureLod(tSky, vec2(fract(uv.x), 0.505), 0.0).rgb;
+          vec3 horizon = ${Q.get('skyground') === '0' ? 'textureLod(tSky, vec2(fract(uv.x), 0.505), 0.0).rgb' : 'vec3(0.62, 0.68, 0.80)'};
           // below the horizon: the city floor as the light sees it (dim, warm-grey), a soft blend up to the real sky
           vec3 ground = vec3(0.075, 0.07, 0.065) * uGnd * (uEnv > 0.5 ? 1.0 : 0.0) + (uEnv > 0.5 ? vec3(0.0) : horizon * 0.9);
           if (uEnv < 0.5) c = mix(c, vec3(0.62, 0.68, 0.80) * 1.05, 0.65 * exp(-max(d.y, 0.0) * 5.0));     // the air near the horizon, as the street haze has it
