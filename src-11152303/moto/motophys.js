@@ -80,7 +80,11 @@ function one(s, dt, inp, env) {
   if (inp.handbrake) acc -= Math.sign(vf) * Math.min(Math.abs(vf) / dt, 6);
   vf += acc * dt; s.acc = acc; s.braking = brk > 0.03 || !!inp.handbrake;
   // ---- the lean the keys ask for, and the lean it has
-  const want = cl(inp.steer || 0, -1, 1), rate = Math.abs(want) < Math.abs(s.sIn) || want * s.sIn < 0 ? 11 : 8; s.sIn += cl(want - s.sIn, -rate * dt, rate * dt);
+  const want = cl(inp.steer || 0, -1, 1);
+  // A tap asks for a small lean. A held key still reaches full lock.
+  const rise = inp.gentleSteer ? 2.5 : 8;
+  const rate = Math.abs(want) < Math.abs(s.sIn) || want * s.sIn < 0 ? 11 : rise;
+  s.sIn += cl(want - s.sIn, -rate * dt, rate * dt);
   const v = Math.abs(vf), am = aMax(v), lm = leanMax(v), slow = cl(1 - v / 1.2, 0, 1);
   const leanT = s.sIn * lm * (inp.handbrake ? 1.08 : 1) + T.footLean * slow;
   s.leanV += ((leanT - s.lean) * T.om * T.om - 2 * T.zeta * T.om * s.leanV) * dt; s.lean += s.leanV * dt; s.lean = cl(s.lean, -1.0, 1.0);

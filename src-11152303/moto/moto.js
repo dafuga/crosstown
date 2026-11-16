@@ -149,7 +149,7 @@ export function install(game) {
           if (ok(_o.x, _o.y)) { pl.x = _o.x; pl.y = _o.y; } else if (ok(q.x, q.y)) { pl.x = q.x; pl.y = q.y; } } } } catch (e) { M.err('clear', e); } };
 
   // ------------------------------------------------------------------------------------------------ the bike as one of the game's vehicles
-  const _I = { steer: 0, throttle: 0, brake: 0, handbrake: false, rider: false };
+  const _I = { gentleSteer: P.get('motosteer') !== '0', steer: 0, throttle: 0, brake: 0, handbrake: false, rider: false };
   // handover-3 (2a): is no point of the thrown rider in his own lying bike's box any more (or is he past the fall)?
   const riderClear = (v, F) => { const R = F.R; if (!R || F.up || F.dead || F.t > 6) return true; const c = Math.cos(v.h), sn = Math.sin(v.h), hl = DEF_DOWN.len / 2 + 0.04, hw = DEF_DOWN.wid / 2 + 0.04, z = v.z || 0;
     for (const k in R.P) { const a = R.P[k], ex = a.p.x - v.x, ey = -a.p.z - v.y; if (a.p.y < z + DEF_DOWN.hgt + a.r + 0.04 && Math.abs(ex * c + ey * sn) < hl + a.r && Math.abs(-ex * sn + ey * c) < hw + a.r) return false; } return true; };

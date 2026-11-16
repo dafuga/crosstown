@@ -180,6 +180,8 @@ async function loadTex(name, srgb) {
 
 export async function buildHeliModel(ctx) {
   const D = ctx.DIMS, P = ctx.game && ctx.game.P, W = ctx.world, t0 = performance.now();
+  const groundShadow = P?.get('helirotorshadow') !== '0';
+  const hubBlur = P?.get('helihubblur') !== '0';
   const root = new THREE.Group(); root.name = 'heli-model';
   // the camera's shutter: 1/50 s unless ?helishutter=<1/s> says otherwise (a stills camera at 1/1000 nearly freezes the blades). api.shutter may be set while it runs.
   const api = { root, update: null, lods: null, innerTrim: null, exhaust: EXHAUST.slice(), shutter: 1 / Math.max(10, +(P && P.get('helishutter')) || 50) };
@@ -303,14 +305,25 @@ export async function buildHeliModel(ctx) {
     // from the pilot's seat the disc overhead is a faint flicker, never a grey dome across the windscreen
     const wide = rotorPicture(L.blades, null, mCopies, mainBlur, uBlur, th, 0.09, view.inside ? SEAT : 1);
     if (L.blades) L.blades.castShadow = th < 0.004;
-    const armsBlur = th > 0.3, smear = th > 0.012 && !armsBlur && !!L.armCopies;      // at wide sweeps the hub's own sheets carry it for (const a of L.arms) a.visible = !(smear || armsBlur); linkBlur.visible = armsBlur && cur < 2 && !view.inside;
+    const armsBlur = th > 0.3, smear = th > 0.012 && !armsBlur && !!L.armCopies;
+    if (hubBlur) {
+      for (const arm of L.arms) arm.visible = !(smear || armsBlur);
+      linkBlur.visible = armsBlur && cur < 2 && !view.inside;
+    }
     if (L.armCopies) { for (const c of L.armCopies) c.visible = smear;
       if (smear) { const sw = Math.min(th * 2.0, 2.09);      /* a little more than the true sweep: at the true one the grips read as frozen beside blurred blades */ if (Math.abs(sw - armTh) > 1e-5 || L.armCopies[0].userData.th !== sw) { armTh = sw; for (const c of L.armCopies) { c.userData.th = sw; for (let k = 0; k < ARMS; k++) c.setMatrixAt(k, _m4.makeRotationY(((k + 0.5) / ARMS - 0.5) * sw)); c.instanceMatrix.needsUpdate = true; } }
         const wa = 0.3, m = ARMS * Math.min(1, wa / sw); mArmCopies.opacity = 1 - Math.pow(1 - Math.min(0.97, wa / sw), 1 / Math.max(1, m)); } }
     // the blade is a few centimetres thick: seen within a few degrees of the disc's plane the sheet is drawn three times over that thickness
     { let el = 1; if (view.camera) { _v3.copy(view.camera.position); root.worldToLocal(_v3); el = Math.abs(_v3.y - D.rotorY) / (Math.hypot(_v3.x, _v3.z) + 0.01); } const three = el < 0.14; if (three !== discThree) { discThree = three; mainBlur.geometry.setDrawRange(three ? 0 : 2 * SHEET, three ? Infinity : Infinity); } uLayers.value = three ? 3 : 1; }
     uBlurS.value.x = th; uBlurS.value.y = sstep(0.004, 0.012, th);
-    const sk = 0.5 * (1 - sstep(6, 18, f.agl || 0));      // faint: the blades' passing shadows (they turn with the rotor, so they flicker from frame to frame), no steady oval rotorShadow.visible = uBlurS.value.y > 0.005 && sk > 0.01 && cur < 2; rotorShadow.rotation.y = -f.rotorAngle; uShadowK.value = sk; uGroundY.value = f.surface || 0; if (W && W.sunDir) uSunTo.value.copy(W.sunDir);
+    const sk = 0.5 * (1 - sstep(6, 18, f.agl || 0));
+    rotorShadow.visible = groundShadow && uBlurS.value.y > 0.005 && sk > 0.01 && cur < 2;
+    if (rotorShadow.visible) {
+      rotorShadow.rotation.y = -f.rotorAngle;
+      uShadowK.value = sk;
+      uGroundY.value = f.surface || 0;
+      if (W && W.sunDir) uSunTo.value.copy(W.sunDir);
+    }
     // ---- tail rotor
     const thT = f.nr * D.tailRpm * TAU / 60 * shutter;
     L.tspin.rotation.y = -f.tailAngle; tailBlur.rotation.y = -f.tailAngle; rotorPicture(L.tblades, null, mTailCopies, tailBlur, uBlurT, thT, 0.3, 1);

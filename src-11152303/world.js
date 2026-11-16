@@ -489,7 +489,8 @@ export class World {
     if (n < 2) return;          // let the first frames (shadow map, materials) settle
     const ev = this.streetEvery || 3; if (n % ev) return;          // one face every third frame (every 4th or 6th when the game has cut detail to hold frame rate)
     // one face every third frame: a face is a whole (reduced) scene draw, about 4 ms of main thread on the M2 Pro
-    const f = (n / ev) % 6; if (f === 0) { cam.position.copy(this.camera.position); cam.updateMatrixWorld(true); if (cam.coordinateSystem !== r.coordinateSystem) { cam.coordinateSystem = r.coordinateSystem; cam.updateCoordinateSystem(); } }
+    const ordered = Q.get('streetfaces') !== '0';
+    const f = ordered ? (this.streetFace || 0) : (n / ev) % 6; if (f === 0) { cam.position.copy(this.camera.position); cam.updateMatrixWorld(true); if (cam.coordinateSystem !== r.coordinateSystem) { cam.coordinateSystem = r.coordinateSystem; cam.updateCoordinateSystem(); } }
     // Public feedback Nov 11 ("the reflections updates are very distracting"): the six faces used to be redrawn one at a time INTO the cube that
     // glass and paint were reading, so while driving the mirror picture jumped face by face. They are now drawn into a second, unseen cube and the
     // two are swapped when all six are done: every reflection changes at once. (The swap exchanges the two cubes' GPU textures; nothing that
@@ -497,8 +498,10 @@ export class World {
     if (!this.streetBack) { this.streetBack = new THREE.WebGLCubeRenderTarget(this.streetRT.width, { type: this.streetRT.texture.type, generateMipmaps: false, minFilter: THREE.LinearFilter }); this.streetBack.texture.colorSpace = this.streetRT.texture.colorSpace; r.initRenderTarget(this.streetBack); r.initRenderTarget(this.streetRT);     /* both must exist on the GPU or the swap below never happens and the shown cube stays blank */ }
     const old = r.getRenderTarget(), xr = r.xr.enabled; r.xr.enabled = false; this.shared.tStreet.value = this.streetDummy.texture; sm.autoUpdate = false;
     r.setRenderTarget(this.streetBack, f);     /* always the back cube: the swap below exchanges the GPU textures, so 'back' is always the unseen one (alternating targets as well drew into the shown cube and swapped in a blank one: glasskit, Nov 11) */ r.render(this.scene, cam.children[f]);
-    r.setRenderTarget(old); r.xr.enabled = xr; sm.autoUpdate = au; this.shared.tStreet.value = this.streetRT.texture;
+    r.setRenderTarget(old); r.xr.enabled = xr; sm.autoUpdate = au;
+    if (ordered) this.streetFace = (f + 1) % 6;
     if (f === 5) { const pa = r.properties.get(this.streetRT.texture), pb = r.properties.get(this.streetBack.texture); if (pa.__webglTexture && pb.__webglTexture) { const t = pa.__webglTexture; pa.__webglTexture = pb.__webglTexture; pb.__webglTexture = t; this.streetSwaps = (this.streetSwaps || 0) + 1; r.resetState(); } }
+    this.shared.tStreet.value = ordered && !this.streetSwaps ? this.streetDummy.texture : this.streetRT.texture;
   }
 
   setLiveAA(msaa) {
