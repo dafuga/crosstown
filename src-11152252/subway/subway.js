@@ -90,7 +90,7 @@ export async function install(game) {
   const glowMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false, side: THREE.DoubleSide }); glowMat.name = 'railglow';
   const unitOf = (st) => { let u = S.units.get(st.id); if (!u) S.units.set(st.id, (u = { st, state: 'none', gen: null, res: null, group: null, trains: [] })); return u; };
   const startUnit = async (u) => { u.state = 'look'; try { if (!u.st.floors) { const r = await fetch(DIR + 'st/' + u.st.id + '.json'); if (!r.ok) throw new Error('station file ' + r.status); Object.assign(u.st, await r.json()); }      /* a station's underground is its own small file, fetched when he first comes near */
-      const L = await getLook(); u.gen = buildStation(THREE, u.st, meta, L, { glowMat, turnstile: P.get("turnstile") === "1" /* lead, Nov 15 20:35: OFF by default after Matt was trapped in them (report 203006-de9413, 23 St at 31.2,-485.6); ?turnstile=1 = the real ones, until aufix hands over a fix */ }); u.state = 'building'; u.t0 = performance.now(); u.ms = 0; } catch (e) { fail('start ' + u.st.id, e); u.state = 'failed'; } };
+      const L = await getLook(); u.gen = buildStation(THREE, u.st, meta, L, { glowMat, turnstile: P.get("turnstile") !== "0" }); u.state = 'building'; u.t0 = performance.now(); u.ms = 0; } catch (e) { fail('start ' + u.st.id, e); u.state = 'failed'; } };
   const finishUnit = (u, res) => { u.res = res; u.walk = res.walk; u.group = res.group; u.gen = null;
     // caps over the stair openings (depth only) and, for the view from below once the city is not drawn, a bright card of sky in each opening
     const cp = [], ci = [], sp = []; let n = 0;
@@ -174,11 +174,11 @@ export async function install(game) {
   const setDeep = (on) => { if (S.deep === on) return; S.deep = on; emit('deep', on); try { const c = w.cam; if (c && c.taa && P.get('subtaa') !== '0') c.taa.valid = false; } catch (e) {}      /* the picture changes whole at this step (street off, or back on): the camera lane's frame blending carried the old picture over the new for about 0.3 s, a white veil over the far end of the hall (out/v7b-burst-rock/sheet.jpg); its history is dropped, so the next frame stands alone */ for (const u of S.units.values()) if (u.sky) u.sky.visible = on && u === S.unit;      /* only the sky up HIS station's stairs: a crossing station's card stood in the hall as a white shaft (Herald Sq N Q R W, out/all-heraldq/07-down-hall.jpg) */
     if (on) { saved = { mask: w.camera.layers.mask, env: w.scene.environmentIntensity, off: w.streetOff, bg: w.scene.background }; w.camera.layers.set(LAYER); w.scene.environmentIntensity = 0.03; w.streetOff = true; figureLayers(); }
     else if (saved) { w.camera.layers.mask = saved.mask; w.scene.environmentIntensity = saved.env; w.streetOff = saved.off; saved = null; } };
-  const enter = (u, e) => { S.own = true; S.unit = u; pos.x = pl.x; pos.y = pl.y; const f = u.st.floors.find((q) => q.k === 'street' && q.ent === e.id), uu = clamp(Walk.u(f, pl.x, pl.y), -f.l / 2 + 0.06, f.l / 2), vv = clamp(Walk.v(f, pl.x, pl.y), -f.w / 2 + R_BODY + 0.02, f.w / 2 - R_BODY - 0.02);
+  const enter = (u, e) => { S.entry = e; S.own = true; S.unit = u; pos.x = pl.x; pos.y = pl.y; const f = u.st.floors.find((q) => q.k === 'street' && q.ent === e.id), uu = clamp(Walk.u(f, pl.x, pl.y), -f.l / 2 + 0.06, f.l / 2), vv = clamp(Walk.v(f, pl.x, pl.y), -f.w / 2 + R_BODY + 0.02, f.w / 2 - R_BODY - 0.02);
     pos.x = f.x + f.ca * uu - f.sa * vv; pos.y = f.y + f.sa * uu + f.ca * vv; pos.z = Walk.zAt(f, uu); visZ = zW; dropV = DROP && zW - pos.z > 0.9 ? 0 : -1; S.floor = f; pl.roof = null; if (g.jump) { jumpWas = g.jump.on; g.jump.on = false; } u.res.core.visible = true; showWells(u); ensureTrains(u); figureLayers(); if (window.__mark) window.__mark('subway-in'); emit('enter', u, e); };
   // underground, only the station he is in is drawn: two stations of one complex cross each other in plan (Times Sq, Herald Sq), and their stairs and passages would stand in each other's halls
   const showWells = (only) => { for (const q of S.units.values()) if (q.res) { q.res.well.visible = !only || q === only; if (q.cap) q.cap.visible = !only || q === only; } };
-  const leave = (x, y) => { if (paid?.turning) finishTurn(paid); else clearFare(); jumpTime = 0; emit('leave', S.unit); S.own = false; S.ride = null; S.sit = null; S.keep = null; if (chip) hint(null); setDeep(false); setOrder(0); pl.x = x; pl.y = y; pl.alt = 0; if (g.jump) g.jump.on = jumpWas; if (S.unit) S.unit.res.core.visible = false; showWells(null); S.unit = null; S.floor = null; if (window.__mark) window.__mark('subway-out'); };
+  const leave = (x, y) => { if (paid?.turning) finishTurn(paid); else clearFare(); jumpTime = 0; emit('leave', S.unit); S.entry = null; S.own = false; S.ride = null; S.sit = null; S.keep = null; if (chip) hint(null); setDeep(false); setOrder(0); pl.x = x; pl.y = y; pl.alt = 0; if (g.jump) g.jump.on = jumpWas; if (S.unit) S.unit.res.core.visible = false; showWells(null); S.unit = null; S.floor = null; if (window.__mark) window.__mark('subway-out'); };
   S.leave = () => { if (S.own) leave(pl.x, pl.y); };
   const stairZ = (f, x, y) => { const u = Walk.u(f, x, y), n = f.n || 1, dn = f.z0 > f.z1 ? 1 : -1, d = clamp(dn * u + f.l / 2, 0, f.l - 1e-6), i = Math.floor(d / (f.l / n)); return Math.max(f.z0, f.z1) - (i + 1) * meta.rise; };
 
@@ -240,11 +240,13 @@ export async function install(game) {
     t.state = 'wait'; t.t = 40; t.train.group.visible = false; const da = Math.atan2(nt.uy, nt.ux) - Math.atan2(t.uy, t.ux); pl.h += da; g.cam.yaw += da;
     R.t = nt; u.res.core.visible = false; nu.res.core.visible = true; if (u.sky) u.sky.visible = false; if (nu.sky) nu.sky.visible = !!S.deep; S.unit = nu; showWells(nu); const [x, y] = tMap(nt, R.lx, R.lz); pos.x = x; pos.y = y; pl.x = x; pl.y = y; g.cam.tx = x; g.cam.ty = y; S._clip = undefined; S.stats.hops = (S.stats.hops || 0) + 1; if (window.__mark) window.__mark('subway-hop'); emit('hop', u, nu, nt);
     console.log('[subway] riding ' + u.st.name + ' -> ' + N.name); return true; };
-  let paid = null, jumpTime = 0, jumpHeld = false, fareReported = false;
+  let paid = null, exitTurn = null, jumpTime = 0, jumpHeld = false, fareReported = false;
   function clearFare() {
     if (paid && paid.screen) paid.screen.visible = false;
     paid = null;
   }
+  // Last instant at bar height on the 7*t*(0.8-t) jump arc, at running speed.
+  const jumpReach = 5.2 * (0.4 + Math.sqrt(0.4 ** 2 - 0.8 / 7));
   function fareInput(gates, use, jump, dt) {
     jumpTime = Math.max(0, jumpTime - dt);
     let near = null;
@@ -252,17 +254,24 @@ export async function install(game) {
       const x = pos.x - gate.x, y = pos.y - gate.y;
       if (Math.abs(pos.z - gate.z) > 0.35 || Math.abs(-x * gate.sa + y * gate.ca) > gate.width / 2) continue;
       const u = gate.pd * (x * gate.ca + y * gate.sa);
+      // A runner can take off before reaching the reader and still clear the bar.
+      if (jump && !jumpHeld && !jumpTime && Math.abs(u) <= jumpReach) {
+        jumpTime = 0.8; fareReported = false;
+      }
       if (Math.abs(u) > 1.35) continue;
       near = gate;
-      if (jump && !jumpHeld && !jumpTime) { jumpTime = 0.8; fareReported = false; }
       if (u < 0 && paid !== gate && !paid?.turning) {
         hint('Tap or swipe');
-        if (use) { clearFare(); paid = gate; if (gate.screen) gate.screen.visible = true; g.sound.shot(1046, 0.09); }
+        if (use) {
+          // A new entry payment starts a fresh cycle after a partial outward crossing.
+          if (exitTurn === gate) finishTurn(gate);
+          clearFare(); paid = gate; if (gate.screen) gate.screen.visible = true; g.sound.shot(1046, 0.09); }
       }
       break;
     }
     if (paid !== near && !paid?.turning) clearFare();
     if (paid?.turning && paid !== near) finishTurn(paid);
+    if (exitTurn && exitTurn !== near) finishTurn(exitTurn);
     jumpHeld = jump;
   }
   const thirdTurn = 2 * Math.PI / 3;
@@ -270,29 +279,51 @@ export async function install(game) {
     gate.angle = gate.turnBase + thirdTurn;
     gate.arm.setRotationFromAxisAngle(gate.axis, gate.angle);
     gate.turning = false;
-    clearFare();
+    if (exitTurn === gate) exitTurn = null;
+    if (paid === gate) clearFare();
   }
   function fareMove(walk, gates, dx, dy, radius) {
+    // Recover a body overlapping a cabinet into the adjacent lane without
+    // changing its distance along the lane or crossing the fare boundary.
+    for (const gate of gates) {
+      const x = pos.x - gate.x, y = pos.y - gate.y;
+      const lateral = -x * gate.sa + y * gate.ca;
+      if (Math.abs(pos.z - gate.z) > 0.35 || Math.abs(x * gate.ca + y * gate.sa) > 1 ||
+          Math.abs(lateral) > gate.width / 2 + radius) continue;
+      const exiting = gate.pd * (dx * gate.ca + dy * gate.sa) < 0;
+      if (!walk.free(pos.x, pos.y, pos.z, radius) ||
+          (exiting && !walk.free(pos.x + dx, pos.y + dy, pos.z, radius))) {
+        const cx = pos.x + lateral * gate.sa, cy = pos.y - lateral * gate.ca;
+        if (walk.free(cx, cy, pos.z, radius)) { pos.x = cx; pos.y = cy; }
+      }
+      break;
+    }
     const old = { ...pos }, floor = walk.move(pos, dx, dy, radius);
     for (const gate of gates) {
       const along = p => ((p.x-gate.x)*gate.ca + (p.y-gate.y)*gate.sa)*gate.pd;
       const before = along(old), after = along(pos);
       if (Math.abs(pos.z-gate.z)>0.35 || Math.abs(-(pos.x-gate.x)*gate.sa+(pos.y-gate.y)*gate.ca)>gate.width/2+radius) continue;
       const forward = after > before, air = jumpTime*(0.8-jumpTime)*7;
-      if (air < 0.8 && (forward ? before < 0 && after > -radius && paid !== gate : before >= 0 && after < radius)) {
+      // Only entry requires payment. The station side must always allow egress.
+      if (air < 0.8 && forward && before < 0 && after > -radius && paid !== gate) {
         Object.assign(pos, old); return S.floor;
       }
-      if (paid === gate && forward && after > -radius) {
+      const entering = paid === gate && forward && after > -radius;
+      const exiting = after < before && air < 0.8 &&
+        ((before >= 0 && after < 0) || exitTurn === gate);
+      if (entering || exiting) {
         if (!gate.turning) { gate.turnBase = gate.angle || 0; gate.turning = true; }
-        const progress = Math.min(1, (after + radius) / (2 * radius));
-        gate.angle = Math.max(gate.angle || 0, gate.turnBase + thirdTurn * progress);
+        if (exiting) exitTurn = gate;
+        const progress = exiting ? -after / radius : (after + radius) / (2 * radius);
+        gate.angle = Math.max(gate.angle || 0, gate.turnBase + thirdTurn * Math.min(1, progress));
         gate.arm.setRotationFromAxisAngle(gate.axis, gate.angle);
-        if (after >= radius) finishTurn(gate);
+        if (progress >= 1) finishTurn(gate);
       } else if ((before < 0) !== (after < 0)) {
-        if (air >= 0.8 && !fareReported) {
+        if (forward && air >= 0.8 && !fareReported) {
           fareReported = true;
           const heat = g.combat?.heat;
-          if (heat) Promise.resolve(heat.start ? heat.start('fare') : heat).then(h => h?.crime('fare', old.x, old.y, 1));
+          const entry = S.entry && S.entry.st === S.unit?.st?.id ? S.entry : null;
+          if (heat) Promise.resolve(heat.start ? heat.start('fare') : heat).then(h => h?.crime('fare', old.x, old.y, 1, entry));
         }
       }
     }
