@@ -37,7 +37,7 @@ export function roofKit(g, owner) {
   const flush = () => { for (const im of dirty) { im.instanceMatrix.needsUpdate = true; im.boundingSphere = null; im.boundingBox = null; im.computeBoundingSphere(); } dirty.clear(); };
   const rad = (r) => dims[r.kind].rad * r.s;
   // before any height is known
-  for (const r of recs) { const ok = !r.b.far && onOwn(r.b, r.x0, r.y0, rad(r)); put(r, ok, r.x0, r.y0, r.h0); K.stats.first[ok ? 'shown' : 'hidden']++; }
+  for (const r of recs) { const ok = !r.b.far && !r.b.noKit /* merge lane, batch 8: a building under a hero row marked "roofKit": false (hero.js) has no units */ && onOwn(r.b, r.x0, r.y0, rad(r)); put(r, ok, r.x0, r.y0, r.h0); K.stats.first[ok ? 'shown' : 'hidden']++; }
   flush();
 
   // ---- with the picture from above (heli.js calls this at the end of bake() with the squares it has just read)
@@ -46,7 +46,7 @@ export function roofKit(g, owner) {
   // the level roof under a foot of radius q at (x, y): its height, or -1 (cells of a square not read yet do not count)
   const level = (x, y, q) => { let lo = 1e9, hi = -1e9, n = 0; for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) { const v = raw(x + i * q, y + j * q); if (v < 0) continue; n++; if (v < lo) lo = v; if (v > hi) hi = v; } return n >= 5 && lo > MINROOF && hi - lo <= TOL ? lo : -1; };
   const clash = (r, x, y) => (byB.get(r.b) || []).some((o) => o !== r && o.on && o.done && Math.hypot(o.x - x, o.y - y) < rad(o) + rad(r) + 0.3);
-  const place = (r) => { const q = rad(r) + 0.5, S = K.stats; let h = level(r.x0, r.y0, q);
+  const place = (r) => { const q = rad(r) + 0.5, S = K.stats; if (r.b.noKit) { put(r, false); S.out++; return; }     /* merge lane, batch 8: as above */ let h = level(r.x0, r.y0, q);
     if (h >= 0 && !clash(r, r.x0, r.y0)) { put(r, true, r.x0, r.y0, h); S.kept++; if (S.dz.length < 20000) S.dz.push(+(r.h0 - h).toFixed(1)); return; }
     if (raw(r.x0, r.y0) >= 0 && raw(r.x0, r.y0) <= MINROOF) S.noRoof++;
     const a0 = (r.x0 * 12.9898 + r.y0 * 78.233) % 6.2832;

@@ -27,7 +27,10 @@ export function install(g, D) {
   const mPos = new THREE.BufferAttribute(F(MAXQ * 12), 3), mCol = new THREE.BufferAttribute(F(MAXQ * 16), 4); mPos.setUsage(THREE.DynamicDrawUsage); mCol.setUsage(THREE.DynamicDrawUsage);
   const idx = new Uint16Array(MAXQ * 6); for (let i = 0; i < MAXQ; i++) idx.set([i * 4, i * 4 + 1, i * 4 + 2, i * 4, i * 4 + 2, i * 4 + 3], i * 6);
   const mGeo = new THREE.BufferGeometry(); mGeo.setAttribute('position', mPos); mGeo.setAttribute('color', mCol); mGeo.setIndex(new THREE.BufferAttribute(idx, 1));
-  const mMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4, side: THREE.DoubleSide });
+  // the marks DARKEN the road under them (what is there times 1 - alpha) instead of painting a colour over it: a painted black picked up the night's and the
+  // rain's haze and stood out as pale bands on a dark wet road (seen Nov 17, tod 22 + rain); darkening is right in any light
+  const mMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, fog: false, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4, side: THREE.DoubleSide,
+    blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.ZeroFactor, blendDst: THREE.OneMinusSrcAlphaFactor, blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor });
   const marks = new THREE.Mesh(mGeo, mMat); marks.frustumCulled = false; marks.matrixAutoUpdate = false; marks.renderOrder = 3; marks.name = 'drift_marks'; marks.visible = false; scene.add(marks);
   let q = 0, used = 0;
   const range = (a, start, count) => { if (a.addUpdateRange) a.addUpdateRange(start, count); a.needsUpdate = true; };
@@ -64,18 +67,18 @@ export function install(g, D) {
   function frame(dt) {
     const pl = g.player, v = pl && pl.vehicle && !pl.vehicle.moto && D.on && X.on ? pl.vehicle : null;
     if (v !== car) { car = v; for (const s of W) s.has = false; }
-    let k = 0, sig = 0, sliding = false;
+    let k = 0, sig = 0, sliding = false; const wet = g.rain && g.rain.wet > 0 ? Math.min(1, g.rain.wet) : 0, dryK = 1 - 0.75 * wet;     // on a wet road tyres make little smoke and leave faint marks
     if (v && dt > 0) { const S = v._dr, sp = Math.hypot(v.vx, v.vy), hb = !!(g.input && g.input.handbrake);
       sliding = !!(S && S.on); sig = sliding ? S.sig : 0; k = clamp(((v.slip || 0) - 1.7) / 4.3, 0, 1); if (hb && sp > 3) k = Math.max(k, 0.45); if (sp < 1.2) k = 0;
       if (k > 0.04 || W.some((s) => s.has)) { const c = Math.cos(v.h), s = Math.sin(v.h), ws = wheelsOf(v), z = (v.z || 0) + MARK_Y, ux = sp > 0.5 ? v.vx / sp : c, uy = sp > 0.5 ? v.vy / sp : s;
         for (let i = 0; i < 4; i++) { const wq = ws[i], st = W[i], x = v.x + c * wq.f + s * wq.r, y = v.y + s * wq.f - c * wq.r;
           // the rears mark whenever they slide; the fronts only in a real four-wheel slide, and fainter
-          const a = (wq.front ? (sliding && Math.abs(sig) > 0.3 ? 0.55 * clamp((Math.abs(sig) - 0.3) / 0.3, 0, 1) : 0) : 1) * (k < 0.06 ? 0 : 0.34 + 0.56 * k);
+          const a = (wq.front ? (sliding && Math.abs(sig) > 0.3 ? 0.55 * clamp((Math.abs(sig) - 0.3) / 0.3, 0, 1) : 0) : 1) * (k < 0.06 ? 0 : 0.34 + 0.56 * k) * (1 - 0.65 * wet);
           const lx = x - uy * HALF_W, ly = y + ux * HALF_W, rx = x + uy * HALF_W, ry = y - ux * HALF_W;
           if (!st.has) { if (a > 0) { st.has = true; st.lx = lx; st.ly = ly; st.rx = rx; st.ry = ry; st.a = 0; st.px = x; st.py = y; } }
           else { const d = Math.hypot(x - st.px, y - st.py); if (d > 3) st.has = false; else if (d > 0.16 || a <= 0) { quad(st.lx, st.ly, st.rx, st.ry, rx, ry, lx, ly, z, st.a, a); st.lx = lx; st.ly = ly; st.rx = rx; st.ry = ry; st.a = a; st.px = x; st.py = y; if (a <= 0) st.has = false; } }
           // smoke from the rears (and a little from the fronts in a big slide), more of it the harder they slide; none in the rain's spray
-          if (!wq.front || (sliding && Math.abs(sig) > 0.5)) { st.acc += (wq.front ? 16 : 58) * k * k * dt * clamp(sp / 9, 0.35, 1.2); let cap = 4;
+          if (!wq.front || (sliding && Math.abs(sig) > 0.5)) { st.acc += (wq.front ? 16 : 58) * dryK * k * k * dt * clamp(sp / 9, 0.35, 1.2); let cap = 4;
             while (st.acc >= 1 && cap-- > 0) { st.acc -= 1; const sp2 = 0.5 + Math.random() * 0.9, an = Math.random() * 6.283, big = 0.75 + 0.6 * Math.random();
               puff(x + (Math.random() - 0.5) * 0.3, y + (Math.random() - 0.5) * 0.3, (v.z || 0) + 0.12, v.vx * 0.2 + Math.cos(an) * sp2, v.vy * 0.2 + Math.sin(an) * sp2, 0.35 + Math.random() * 0.6,
                 { life: 0.8 + 0.9 * Math.random(), s0: 0.3 * big, s1: (0.95 + 0.85 * k) * big, a: (0.07 + 0.11 * k) * (0.7 + 0.5 * Math.random()), sh: 0.7 + 0.2 * Math.random() }); } if (st.acc > 4) st.acc = 4; } } }

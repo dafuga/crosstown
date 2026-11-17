@@ -35,8 +35,8 @@ export const LOOSE = { sport: 1, hatch: 0.86, sedan: 0.8, taxi: 0.78, suv: 0.58,
 // straightening with the wheel straight). nat: the angle a held slide sits at with the wheel into the turn and the pedal down, rad (loosest). max, maxLo: the angle's ceiling, loosest and stiffest class. keep0, keepT: the share of the speed a slide
 // would scrub that is given back: always, and more with the pedal. hbDec: what the lever takes off along the car, turning / straight. spinK: how
 // much pull is lost to wheelspin at a full angle. out: the angle under which the slide is over, rad. resp: how fast the car's turn rate follows, 1/s
-// (loosest, stiffest).
-export const TUNE = { vIn: 4.5, vOut: 2.4, steerIn: 0.15, aLo: 13, aHi: 9, vLo: 12, vHi: 28, stiff: 6, kick: 2.7, track: 2.6, nat: 0.68, max: 1.05, maxLo: 0.21, keep0: 0.42, keepT: 0.5, hbDec: 1.8, hbDec0: 5.5, spinK: 0.25, spinUp: 0, gripUp: 0.35, out: 0.075, resp: 11, respLo: 3, respOut: 16, ease: 0, catch: 3.6, holdMin: 0.45 };
+// (loosest, stiffest). wet: the share of the slide's side grip a wet road takes (slides run longer and wider in the rain).
+export const TUNE = { vIn: 4.5, vOut: 2.4, steerIn: 0.15, aLo: 13, aHi: 9, vLo: 12, vHi: 28, stiff: 6, kick: 2.7, track: 2.6, nat: 0.68, max: 1.05, maxLo: 0.21, keep0: 0.42, keepT: 0.5, hbDec: 1.8, hbDec0: 5.5, spinK: 0.25, spinUp: 0, gripUp: 0.35, out: 0.075, resp: 11, respLo: 3, respOut: 16, wet: 0.2, ease: 0, catch: 3.6, holdMin: 0.45 };
 const NEUTRAL = { steer: 0, throttle: 0, brake: 0, handbrake: false };
 const _TSQ = (() => { try { const q = new URLSearchParams(location.search).get('topspeed'); return q === '0' ? 0 : 1; } catch (e) { return 0; } })();     // the lead's top-speed change of Nov 16 (handling.js has the same line)
 
@@ -47,7 +47,7 @@ const fresh = () => ({ on: false, st: 0, sig: 0, k: 0, cam: 0, t: 0, n: 0 });
 // one step of a car in a slide. D: game.drift; v: the Vehicle; inp: what cars.js (or the game) hands down; below: the step this file wraps.
 export function slide(D, v, dt, inp, g, below) {
   const T = D.TUNE, S = v._dr, L = S.L, sp = v.spec, hb = !!inp.handbrake, thr = clamp(inp.throttle || 0, 0, 1), brk = clamp(inp.brake || 0, 0, 1);
-  const c = Math.cos(v.h), s = Math.sin(v.h);
+  const c = Math.cos(v.h), s = Math.sin(v.h), wet = g.rain && g.rain.wet > 0 ? Math.min(1, g.rain.wet) : 0;     // the progress lane's rain: how wet the road is, 0..1
   let vf = v.vx * c + v.vy * s, vl = -v.vx * s + v.vy * c, r = v.yawV || 0;     // forward, LEFTWARD, yaw rate (left is +)
   const sig0 = Math.atan2(-vl, Math.max(vf, 0.5)), spd0 = Math.hypot(vf, vl);     // the slide's angle: + = nose left of the way the car is going
   const th0 = Math.atan2(v.vy, v.vx);
@@ -62,7 +62,7 @@ export function slide(D, v, dt, inp, g, below) {
   if (hb) acc -= Math.min(Math.abs(vf) / dt, lerp(T.hbDec0, lerp(T.hbDec0, T.hbDec, Math.min(1, L * 1.5)), Math.min(1, Math.abs(st) * 1.5)));
   vf = Math.max(0, vf + acc * dt);
   // ---- across the car: the tyres push against the side speed, up to the slide's grip; part of what that scrubs off is given back
-  const aCap = lerp(T.aLo, T.aHi, clamp((spd0 - T.vLo) / (T.vHi - T.vLo), 0, 1)) * lerp(0.8, 1, L) * (1 + T.gripUp * clamp((L - 0.8) / 0.2, 0, 1)), spd1 = Math.hypot(vf, vl);     /* the loosest class has the tyres to match its speed: its path comes round as tightly as an ordinary car's although it carries more speed through the slide */
+  const aCap = lerp(T.aLo, T.aHi, clamp((spd0 - T.vLo) / (T.vHi - T.vLo), 0, 1)) * lerp(0.8, 1, L) * (1 + T.gripUp * clamp((L - 0.8) / 0.2, 0, 1)) * (1 - T.wet * wet), spd1 = Math.hypot(vf, vl);     /* the loosest class has the tyres to match its speed: its path comes round as tightly as an ordinary car's although it carries more speed through the slide */
   vl += clamp(-vl * (1 - Math.exp(-dt * T.stiff)), -aCap * dt, aCap * dt);
   { const spd2 = Math.hypot(vf, vl), keep = hb ? T.keep0 : T.keep0 + T.keepT * thr; if (spd2 > 0.5 && spd2 < spd1) { const k = (spd2 + (spd1 - spd2) * keep) / spd2; vf *= k; vl *= k; } }
   // how fast the way the car is going has just turned (the turn rate at which the angle would stay as it is)

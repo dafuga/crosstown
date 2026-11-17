@@ -14,6 +14,7 @@ export const ACTIONS = [
   { code: 'Space', group: 'Move', label: 'Jump on foot / handbrake in a car', also: 'helicopter: climb · fly camera: up' },
   { code: 'KeyF', group: 'Move', label: 'Get in or out', also: 'car and helicopter' },
   { code: 'Enter', group: 'Move', label: 'Get in or out (second key)' },
+  { code: 'KeyZ', group: 'Move', label: 'Flashlight on / off', also: 'on foot (light lane, src/flashlight.js)' },
   { code: 'ArrowUp', group: 'Move', label: 'Forward (second key)', also: 'helicopter: nose down · fly camera: look up' },
   { code: 'ArrowDown', group: 'Move', label: 'Back (second key)', also: 'helicopter: nose up · fly camera: look down' },
   { code: 'ArrowLeft', group: 'Move', label: 'Left (second key)', also: 'helicopter: bank left · fly camera: look left' },
