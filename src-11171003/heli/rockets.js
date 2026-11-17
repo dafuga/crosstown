@@ -58,7 +58,7 @@ export function addRockets(heli, ctx) {
   // the first solid along a ray (the height picture of the city: streets, roofs, walls), marching; null if none in reach
   const march = (o, d, reach, out) => { let t = 6, st = 4; while (t < reach) { const x = o.x + d.x * t, y = o.y + d.y * t, z = o.z + d.z * t; if (H.top(x, -z, y + 0.5) > y) { let lo = t - st, hi = t; for (let i = 0; i < 6; i++) { const m = (lo + hi) / 2; if (H.top(o.x + d.x * m, -(o.z + d.z * m), o.y + d.y * m + 0.5) > o.y + d.y * m) hi = m; else lo = m; } out.set(o.x + d.x * lo, o.y + d.y * lo, o.z + d.z * lo); return lo; } t += st; st = Math.min(12, st * 1.08); } return null; };
   // every car in the street near a point: traffic and parked (what blast.js also walks)
-  const carsNear = (x, y, r, fn) => { const T = g.traffic; if (T && T.cars) for (const v of T.cars) { if (v && !v.dead && Math.abs(v.x - x) < r && Math.abs(v.y - y) < r) fn(v); } const hv = g.combat && g.combat.heat && g.combat.heat.units; if (hv) for (const u of hv) { const v = u.car || u.v; if (v && Math.abs(v.x - x) < r && Math.abs(v.y - y) < r) fn(v); } };
+  const carsNear = (x, y, r, fn) => { const T = g.traffic; if (T && T.cars) for (const v of T.cars) { if (v && !v.dead && Math.abs(v.x - x) < r && Math.abs(v.y - y) < r) fn(v); } const hv = g.combat && g.combat.heat && g.combat.heat.units; if (Array.isArray(hv)) for (const u of hv)     /* Nov 17 hotfix: with the police out, heat.units is not a list: the loop threw ('hv is not iterable'), three throws switched the rockets off for the session */ { const v = u.car || u.v; if (v && Math.abs(v.x - x) < r && Math.abs(v.y - y) < r) fn(v); } };
 
   function aimUpdate() {
     const d = boreDir(_a); S.aimOk = false; S.lock = null;

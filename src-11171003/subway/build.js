@@ -16,7 +16,10 @@ class Bucket {
     g.setIndex(this.n > 65535 ? new THREE.Uint32BufferAttribute(this.i, 1) : new THREE.Uint16BufferAttribute(this.i, 1)); g.computeBoundingSphere(); g.computeBoundingBox(); const m = new THREE.Mesh(g, this.mat); m.name = name; m.matrixAutoUpdate = false; m.castShadow = false; m.receiveShadow = false; return m; }
 }
 
-export function* buildStation(THREE, S, meta, look, opts = {}) {
+// Nov 17: the pauses were by count (every 6 floors, 3 flights, 40 things); a sign or a name tablet painted between two pauses took 50 ms and more, and the piece ran to 80 ms in one frame while
+// he rode toward the station. Now a pause is due after 2.5 ms of work, whatever the piece (by count as before where there is no clock: node).
+const due = (n, every) => { if (!due.now) return n % every === 0; if (due.t === undefined) due.t = due.now(); return due.now() - due.t >= 2.5; }; due.now = typeof performance !== 'undefined' && performance.now ? () => performance.now() : null;
+export function* buildStation(THREE, S, meta, look, opts = {}) { due.t = due.now ? due.now() : undefined;
   const walk = new Walk(meta); walk.a = (S.frame && S.frame.a) || 0;      /* nav.js lays its lattice along the station */
   const B = new Map(), M = look.mat, group = new THREE.Group(); group.name = 'subway_' + S.id;
   // two parts: 'well' (street stairs, landings, passages: drawn whenever the station is loaded, they are what is seen from the street) and 'core' (the rest: only drawn when someone is down there)
@@ -123,9 +126,9 @@ export function* buildStation(THREE, S, meta, look, opts = {}) {
         quad(M.metal, [sp.a[0], sp.a[1], z + 1.05], [sp.b[0], sp.b[1], z + 1.05], [b2[0], b2[1], z + 1.05], [a2[0], a2[1], z + 1.05], [0, 0], [Ls, 0], [Ls, t], [0, t], { amb: 0.085 }); continue; }
       { const a2 = [sp.a[0] - n[0] * 0.007, sp.a[1] - n[1] * 0.007], b2 = [sp.b[0] - n[0] * 0.007, sp.b[1] - n[1] * 0.007]; wallQuad(TL, a2, b2, z, z + 0.216, { amb: 0.085, v0: z, in: -1, tint: [0.1, 0.105, 0.11], cell: 2.5 }); }
       if (k === 'platform') { wallQuad(TL, sp.a, sp.b, z, zTile, { amb: 0.085, v0: z, in: -1 }); wallQuad(M.ceiling, sp.a, sp.b, zTile, zP + hP, { amb: 0.085, in: -1, k: 0.48 }); } else wallQuad(TL, sp.a, sp.b, z, z + hM + 0.012, { amb: 0.085, v0: z, in: -1 }); }      /* 12 mm: over the highest ceiling of any neighbour (they differ by up to 10 mm so that they never lie in one plane); up to its OWN ceiling left a hairline where a lower wall met a higher ceiling (23 St, stair 56: out/well/zoom-fm23.jpg) */      // (+ e: up to this floor's own ceiling; a landing's is 9 mm higher and the slit showed as a white line)
-    if (++work % 6 === 0) yield; }
+    if (due(++work, 6)) { yield; due.t = due.now ? due.now() : 0; } }
   part = 'core';
-  for (const C of S.ceils || []) for (const R of C.rects) { R.ca = Math.cos(R.a); R.sa = Math.sin(R.a); flatQuad(M.ceiling, R, -R.l / 2, R.l / 2, -R.w / 2, R.w / 2, R.z0, { amb: 0.05, cell: inStationRect(R) ? CELL : 3, kf: overTrack }); if (++work % 6 === 0) yield; }
+  for (const C of S.ceils || []) for (const R of C.rects) { R.ca = Math.cos(R.a); R.sa = Math.sin(R.a); flatQuad(M.ceiling, R, -R.l / 2, R.l / 2, -R.w / 2, R.w / 2, R.z0, { amb: 0.05, cell: inStationRect(R) ? CELL : 3, kf: overTrack }); if (due(++work, 6)) { yield; due.t = due.now ? due.now() : 0; } }
   function overTrack(x, y) { if (!S.tc || !S.pw) return 1; const t = tOf(x, y); let d = 1e9; for (const c of S.tc) d = Math.min(d, Math.abs(t - c) - S.pw / 2); return d <= 0 ? 1 : d > 0.9 ? 0.07 : 1 - 0.93 * d / 0.9; }
   function inStationRect(R) { return S.plen && Math.abs(sOf(R.x, R.y)) < S.plen / 2 + 20 && R.l < 60; }
 
@@ -156,7 +159,7 @@ export function* buildStation(THREE, S, meta, look, opts = {}) {
       if (dc > 0 && dc < F.l) { for (const sd of [-1, 1]) wallQuad(TL, P(F, U(dc), sd * W, 0), P(F, U(F.l), sd * W, 0), zBot, [zLo(dc), zLo(F.l)], { amb: 0.07, v0: zBot });
         wallQuad(TL, P(F, U(dc), -W, 0), P(F, U(dc), W, 0), zBot, zLo(dc), { amb: 0.07, v0: zBot }); }
     }
-    if (++work % 3 === 0) yield; }
+    if (due(++work, 3)) { yield; due.t = due.now ? due.now() : 0; } }
   // a thin square rod between two map points (handrails)
   function rod(mat, a, b, r) { const dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy) || 1, nx = -dy / L * r, ny = dx / L * r; const o = { amb: 0.12, cell: 3 };
     quad(mat, [a[0] + nx, a[1] + ny, a[2] + r], [b[0] + nx, b[1] + ny, b[2] + r], [b[0] - nx, b[1] - ny, b[2] + r], [a[0] - nx, a[1] - ny, a[2] + r], [0, 0], [L, 0], [L, 2 * r], [0, 2 * r], o);
@@ -273,10 +276,10 @@ export function* buildStation(THREE, S, meta, look, opts = {}) {
     else if (t.k === 'gate') { const F = S.floors.find((f) => f.k === 'landing' && f.ent === t.ent); if (F) { const a = P(F, F.l / 2 - 0.25, -F.w / 2, 0), b = P(F, F.l / 2 - 0.25, F.w / 2, 0); wallQuad(M.steel, a, b, zM, zM + hM, { amb: 0.085, v0: zM });
         if (look.sign) { const sg = signOf('closed', () => look.sign([{ text: 'This entrance is closed' }], { h: 0.16 })), hw = Math.min(F.w * 0.42, sg.w / 2), hh = hw / sg.w * sg.h, c = P(F, F.l / 2 - 0.28, 0, zM + 1.55); quad(sg.material, [c[0] + F.sa * hw, c[1] - F.ca * hw, c[2] - hh], [c[0] - F.sa * hw, c[1] + F.ca * hw, c[2] - hh], [c[0] - F.sa * hw, c[1] + F.ca * hw, c[2] + hh], [c[0] + F.sa * hw, c[1] - F.ca * hw, c[2] + hh], [0, 0], [1, 0], [1, 1], [0, 1], { flat: 0.9 }); }
         walk.addObstacle({ x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2, a: F.a, l: 0.3, w: F.w, zlo: zM - 1, zhi: zM + 3 }); } }
-    if (++work % 40 === 0) yield; }
+    if (due(++work, 40)) { yield; due.t = due.now ? due.now() : 0; } }
   { const cols = THINGS.filter((t) => t.k === 'col' && t.lvl !== 't'), dep = { m: 0.3, p: 0.42 }; part = 'core';
     for (const c of cols) { const s0 = sOf(c.x, c.y), t0 = tOf(c.x, c.y); let nb = null, bd = 5.2; for (const q of cols) { if (q === c || q.lvl !== c.lvl) continue; const ds = sOf(q.x, q.y) - s0; if (ds > 0.5 && ds < bd && Math.abs(tOf(q.x, q.y) - t0) < 0.2) { bd = ds; nb = q; } } if (!nb) continue;
-      const d = dep[c.lvl] || 0.3, zt = c.z + c.h, mx = (c.x + nb.x) / 2, my = (c.y + nb.y) / 2; box(M.ceiling, mx, my, zt - d, Math.atan2(nb.y - c.y, nb.x - c.x), bd, 0.32, d, { amb: 0.07, cell: 2.4, noTop: true, k: 0.8, bottom: { amb: 0.07, cell: 2.4, k: 0.6 } }); if (++work % 30 === 0) yield; } }
+      const d = dep[c.lvl] || 0.3, zt = c.z + c.h, mx = (c.x + nb.x) / 2, my = (c.y + nb.y) / 2; box(M.ceiling, mx, my, zt - d, Math.atan2(nb.y - c.y, nb.x - c.x), bd, 0.32, d, { amb: 0.07, cell: 2.4, noTop: true, k: 0.8, bottom: { amb: 0.07, cell: 2.4, k: 0.6 } }); if (due(++work, 30)) { yield; due.t = due.now ? due.now() : 0; } } }
   if (S.plen && S.tc && S.pw) { const zc = zP + hP, ed = S.tc.length > 1 ? Math.min(...S.tc.map((c) => Math.abs(c))) - S.pw / 2 : 0; if (ed > 2) for (let s0 = -S.plen / 2 + 2.3; s0 < S.plen / 2; s0 += 4.6) { box(M.ceiling, F0.x + fca * s0, F0.y + fsa * s0, zc - 0.5, F0.a + Math.PI / 2, ed * 2, 0.3, 0.5, { amb: 0.05, cell: 3.6, noTop: true, k: 0.3, bottom: { amb: 0.05, cell: 3.6, k: 0.22 } }); } yield; }
   // the colour band course along both outer walls, at the tablets' height
   part = 'core';

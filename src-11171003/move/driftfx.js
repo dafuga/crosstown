@@ -6,19 +6,21 @@
 import * as THREE from 'three';
 const clamp = (x, a, b) => (x < a ? a : x > b ? b : x), lerp = (a, b, t) => a + (b - a) * t;
 
-const MAXQ = 1600, MAXP = 560, MARK_Y = 0.024, HALF_W = 0.13;
+const MAXQ = 1600, MAXP = 900, MARK_Y = 0.024, HALF_W = 0.13;
 // the smoke sprite: a soft round wisp with its own noise (the surprises kit's steam sprite, so smoke and steam sit in the picture the same way)
-const PVERT = `attribute vec4 aPos; attribute vec4 aCol; attribute float aSeed; varying vec2 vQ; varying vec4 vC; varying float vSeed;
+const PVERT = `attribute vec4 aPos; attribute vec4 aCol; attribute float aSeed; varying vec2 vQ; varying vec4 vC; varying float vSeed; varying vec2 vRot;
   void main(){ vQ = position.xy * 2.0; vC = aCol; vSeed = aSeed; vec4 mv = viewMatrix * vec4(aPos.xyz, 1.0); float s = aPos.w;
     vC.a *= smoothstep(1.5, 5.0, -mv.z);      /* thin close to the camera: the chase camera sits in the car's own trail, and smoke there would be a white sheet over the picture */
-    float a = aSeed * 6.2831853; float c = cos(a), sn = sin(a); mv.xy += vec2(c * position.x - sn * position.y, sn * position.x + c * position.y) * s;
+    float a = aSeed * 6.2831853; float c = cos(a), sn = sin(a); vRot = vec2(c, sn); mv.xy += vec2(c * position.x - sn * position.y, sn * position.x + c * position.y) * s;
     gl_Position = projectionMatrix * mv; if (aCol.a <= 0.0 || s <= 0.0) gl_Position = vec4(2.0, 2.0, 2.0, 1.0); }`;
-const PFRAG = `varying vec2 vQ; varying vec4 vC; varying float vSeed;
+const PFRAG = `varying vec2 vQ; varying vec4 vC; varying float vSeed; varying vec2 vRot;
   float h2(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
   float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(h2(i), h2(i + vec2(1.0, 0.0)), f.x), mix(h2(i + vec2(0.0, 1.0)), h2(i + vec2(1.0, 1.0)), f.x), f.y); }
   void main(){ float r = length(vQ); if (r >= 1.0) discard;
     float n = vn(vQ * 1.3 + vSeed * 37.0) * 0.65 + vn(vQ * 2.9 - vSeed * 11.0) * 0.35; float e = 1.0 - r; float a = e * e * (3.0 - 2.0 * e) * (0.25 + 0.75 * smoothstep(0.25, 0.7, n + e * 0.3));
-    a *= vC.a; if (a < 0.004) discard; gl_FragColor = vec4(vC.rgb * a, a); }`;
+    float up = vRot.y * vQ.x + vRot.x * vQ.y;      /* how far up the screen this bit of the puff is, -1..1 */
+    float lit = (0.66 + 0.4 * smoothstep(-0.7, 0.75, up + (n - 0.5) * 0.9)) * (0.9 + 0.2 * n);      /* the day's light falls from above: tops bright, undersides in their own shade, lumps catching it */
+    a *= vC.a; if (a < 0.004) discard; gl_FragColor = vec4(vC.rgb * lit * a, a); }`;
 
 export function install(g, D) {
   const w = g.world, scene = w.scene, F = (n) => new Float32Array(n);
@@ -52,11 +54,11 @@ export function install(g, D) {
   function kill(i) { const j = --n; if (i === j) return; for (let k = 0; k < 3; k++) { pp[i * 3 + k] = pp[j * 3 + k]; pv[i * 3 + k] = pv[j * 3 + k]; } age[i] = age[j]; life[i] = life[j]; s0[i] = s0[j]; s1[i] = s1[j]; al[i] = al[j]; sd[i] = sd[j]; sh[i] = sh[j]; }
   const light = [1, 1, 1];
   function drawSmoke(dt) {
-    for (let i = n - 1; i >= 0; i--) { age[i] += dt; if (age[i] >= life[i]) { kill(i); continue; } const o = i * 3, k = Math.max(0, 1 - 1.6 * dt); pv[o] *= k; pv[o + 1] *= k; pv[o + 2] = pv[o + 2] * Math.max(0, 1 - 0.6 * dt) + 0.75 * dt; pp[o] += pv[o] * dt; pp[o + 1] += pv[o + 1] * dt; pp[o + 2] += pv[o + 2] * dt; }
+    for (let i = n - 1; i >= 0; i--) { age[i] += dt; if (age[i] >= life[i]) { kill(i); continue; } const o = i * 3, k = Math.max(0, 1 - 1.6 * dt); pv[o] *= k; pv[o + 1] *= k; pv[o + 2] = pv[o + 2] * Math.max(0, 1 - 0.6 * dt) + 1.15 * dt; pp[o] += pv[o] * dt; pp[o + 1] += pv[o + 1] * dt; pp[o + 2] += pv[o + 2] * dt; }
     { const f = scene.fog ? scene.fog.color : { r: 0.62, g: 0.68, b: 0.8 }, nn = g.night ? g.night.n || 0 : 0, s = (1 - nn) * 0.35; light[0] = f.r + s; light[1] = f.g + s * 0.97; light[2] = f.b + s * 0.9; }
     const P = aPos.array, C = aCol.array, S = aSeed.array;
-    for (let i = 0; i < n; i++) { const u = age[i] / life[i], fin = Math.min(1, u / 0.08), out = 1 - clamp((u - 0.3) / 0.7, 0, 1); P[i * 4] = pp[i * 3]; P[i * 4 + 1] = pp[i * 3 + 2]; P[i * 4 + 2] = -pp[i * 3 + 1]; P[i * 4 + 3] = lerp(s0[i], s1[i], Math.sqrt(u));
-      C[i * 4] = sh[i] * light[0]; C[i * 4 + 1] = sh[i] * light[1]; C[i * 4 + 2] = sh[i] * light[2]; C[i * 4 + 3] = al[i] * fin * out * out; S[i] = sd[i]; }
+    for (let i = 0; i < n; i++) { const u = age[i] / life[i], fin = Math.min(1, u / 0.08), out = 1 - clamp((u - 0.45) / 0.55, 0, 1); const sz = lerp(s0[i], s1[i], Math.sqrt(u)); P[i * 4] = pp[i * 3]; P[i * 4 + 1] = Math.max(pp[i * 3 + 2], sz * 0.4); P[i * 4 + 2] = -pp[i * 3 + 1]; P[i * 4 + 3] = sz;
+      C[i * 4] = sh[i] * light[0]; C[i * 4 + 1] = sh[i] * light[1]; C[i * 4 + 2] = sh[i] * light[2]; C[i * 4 + 3] = al[i] * fin * out; S[i] = sd[i]; }
     pGeo.instanceCount = n; smoke.visible = n > 0; X.live = n;
     if (n) { for (const a of [aPos, aCol]) { a.clearUpdateRanges && a.clearUpdateRanges(); a.addUpdateRange && a.addUpdateRange(0, n * 4); a.needsUpdate = true; } aSeed.clearUpdateRanges && aSeed.clearUpdateRanges(); aSeed.addUpdateRange && aSeed.addUpdateRange(0, n); aSeed.needsUpdate = true; }
   }
@@ -78,10 +80,10 @@ export function install(g, D) {
           if (!st.has) { if (a > 0) { st.has = true; st.lx = lx; st.ly = ly; st.rx = rx; st.ry = ry; st.a = 0; st.px = x; st.py = y; } }
           else { const d = Math.hypot(x - st.px, y - st.py); if (d > 3) st.has = false; else if (d > 0.16 || a <= 0) { quad(st.lx, st.ly, st.rx, st.ry, rx, ry, lx, ly, z, st.a, a); st.lx = lx; st.ly = ly; st.rx = rx; st.ry = ry; st.a = a; st.px = x; st.py = y; if (a <= 0) st.has = false; } }
           // smoke from the rears (and a little from the fronts in a big slide), more of it the harder they slide; none in the rain's spray
-          if (!wq.front || (sliding && Math.abs(sig) > 0.5)) { st.acc += (wq.front ? 16 : 58) * dryK * k * k * dt * clamp(sp / 9, 0.35, 1.2); let cap = 4;
+          if (!wq.front || (sliding && Math.abs(sig) > 0.5)) { st.acc += (wq.front ? 14 : 46) * dryK * k * k * dt * clamp(sp / 9, 0.35, 1.2); let cap = 4;
             while (st.acc >= 1 && cap-- > 0) { st.acc -= 1; const sp2 = 0.5 + Math.random() * 0.9, an = Math.random() * 6.283, big = 0.75 + 0.6 * Math.random();
-              puff(x + (Math.random() - 0.5) * 0.3, y + (Math.random() - 0.5) * 0.3, (v.z || 0) + 0.12, v.vx * 0.2 + Math.cos(an) * sp2, v.vy * 0.2 + Math.sin(an) * sp2, 0.5 + Math.random() * 0.8,
-                { life: 1.3 + 1.5 * Math.random(), s0: 0.3 * big, s1: (1.15 + 1.0 * k) * big, a: (0.06 + 0.09 * k) * (0.7 + 0.5 * Math.random()), sh: 0.6 + 0.2 * Math.random() }); } if (st.acc > 4) st.acc = 4; } } }
+              puff(x + (Math.random() - 0.5) * 0.3, y + (Math.random() - 0.5) * 0.3, (v.z || 0) + 0.12, v.vx * 0.17 + Math.cos(an) * sp2, v.vy * 0.17 + Math.sin(an) * sp2, 0.9 + Math.random() * 1.1,
+                { life: 2.1 + 1.6 * Math.random(), s0: 0.32 * big, s1: (1.7 + 1.2 * k) * big, a: (0.085 + 0.115 * k) * (0.7 + 0.5 * Math.random()), sh: 0.62 + 0.2 * Math.random() }); } if (st.acc > 4) st.acc = 4; } } }
       // a controller hums with the slide
       if (k > 0.2 && (rumT -= dt) <= 0) { rumT = 0.09; try { const pads = navigator.getGamepads ? navigator.getGamepads() : []; for (const p of pads) if (p && p.connected && p.vibrationActuator && p.vibrationActuator.playEffect) { p.vibrationActuator.playEffect('dual-rumble', { duration: 110, weakMagnitude: 0.15 + 0.45 * k, strongMagnitude: 0.25 * k }); break; } } catch (e) {} }
     }
