@@ -331,14 +331,15 @@ export function exitsNearestBoxFace(u, v, endU, endV, length, width, epsilon) {
     (gapV <= gapU + epsilon && away(v,endV) >= width-epsilon);
 }
 
-export function staticPathBlocked(st, x, y, px, py, allObstacles, person) {
+export function staticPathBlocked(st, x, y, px, py, allObstacles, person, edgeOnlyRadius, radius = 0.25) {
+  const edgeRadius = edgeOnlyRadius ?? radius;
   const dx = px - x, dy = py - y, length2 = dx * dx + dy * dy;
   const gap2 = (qx, qy, ax, ay, vx, vy, len2) => {
     const u = clamp(((qx - ax) * vx + (qy - ay) * vy) / (len2 || 1), 0, 1);
     return (qx - ax - u * vx) ** 2 + (qy - ay - u * vy) ** 2;
   };
   // Trunks are center-indexed (radius <= 0.5 m). Larger park props span their grid cells.
-  const pad = allObstacles ? Math.max(0.7, st.maxCircleRadius + 0.25) : 0.7, size = st.cell;
+  const pad = edgeOnlyRadius ?? (allObstacles ? Math.max(0.7, st.maxCircleRadius + radius) : 0.7), size = st.cell;
   for (let i = Math.floor((Math.min(x, px) - pad) / size); i <= Math.floor((Math.max(x, px) + pad) / size); i++) {
     for (let j = Math.floor((Math.min(y, py) - pad) / size); j <= Math.floor((Math.max(y, py) + pad) / size); j++) {
       const key = st.key(i, j);
@@ -349,12 +350,13 @@ export function staticPathBlocked(st, x, y, px, py, allObstacles, person) {
         // The raycast handles crossings. For disjoint segments the minimum
         // separation occurs at an endpoint. Allow existing contact to recede.
         const startGap2 = gap2(x, y, ax, ay, vx, vy, edge2);
-        if (person && startGap2 < 0.25 ** 2) person.retreatingFromObstacle = true;
-        const limit = Math.min(0.25 ** 2, startGap2) - 1e-10;
+        if (person && startGap2 < edgeRadius ** 2) person.retreatingFromObstacle = true;
+        const limit = Math.min(edgeRadius ** 2, startGap2) - 1e-10;
         if (gap2(px, py, ax, ay, vx, vy, edge2) < limit ||
             gap2(ax, ay, x, y, dx, dy, length2) < limit ||
             gap2(bx, by, x, y, dx, dy, length2) < limit) return true;
       }
+      if (edgeOnlyRadius !== undefined) continue;
       for (const index of [st.circ, st.parkEdges]) {
         const circles = index?.get(key);
         if (!circles) continue;
@@ -362,11 +364,11 @@ export function staticPathBlocked(st, x, y, px, py, allObstacles, person) {
           if (!o.on || !(allObstacles || o.parkSolid || o.set?.startsWith('park:trunks:'))) continue;
           const u = ((o.x - x) * dx + (o.y - y) * dy) / length2;
           if (u <= 0) {
-            if (person && Math.hypot(x-o.x, y-o.y) < o.r + 0.25) person.retreatingFromObstacle = true;
+            if (person && Math.hypot(x-o.x, y-o.y) < o.r + radius) person.retreatingFromObstacle = true;
             continue;
           }
           const t = Math.min(1, u);
-          if (Math.hypot(x + t * dx - o.x, y + t * dy - o.y) < o.r + (allObstacles ? 0.25 : 0.2) - 1e-8) return true;
+          if (Math.hypot(x + t * dx - o.x, y + t * dy - o.y) < o.r + (allObstacles ? radius : 0.2) - 1e-8) return true;
         }
       }
     }

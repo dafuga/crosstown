@@ -14,6 +14,10 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { BAKE_LIGHT_GLSL } from '../facade.js';
+/* merge lane batch 9: parkside.js is fetched only on a map that can use it (one of the uptown lane's sets in city.meta.sets, or one of its four switches in the address); every other map gets the same empty answer parkside() gives there, with no request */
+const upSide = async (game) => { if (game.__parkside) return game.__parkside; const Q = game.P, has = (k) => !!(Q && Q.get && Q.get(k) !== null);
+  if ((game.city && game.city.meta && (game.city.meta.sets || []).some((s) => /^u\d/.test((s && s.set) || ''))) || has('pkside') || has('hexwalk') || has('pkbench') || has('pkwall')) return (await import('./parkside.js')).parkside(game);
+  return (game.__parkside = { hex: false, bench: false, wall: false, wallH: 1.3, segs: [], strips: [], byExt: new Map(), inStrip: () => false, report: { segs: 0 } }); };
 
 const TAU = Math.PI * 2, PI = Math.PI;
 const hsh = (a, b = 0, c = 0) => { const s = Math.sin(a * 12.9898 + b * 78.233 + c * 37.719 + 0.5) * 43758.5453; return s - Math.floor(s); };
@@ -1009,6 +1013,9 @@ function buildProtos(A, A2, A3) {
   { const b = pb(); b.lathe([[0.44, 0], [0.54, 0.1], [0.7, 0.36], [0.86, 0.5], [0.86, 0.56], [0.76, 0.52]], C('#a49d8e'), { w: [0.22, 0], seg: 10 }); b.push(lumpy(new THREE.SphereGeometry(1, 7, 5), 0.25, 4, 3), C('#2f4c25'), PLAIN, b.mat([0, 0.68, 0], {}, new THREE.Vector3(0.7, 0.32, 0.68))); P.planterL = b.build(); }
   { const b = pb(); b.push(lumpySmooth(new THREE.BoxGeometry(1.25, 0.56, 0.78, 8, 4, 5), 0.014, 3), C('#8f8a80'), { w: [0.14, 0], colFn: (x, y, z) => { const k = (0.72 + 0.5 * hsh(Math.round(x * 31), Math.round(y * 31), Math.round(z * 31))) * (0.85 + 0.15 * Math.min(1, y * 3)); return [0.27 * k, 0.26 * k, 0.24 * k]; } }, b.mat([0, 0.27, 0])); P.block = b.build(); }
   { const b = pb(); b.lathe([[0.13, 0], [0.13, 0.03], [0.06, 0.07], [0.045, 0.09]], C('#101011'), { w: [0, 0], seg: 8 }); b.cyl([0, 0.08, 0], [0, 0.92, 0], 0.04, 0.038, C('#bdbdb4'), { w: [0, 0], seg: 8, cap: true, colFn: (x, y) => (y > 0.62 && y < 0.7) || (y > 0.78 && y < 0.86) ? C('#8e9192') : null }); P.delin = b.build(); }
+  // ---- uptown (landmarks 9): the park-side bench (1939 World's Fair type): hooped cast-iron ends, dark green slats; ONE shape near and far so the row reads from across the avenue
+  { const b = pb(), gr = C('#2c4a34'), gr2 = C('#35553c'), ir = C('#1b2a20'); for (const x of [-0.98, 0, 0.98]) { b.box([x, 0.22, -0.02], [0.05, 0.44, 0.5], ir, PLAIN); b.box([x, 0.64, -0.26], [0.05, 0.46, 0.05], ir, { w: [0, 0], rx: -0.22 }); if (x) { b.box([x, 0.62, 0.0], [0.05, 0.035, 0.5], ir, PLAIN); b.box([x, 0.53, 0.23], [0.05, 0.2, 0.04], ir, PLAIN); } }
+    for (let k = 0; k < 5; k++) b.box([0, 0.45, -0.2 + k * 0.105], [2.0, 0.035, 0.09], k % 2 ? gr2 : gr, PLAIN); for (let k = 0; k < 4; k++) b.box([0, 0.55 + k * 0.1, -0.245 - k * 0.022], [2.0, 0.085, 0.03], k % 2 ? gr : gr2, { w: [0, 0], rx: -0.22 }); P.pkbench = b.build(); }
   // ---- park edge: iron fence panel (2 m), bench stand-in
   { const b = pb(), I = { w: [0.45, 0.25] }; b.box([0, 0.66, 0], [0.055, 1.32, 0.055], cIron, I); b.sph([0, 1.36, 0], 0.05, cIron, Object.assign({ seg: 6, rings: 4 }, I)); b.box([1, 0.16, 0], [2, 0.035, 0.02], cIron, I); b.box([1, 1.08, 0], [2, 0.035, 0.02], cIron, I);
     for (let k = 1; k < 16; k++) { b.box([k * 0.125, 0.64, 0], [0.016, 1.12, 0.016], cIron, I); } b.box([1, -0.05, 0], [2, 0.3, 0.14], C('#6e6a62'), PLAIN); P.fence = b.build(); }
@@ -1045,6 +1052,27 @@ function buildProtos(A, A2, A3) {
     b.push(new THREE.TorusGeometry(0.07, 0.004, 3, 8), C('#c9a227'), { w: [0.1, 0.3] }, b.mat([1.2, 2.16, 1.5], { rx: PI / 2 })); P.shedUnder = b.build(); }
   { const b = pb(); b.quad('board', [0, 0.45, 0.012], 1.6, 0.6, { vary: true, w: [0.05, 0] }); b.box([0, 0.45, 0.004], [1.64, 0.64, 0.012], C('#2a2b2c'), PLAIN); P.shedBoard = b.build(); }
   { const b = pb(); b.quad('closed', [0, 0.3, 0.012], 0.44, 0.44, { ci: 1, w: [0.05, 0] }); b.box([0, 0.3, 0.004], [0.47, 0.47, 0.012], C('#d9d6cc'), PLAIN); P.shedPermit = b.build(); }
+  // ---- uptown (parkside): Central Park's perimeter wall as a STAND-IN (THE PARK LANE'S TO REPLACE; ?pkwall=0 = the picket fence as before): 2 m of rough grey-brown
+  //      schist ashlar, 1.1 m high, 0.45 m thick, under long capstones. Three layouts of stones (pkwall0-2), each again as flat faces for far off (pkwallL0-2), a gate pier.
+  { /* uptown (landmarks 9, critic r7 'low, dark, brick-like'): 1.3 m with a heavier coping, TWO courses of larger uneven stones (was three brick-like courses, 1.1 m), tones a fifth lighter and greyer; no photo in rounds/r1 shows the wall, so the tone is NOT measured */
+/* uptown (landmarks 10, critic r8 'smooth grey blocks like a new retaining wall'; real: low rough DARK brownstone-and-schist, irregular stones, rounded heavy coping, sooty): THREE uneven courses of stones 0.24-0.86 m long, tones dark brown and dark grey-brown (was mid grey), each stone bulging 2-8 cm with a rougher face, near-black joints, a coping of a wide slab under a narrower rounded one; 1.3 m kept. Tone still NOT measured (no photo shows the wall). */
+const TONES = ['#5a4a3e', '#4e4238', '#66564a', '#463e38', '#5c5048', '#6e6052', '#3e3a36', '#57483a', '#4a4a48', '#6a5240'].map(C), cap = C('#5e564b'), mort = C('#1f1c18');
+    /* uptown (landmarks 11, critic r9 'dark brick-like blocks with a peach pier'; real: rough grey-brown stone under a flat cap): RUBBLE, not courses: each 2 m panel is columns 0.34-0.9 m wide, each column
+       one, two or three stones split at its own heights, so no bed joint runs the length; ONE flat cap slab (was a slab under a rounded one); the pier is the wall's own stones, a shade darker (its sunlit end read peach). */
+    const stone = (b, bl, x, y, w, h, n, v) => { const k = 0.7 + 0.5 * hsh(v + 1, n, 2), t0 = TONES[Math.floor(hsh(v + 1, n, 3) * TONES.length)], col = [t0[0] * k, t0[1] * k, t0[2] * k], bulge = 0.02 + 0.07 * hsh(n, v, 9);
+      b.push(lumpySmooth(new THREE.BoxGeometry(w - 0.04, h - 0.04, 0.45 + bulge * 2, 1, 1, 1), 0.05, n + v * 40), col, PLAIN, b.mat([x + w / 2, y + h / 2, 0]));
+      if (bl) for (const sd of [1, -1]) bl.push(new THREE.PlaneGeometry(w, h), [col[0] * 0.93, col[1] * 0.93, col[2] * 0.93], PLAIN, bl.mat([x + w / 2, y + h / 2, sd * 0.235], { ry: sd > 0 ? 0 : PI })); };
+    for (let v = 0; v < 3; v++) { const b = pb(), bl = pb(), H = 1.13; let x = 0, n = 0, c = 0;
+      b.box([1, 0.56, 0], [2, 1.12, 0.37], mort, PLAIN);
+      while (x < 2 - 1e-6) { let w = 0.34 + 0.56 * hsh(v + 1, c, 1); if (2 - x - w < 0.3) w = 2 - x; const r = hsh(v + 1, c, 5), a = hsh(v + 1, c, 6), d = hsh(v + 1, c, 7);
+        const cuts = r < 0.2 ? [0, H] : r < 0.78 ? [0, H * (0.3 + 0.4 * a), H] : [0, H * (0.24 + 0.14 * a), H * (0.58 + 0.16 * d), H];
+        for (let q = 0; q + 1 < cuts.length; q++) stone(b, bl, x, cuts[q], w, cuts[q + 1] - cuts[q], n++, v);
+        x += w; c++; }
+      const c1 = 0.8 + 0.4 * hsh(v, 77); for (const [x0, x1, kk] of [[0, c1, 0.94 + 0.1 * hsh(v, 78)], [c1, 2, 0.94 + 0.1 * hsh(v, 79)]]) b.push(lumpySmooth(new THREE.BoxGeometry(x1 - x0 - 0.014, 0.13, 0.64, 2, 1, 1), 0.012, 300 + v), [cap[0] * kk, cap[1] * kk, cap[2] * kk], PLAIN, b.mat([(x0 + x1) / 2, 1.195, 0]));
+      bl.box([1, 1.195, 0], [2, 0.13, 0.62], cap, PLAIN);
+      P['pkwall' + v] = b.build(); P['pkwallL' + v] = bl.build(); }
+    const b = pb(); let pn = 0; [[0, 0.5], [0.5, 0.86], [0.86, 1.3]].forEach(([y0, y1], c) => { const sp = 0.2 + 0.24 * hsh(c, 83); for (const [x0, x1] of (c === 1 ? [[-0.32, 0.32]] : [[-0.32, -0.32 + sp + 0.2], [-0.32 + sp + 0.2, 0.32]])) { const k = 0.6 + 0.3 * hsh(c, pn, 81), t0 = TONES[(pn * 3 + 1) % TONES.length]; b.push(lumpySmooth(new THREE.BoxGeometry(x1 - x0 - 0.03, y1 - y0 - 0.03, 0.66, 1, 1, 1), 0.035, pn + 7), [t0[0] * k, t0[1] * k, t0[2] * k], PLAIN, b.mat([(x0 + x1) / 2, (y0 + y1) / 2, 0])); pn++; } });
+    b.box([0, 0.64, 0], [0.58, 1.28, 0.58], mort, PLAIN); b.box([0, 1.365, 0], [0.78, 0.13, 0.78], [cap[0] * 0.9, cap[1] * 0.9, cap[2] * 0.9], PLAIN); P.pkpier = b.build(); }
   return P;
 }
 
@@ -1091,7 +1119,8 @@ function within(p, x, y, lim) {
 export async function add(game, ctx) {
   const city = game.city, world = game.world, shared = world.shared, statics = game.statics, roads = game.roads, AS = ctx.A + 'furniture/';
   const group = new THREE.Group(); group.name = 'st_furniture';
-  const SW = 0.15, meta = city.meta, playable = (x, y) => Math.abs(x) < meta.px + 8 && Math.abs(y) < meta.py + 8;
+  const UPS = await upSide(game), UP_NO = /^(planter|urn|ptable|pchair|cafe|chalk|aframe|crate|cbox|bag|block|kiosk)/;     /* uptown (parkside): the sidewalk outside Central Park's wall takes no shop-front things (planters, urns, cafe sets, boards, boxes, bags); ?pkwall=0 = as before */
+  const SW = 0.15, meta = city.meta, away = !!(meta.play && (meta.play[1] > meta.py || meta.play[3] < -meta.py || meta.play[0] > meta.px || meta.play[2] < -meta.px) && !(game.P && game.P.get('furnall') === '0')) /* uptown: a map whose box does not touch the old core box at all (the uptown test row) had NO furniture by the test below; it takes the whole playable box. Maps that hold the core are as before. ?furnall=0 = the old test */, playable = (x, y) => (away ? game.bounds.in(x, y, 14) : Math.abs(x) < meta.px + 8 && Math.abs(y) < meta.py + 8);
 
   // ---- street names at the signalled crossings -> blade cells
   const sigs = city.props.signal || [], names = [], nameIx = new Map();
@@ -1117,7 +1146,7 @@ export async function add(game, ctx) {
     pchairL: 0, cbox: 0.4, crate: 0.4, ubox: 0.5, kiosk: [0.4, 0.7], block: [0.9, 0.6], bag: 0.45, chalk: 0.5, barrier: [1.0, 0.45], cone: 0.26, spost: 0.16, busstop: 0.18, bench: [1.1, 0.5], cbflat: [0.6, 0.45] };
   const BINT = [C('#2c3d34'), C('#263830'), C('#5d6163'), C('#6f7375'), C('#232526')];
   let frameSolid = null;      // set below, once the collision helpers exist: bikes and racks are solid along their frames (public feedback Nov 12: "Bikes dont have collision")
-  const put = (name, x, y, z, h, o) => { const K = kinds[name]; if (!K) return; if (frameSolid && (name === 'bike' || name === 'bikeB' || name === 'bikeShare' || name === 'rack')) { const fq = frameSolid(name, x, y, h); if (!fq) return; x = fq[0]; y = fq[1]; } if ((name === 'basket' || name === 'basketFull') && !(o && o.tint)) o = Object.assign({ tilt: [(hsh(x, y, 71) - 0.5) * 0.09, (hsh(x, y, 72) - 0.5) * 0.09], s: 0.9 + 0.16 * hsh(x, y, 73) }, o, { tint: BINT[Math.floor(hsh(Math.round(x / 60), Math.round(y / 60), 74) * 2.99) + (hsh(x, y, 75) < 0.07 ? 2 : 0)] }); K.list.push([x, y, z, h, o || null]); const B = BLOB[name]; if (name === 'ptable' || name === 'pchair') put(name + 'L', x, y, z, h, o);  if (name === 'lampA' || name === 'lampS') put('lampSh', x, y, z, h, { s: name === 'lampA' ? 1 : 0.88 }); if (name === 'bike' || name === 'bikeB') { put('bikeL', x, y, z, h, o); put('bikeM', x, y, z, h, o); } if (name === 'basket' || name === 'basketFull') put('basketL', x, y, z, h, o); if (name === 'planter0' || name === 'planter1' || name === 'planter2' || name === 'planter3') put('planterL', x, y, z, h, o); if (name === 'urn0' || name === 'urn1' || name === 'urn2') put('urnL', x, y, z, h, o);
+  const put = (name, x, y, z, h, o) => { const K = kinds[name]; if (!K) return; if (UPS.wall && UPS.segs.length && UP_NO.test(name) && UPS.inStrip(x, y)) return;     /* uptown (parkside) */ if (frameSolid && (name === 'bike' || name === 'bikeB' || name === 'bikeShare' || name === 'rack')) { const fq = frameSolid(name, x, y, h); if (!fq) return; x = fq[0]; y = fq[1]; } if ((name === 'basket' || name === 'basketFull') && !(o && o.tint)) o = Object.assign({ tilt: [(hsh(x, y, 71) - 0.5) * 0.09, (hsh(x, y, 72) - 0.5) * 0.09], s: 0.9 + 0.16 * hsh(x, y, 73) }, o, { tint: BINT[Math.floor(hsh(Math.round(x / 60), Math.round(y / 60), 74) * 2.99) + (hsh(x, y, 75) < 0.07 ? 2 : 0)] }); K.list.push([x, y, z, h, o || null]); const B = BLOB[name]; if (name === 'ptable' || name === 'pchair') put(name + 'L', x, y, z, h, o);  if (name === 'lampA' || name === 'lampS') put('lampSh', x, y, z, h, { s: name === 'lampA' ? 1 : 0.88 }); if (name === 'bike' || name === 'bikeB') { put('bikeL', x, y, z, h, o); put('bikeM', x, y, z, h, o); } if (name === 'basket' || name === 'basketFull') put('basketL', x, y, z, h, o); if (name === 'planter0' || name === 'planter1' || name === 'planter2' || name === 'planter3') put('planterL', x, y, z, h, o); if (name === 'urn0' || name === 'urn1' || name === 'urn2') put('urnL', x, y, z, h, o);
     if (SHP[name] && kinds['sh_' + SHP[name]]) kinds['sh_' + SHP[name]].list.push([x, y, z, h, o || null]);
     if ((name === 'pchair' || name === 'ptable') && kinds.sunsh && !(o && o.tilt && Math.abs(o.tilt[0]) > 1)) { const hgt = name === 'pchair' ? 0.86 : 0.73, rad = name === 'pchair' ? 0.24 : 0.33, len = hgt * SUN.k; kinds.sunsh.list.push([x + SUN.dx * len / 2, y + SUN.dy * len / 2, z + 0.016, SUN.h, { s: [len / 2 + rad, 1, rad] }]); }
  if (B && kinds.blob) { const k = o && typeof o.s === 'number' ? o.s : 1; kinds.blob.list.push([x, y, z + 0.012, h, { s: typeof B === 'number' ? [B * k, 1, B * k] : [B[0] * k, 1, B[1] * k] }]); } };
@@ -1164,7 +1193,8 @@ export async function add(game, ctx) {
   def('rack', P.rack, { far: 220 , shadow: false }); def('bike', P.bike, { far: 20, shadow: false }); def('bikeB', P.bikeB, { far: 20, shadow: false }); def('bikeM', P.bikeM, { near: 20, far: 60, shadow: false }); def('bikeL', P.bikeL, { near: 60, far: 170, shadow: false }); def('bikeShare', P.bikeShare, { far: 190 }); def('dock', P.dock, { far: 260 , shadow: false }); def('dockKiosk', P.dockKiosk, { far: 400 , shadow: false });
   def('ptable', P.ptable, { far: 60 }); def('pchair', P.pchair, { far: 36 }); def('ptableL', P.ptableL, { near: 60, far: 260, shadow: false }); def('pchairL', P.pchairL, { near: 36, far: 200, shadow: false }); def('umbrella', P.umbrella, { far: 600 }); def('umbrellaC', P.umbrellaC, { far: 400 , shadow: false }); def('umbrellaV1', P.umbrellaV1, { far: 600 }); def('umbrellaV2', P.umbrellaV2, { far: 600 });
   def('planter0', P.planter0, { far: 50, shadow: false }); def('planter1', P.planter1, { far: 50, shadow: false }); def('planter2', P.planter2, { far: 50, shadow: false }); def('planter3', P.planter3, { far: 50, shadow: false }); def('urn0', P.urn0, { far: 30, shadow: false }); def('urn1', P.urn1, { far: 30, shadow: false }); def('urn2', P.urn2, { far: 30, shadow: false }); def('urnL', P.urnL, { near: 30, far: 300, shadow: false }); def('planterL', P.planterL, { near: 50, far: 300, shadow: false }); def('block', P.block, { far: 400 }); def('delin', P.delin, { far: 220, shadow: false });
-  def('fence', P.fence, { far: 240 , shadow: false }); def('benchP', P.benchP, { near: 0, far: 320 , shadow: false }); def('cone', P.cone, { far: 220 , shadow: false }); def('aframe', P.aframe, { far: 260, fam: 'closed' , shadow: false });
+  for (let v = 0; v < 3; v++) { def('pkwall' + v, P['pkwall' + v], { far: 90 }); def('pkwallL' + v, P['pkwallL' + v], { near: 90, far: 900, shadow: false }); } def('pkpier', P.pkpier, { far: 500 });     /* uptown (parkside): the stand-in for Central Park's wall */
+  def('fence', P.fence, { far: 240 , shadow: false }); def('benchP', P.benchP, { near: 0, far: 320 , shadow: false }); def('pkbench', P.pkbench, { far: 420, shadow: false });     /* uptown (landmarks 9) */ def('cone', P.cone, { far: 220 , shadow: false }); def('aframe', P.aframe, { far: 260, fam: 'closed' , shadow: false });
   def('scaf', P.scaf, { far: 120, shadow: false }); def('net', [{ geometry: P.net, material: netMat, noShadow: true }], { far: 200, shadow: false }); def('cart', P.cart, { far: 450, fam: 'cart' });
   def('shedUnder', P.shedUnder, { far: 80, shadow: false }); def('shedBoard', P.shedBoard, { far: 200, shadow: false, fam: 'board' }); def('shedPermit', P.shedPermit, { far: 90, shadow: false });
 
@@ -1527,7 +1557,9 @@ export async function add(game, ctx) {
   for (const pk of parks) {
     const ring = area2(pk.ext) > 0 ? pk.ext : pk.ext.slice().reverse(); if (!playable((pk.bb[0] + pk.bb[2]) / 2, (pk.bb[1] + pk.bb[3]) / 2)) continue; let run = 12;
     if (game.park && game.park.on && game.park.owns(pk.ext.reduce((s, p) => s + p[0], 0) / pk.ext.length, pk.ext.reduce((s, p) => s + p[1], 0) / pk.ext.length)) continue;     /* park lane: Central Park has its own furniture (src/park/props.js) */
+    const upRing = UPS.wall ? UPS.byExt.get(pk.ext) : null;     /* uptown (parkside): Central Park's edges on a perimeter street get the stone wall below, not this fence */
     for (let i = 0; i < ring.length; i++) {
+      if (upRing && upRing.has(i)) continue;
       const a = ring[i], b = ring[(i + 1) % ring.length], SL = Math.hypot(b[0] - a[0], b[1] - a[1]); if (SL < 1.2) { run += SL; continue; }
       const tx = (b[0] - a[0]) / SL, ty = (b[1] - a[1]) / SL, nx = -ty, ny = tx, h = Math.atan2(ty, tx), n = Math.max(1, Math.round(SL / 2)), m = SL / n;
       for (let k = 0; k < n; k++) {
@@ -1543,6 +1575,21 @@ export async function add(game, ctx) {
       }
     }
   }
+
+  // ================================================================= uptown (parkside): outside Central Park's wall (parkside.js has the edges, the gates and the bench places)
+  //   the wall: a STAND-IN on the park's outline, THE PARK LANE'S TO REPLACE (their handoff draws the real one), solid, open at the gates with a pier each side; ?pkwall=0
+  //   the benches: wood-slat park benches in runs against the wall, facing the street; ?pkbench=0
+  let pkWallM = 0, pkBenches = 0; const pkParkWall = !!(game.park && game.park.on) && !(game.P && game.P.get('pkwall') === '1');     /* merge lane batch 9: with the park lane's layer on, the park draws its own wall from the lidar (src/park/structs.js) and this stand-in is not put up, as its header says; the hexagon paving, the benches and the cleared strip stay. ?pkwall=1 = the stand-in as well; ?park=0 = the stand-in alone */
+  for (const sg of UPS.segs) { const h = Math.atan2(sg.ty, sg.tx);
+    if (UPS.wall && !pkParkWall) for (const w of sg.walls) { const len = w[1] - w[0], n = Math.max(1, Math.round(len / 2)), m = len / n, P2 = (u) => [sg.ax + sg.tx * u, sg.ay + sg.ty * u], A = P2(w[0]), B = P2(w[1]); if (!playable((A[0] + B[0]) / 2, (A[1] + B[1]) / 2) && !playable(A[0], A[1]) && !playable(B[0], B[1])) continue;
+      for (let k = 0; k < n; k++) { const q = P2(w[0] + k * m); if (!playable(q[0], q[1])) continue; const v = Math.floor(hsh(q[0], q[1], 31) * 2.999), flip = hsh(q[0], q[1], 32) < 0.5, x = flip ? q[0] + sg.tx * m : q[0], y = flip ? q[1] + sg.ty * m : q[1], hh = flip ? h + PI : h;
+        put('pkwall' + v, x, y, SW, hh, { s: [m / 2, 1, 1] }); put('pkwallL' + v, x, y, SW, hh, { s: [m / 2, 1, 1] }); pkWallM += m; }
+      if (w[2] && playable(A[0], A[1])) put('pkpier', A[0], A[1], SW, h); if (w[3] && playable(B[0], B[1])) put('pkpier', B[0], B[1], SW, h);
+      if (SOLID) statics.addSeg(A[0], A[1], B[0], B[1], UPS.wallH, 'pkwall'); }     /* the jump reads the height (geo.js TAGS) */
+    if (UPS.bench) for (const q of sg.benches) { if (!playable(q[0], q[1]) || occ.hit(q[0], q[1], 0.7)) continue; put('pkbench', q[0], q[1], SW, h); take(q[0], q[1], 1.0, 0); pkBenches++;     /* uptown (landmarks 9): was the street layer's bench + benchP (brown slats, thin far shape: did not read against the wall) */
+     
+      for (const o of [solid(q[0] - sg.tx * 0.5, q[1] - sg.ty * 0.5, 0.35), solid(q[0] + sg.tx * 0.5, q[1] + sg.ty * 0.5, 0.35)]) if (o) { o.seat = SW + 0.465; o.top = SW + 0.9; o.kind = 'bench'; } } }
+  if (UPS.segs.length) console.log('[streets] furniture: park-side sidewalk (uptown): ' + Math.round(pkWallM) + ' m of stand-in wall' + (pkParkWall ? ' (the park layer draws its own)' : '') + ', ' + pkBenches + ' benches, ' + JSON.stringify(UPS.report));
 
   // ================================================================= along every kerb
   const busGrid = new Grid(60), dockGrid = new Grid(80), counts = {};

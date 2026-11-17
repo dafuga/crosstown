@@ -16,8 +16,8 @@
 //   - wheel against the slide: the nose swings back to the path in about half a second and the car grips again;
 //   - no snap the other way and no spin: the angle has a ceiling.
 // PER CLASS (cars.js's class of the car, or its size when ?cars=0): LOOSE below. The sports car is the loosest (60 degrees, quick to rotate),
-// ordinary cars 50, the SUV and pickup 38, a van 28 and no hold, a truck 21. The bus is left on the game's own lever (TUNE.minLoose): it steps out a little
-// there already, and a real slide in a 12 m bus put it into the parked row.
+// ordinary cars 50, the SUV and pickup 38, a van 28 and no hold. The truck and the bus are left on the game's own lever (TUNE.minLoose): they step out a
+// little there already, and a real slide in a 7 m truck or a 12 m bus put it into the parked row (seen in a browser, Nov 17).
 //
 // WHERE IT SITS: its line in game.js comes after handling.js's and before cars.js's, so it wraps handling's step and cars.js wraps this: what
 // arrives is the per-kind v.spec and cars.js's substitute pedals. While a slide is on, this file moves the car and the step below is not run
@@ -37,7 +37,7 @@ export const LOOSE = { sport: 1, hatch: 0.86, sedan: 0.8, taxi: 0.78, suv: 0.58,
 // would scrub that is given back: always, and more with the pedal. hbDec: what the lever takes off along the car, turning / straight. spinK: how
 // much pull is lost to wheelspin at a full angle. out: the angle under which the slide is over, rad. resp: how fast the car's turn rate follows, 1/s
 // (loosest, stiffest). wet: the share of the slide's side grip a wet road takes (slides run longer and wider in the rain).
-export const TUNE = { vIn: 4.5, vOut: 2.4, steerIn: 0.15, aLo: 13, aHi: 9, vLo: 12, vHi: 28, stiff: 6, kick: 2.7, track: 2.6, nat: 0.68, max: 1.05, maxLo: 0.21, keep0: 0.42, keepT: 0.5, hbDec: 1.8, hbDec0: 5.5, spinK: 0.25, spinUp: 0, gripUp: 0.35, out: 0.075, resp: 11, respLo: 3, respOut: 16, wet: 0.2, minLoose: 0.2, ease: 0, catch: 3.6, holdMin: 0.45 };
+export const TUNE = { vIn: 4.5, vOut: 2.4, steerIn: 0.15, aLo: 13, aHi: 9, vLo: 12, vHi: 28, stiff: 6, kick: 2.7, track: 2.6, nat: 0.68, max: 1.05, maxLo: 0.21, keep0: 0.42, keepT: 0.5, hbDec: 1.8, hbDec0: 5.5, spinK: 0.25, spinUp: 0, gripUp: 0.35, out: 0.075, resp: 11, respLo: 3, respOut: 16, wet: 0.2, minLoose: 0.3, ease: 0, catch: 3.6, holdMin: 0.45 };
 const NEUTRAL = { steer: 0, throttle: 0, brake: 0, handbrake: false };
 const _TSQ = (() => { try { const q = new URLSearchParams(location.search).get('topspeed'); return q === '0' ? 0 : 1; } catch (e) { return 0; } })();     // the lead's top-speed change of Nov 16 (handling.js has the same line)
 

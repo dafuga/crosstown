@@ -359,8 +359,9 @@ export class CrowdSim {
     const tote = this.accNames.indexOf('tote'), shop = this.accNames.indexOf('shopping'), hb = this.accNames.indexOf('handbag'), bp = this.accNames.indexOf('backpack'); for (const i of [tote, shop, hb, bp]) if (i >= 0) a.acc &= ~(1 << i);
     this.hands(a); a.clip = clip.i; a.blend = 0; a.ph = r(); return a;
   }
-  seatBlocked(q, x, y, checkStatics = true, bodyHeight = (q.seat ?? 0.46) + 1, clearance = 0.15) {
+  seatBlocked(q, x, y, checkStatics = true, bodyHeight = (q.seat ?? 0.46) + 1, clearance = 0.15, leaving) {
     if (this.vehicleAt(x, y, x, y, undefined, false, undefined, q, bodyHeight)) return true;
+    if (leaving && this.vehicleAt(x, y, leaving.x, leaving.y, undefined, true, undefined, q, bodyHeight)) return true;
     if (!checkStatics) return false;
     const st = this.g.statics;
     if ((q.z ?? 0) <= 1) {
@@ -384,14 +385,30 @@ export class CrowdSim {
         }
       }
     }
-    const nearby = this._seatFurniture || (this._seatFurniture = []);
-    nearby.length = 0;
-    this.nav.soft(x - clearance, y - clearance, x + clearance, y + clearance, nearby);
-    if ((q.z ?? 0) + bodyHeight > 1) this.nav.raisedTablesNear?.(x - clearance, y - clearance, x + clearance, y + clearance, nearby);
-    for (const o of nearby) if (o.seatObstacle && (q.z ?? 0) < o.seatObstacle.top && (q.z ?? 0) + bodyHeight > o.seatObstacle.base && Math.hypot(x - o.x, y - o.y) < o.h + clearance) return true;
+    if (this.furnitureAtHeight(leaving?.x ?? x, leaving?.y ?? y, x, y, q.z ?? 0, bodyHeight, clearance)) return true;
     const inside = q.z > 1 ? this.nav.inBuilding(x, y, q.z + bodyHeight, q.z) :
       this.nav.inBuilding(x, y, 2.5);
     return inside || this.g.statics.resolve(x, y, 0.3, _o, true, true) > 0;
+  }
+  furnitureAtHeight(px, py, x, y, floor, bodyHeight, clearance, allowRetreat = false) {
+    const nearby = this._seatFurniture || (this._seatFurniture = []);
+    nearby.length = 0;
+    const left = Math.min(px, x) - clearance, bottom = Math.min(py, y) - clearance;
+    const right = Math.max(px, x) + clearance, top = Math.max(py, y) + clearance;
+    this.nav.soft(left, bottom, right, top, nearby);
+    if (floor + bodyHeight > 1) this.nav.raisedTablesNear?.(left, bottom, right, top, nearby);
+    const dx = x - px, dy = y - py, length2 = dx*dx + dy*dy;
+    for (const o of nearby) {
+      if (!o.seatObstacle || floor >= o.seatObstacle.top || floor + bodyHeight <= o.seatObstacle.base) continue;
+      const radius = o.h + clearance;
+      if (allowRetreat && (o.x - px)*dx + (o.y - py)*dy <= 0) continue;
+      if (Math.hypot(x - o.x, y - o.y) < radius) return true;
+      if (length2) {
+        const u = ((o.x - px)*dx + (o.y - py)*dy) / length2;
+        if (u > 0 && u < 1 && Math.hypot(px + u*dx - o.x, py + u*dy - o.y) < radius) return true;
+      }
+    }
+    return false;
   }
   seatTaken(q, x, y, leaving, height = (q.seat ?? 0.46) + 1) {
     const floor = q.z ?? 0;
@@ -1202,6 +1219,36 @@ export class CrowdSim {
     return false;
   }
   leaveGroup(a) { if (a.lead) { const f = a.lead.fol; if (f) { const k = f.indexOf(a); if (k >= 0) f.splice(k, 1); if (!f.length) a.lead.fol = null; } a.lead = null; } if (a.fol) { for (const f of a.fol) f.lead = null; a.fol = null; } if (a.spot) { a.spot.who = null; a.spot = null; } }
+  giveWayToPlayer(a, player) {
+    const dx = a.x - player.x, dy = a.y - player.y, distance = Math.hypot(dx, dy);
+    if (distance >= 0.7 || distance <= 1e-3) return;
+    if (this.fbWalls) {
+      const playerFloor = player.alt || (this.g.statics.onSidewalk(player.x, player.y) ? 0.15 : 0);
+      const floor = a.z ?? 0;
+      if (floor >= playerFloor + 1.78 || playerFloor >= floor + 1.78 * (a.tall ?? 1)) return;
+    }
+    const x = a.x + dx / distance * (0.7 - distance);
+    const y = a.y + dy / distance * (0.7 - distance);
+    this.moveIfClear(a, x, y);
+  }
+  cameraNearFloor(a, cameraY) {
+    if (!this.fbWalls) return cameraY < 3;
+    const terrain = this.g.terrain;
+    const ground = terrain?.inBox(a.x, a.y) ? terrain.h(a.x, a.y) : 0;
+    const aboveFeet = cameraY - (ground + (a.z ?? 0));
+    return aboveFeet >= 0 && aboveFeet < 3;
+  }
+  moveIfClear(a, x, y) {
+    const raised = a.z > 1, height = 1.78 * (a.tall ?? 1);
+    if (this.fbWalls && (this.nav.inBuilding?.(x, y, raised ? a.z + height : 2.5, raised ? a.z : -Infinity, a.x, a.y) ||
+        (raised ? this.g.statics.raycast(a.x, a.y, x, y) < 1 ||
+          staticPathBlocked(this.g.statics, a.x, a.y, x, y, true, undefined, 0.25) ||
+          this.furnitureAtHeight(a.x, a.y, x, y, a.z, height, 0.25, true) :
+          this.staticApproachBlocked(a.x, a.y, x, y)) ||
+        this.vehicleAt(x, y, a.x, a.y, undefined, true, undefined, a, height))) return;
+    a.x = x;
+    a.y = y;
+  }
   // Public feedback ("the pedestrians clip through the car if the car is on the sidewalk"): the player's cars that stand or creep
   // (this.still, listed each step; cars() has the ones that move). Nobody stands or walks inside one: a place to stand that a car now
   // covers moves to beside it, a body inside is moved out at a walking pace (faster as the car creeps), sideways unless a bumper is
@@ -1273,7 +1320,9 @@ export class CrowdSim {
       const x = a.x + Math.cos(a.h) * 0.35, y = a.y + Math.sin(a.h) * 0.35;
       const height = 1.78 * (a.tall ?? 1);
       if (!this.fbWalls || (this.g.statics.raycast(a.x, a.y, x, y) === 1 &&
-          !this.seatBlocked(q, x, y, true, height, 0.3) && !this.seatTaken(q, x, y, a, height))) {
+          !staticPathBlocked(this.g.statics, a.x, a.y, x, y, true, undefined, 0.3) &&
+          !this.nav.inBuilding(x, y, q.z > 1 ? q.z + height : 2.5, q.z > 1 ? q.z : -Infinity, a.x, a.y) &&
+          !this.seatBlocked(q, x, y, true, height, 0.3, a) && !this.seatTaken(q, x, y, a, height))) {
         a.x = x; a.y = y;
       } else if (this.seatBlocked(q, a.x, a.y, true, height, 0.3) || this.seatTaken(q, a.x, a.y, a, height)) {
         return false;
@@ -1436,7 +1485,18 @@ export class CrowdSim {
               if (a.vx * nx + a.vy * ny < -0.05) { const sg = Math.abs(along) > 0.15 ? Math.sign(along) : a.id & 1 ? 1 : -1, k = Math.min(1, dt * 8); a.vx += (tx * sg - a.vx) * k; a.vy += (ty * sg - a.vy) * k; const L = Math.hypot(a.vx, a.vy) || 1; a.vx /= L; a.vy /= L; this.fb.wallTurn++; }
               if (st0.raycast(a.x, a.y, _o.x, _o.y) < 1) { _o.x = a.x; _o.y = a.y; a.vx = -a.vx; a.vy = -a.vy; this.fb.wallStop++; }
             }
-            a.x = _o.x; a.y = _o.y;
+            const nextX = _o.x, nextY = _o.y;
+            const bodyHeight = 1.78 * (a.tall ?? 1);
+            const raised = a.z > 1;
+            if (this.nav.inBuilding?.(nextX, nextY, raised ? a.z + bodyHeight : 2.5, raised ? a.z : -Infinity, a.x, a.y) ||
+                staticPathBlocked(st0, a.x, a.y, nextX, nextY, true, undefined, 0.3) ||
+                (raised ? this.furnitureAtHeight(a.x, a.y, nextX, nextY, a.z, bodyHeight, 0.25, true) :
+                  this.crossesFurniture(a.x, a.y, nextX, nextY)) ||
+                this.vehicleAt(nextX, nextY, a.x, a.y, undefined, true, undefined, a, bodyHeight)) {
+              // Body and footprint obstacles may have no collision segment. Turn and try the next stride.
+              const side = a.id & 1 ? 1 : -1, vx = a.vx;
+              a.vx = -side * a.vy; a.vy = side * vx; a.v = 0;
+            } else { a.x = nextX; a.y = nextY; }
             a.fq = (a.fq || 0) + dt; if (a.fq > 0.7 || a.fpx === undefined) { if (a.fpx !== undefined && a.fq < 2 && Math.hypot(a.x - a.fpx, a.y - a.fpy) < 1.1 && a.wnx !== undefined) { const u = (a.id & 1 ? 0.6 : -0.6), L = Math.hypot(a.wnx - a.wny * u, a.wny + a.wnx * u) || 1; a.vx = (a.wnx - a.wny * u) / L; a.vy = (a.wny + a.wnx * u) / L; } a.fq = 0; a.fpx = a.x; a.fpy = a.y; }
           }
           { const tr = !D ? 9 : a.t < D.d ? 0 : 5.5; a.h += clamp(wrapPi(Math.atan2(a.vy, a.vx) - a.h), -tr * dt, tr * dt); }
@@ -1445,12 +1505,11 @@ export class CrowdSim {
           break; }
         case 'sit': a.onRoad = false; if (a.lead && !a.lead.gone) a.ph = a.lead.ph; break;
         case 'down':
-          plainSlide(g, a, dt); { const k = Math.exp(-3.5 * dt); a.vx *= k; a.vy *= k; } a.fall = Math.min(1, a.fall + dt * 4); a.onRoad = !g.statics.onSidewalk(a.x, a.y); a.z = (a.onRoad ? 0 : 0.15) + 0.12 * a.fall; a.rate = 0; continue;
+          plainSlide(g, a, dt, this.fbWalls, this.nav); { const k = Math.exp(-3.5 * dt); a.vx *= k; a.vy *= k; } a.fall = Math.min(1, a.fall + dt * 4); a.onRoad = !g.statics.onSidewalk(a.x, a.y); a.z = (a.onRoad ? 0 : 0.15) + 0.12 * a.fall; a.rate = 0; continue;
       }
       if (a.gone) continue;
-      // give way to the player on foot
-      if (pl && !pl.vehicle && a.state !== 'sit') { const dx = a.x - pl.x, dy = a.y - pl.y, dd = Math.hypot(dx, dy); if (dd < 0.7 && dd > 1e-3) { a.x += (dx / dd) * (0.7 - dd); a.y += (dy / dd) * (0.7 - dd); } }
-      if (this._cam && a.state !== 'sit') { const dx = a.x - this.cx, dy = a.y - this.cy, dd = dx * dx + dy * dy; if (dd < 3.2 && dd > 1e-4 && g.world.camera.position.y < 3) { const d = Math.sqrt(dd); a.x += (dx / d) * (1.8 - d) * 0.12; a.y += (dy / d) * (1.8 - d) * 0.12; } }
+      if (pl && !pl.vehicle && a.state !== 'sit') this.giveWayToPlayer(a, pl);
+      if (this._cam && a.state !== 'sit') { const dx = a.x - this.cx, dy = a.y - this.cy, dd = dx * dx + dy * dy; if (dd < 3.2 && dd > 1e-4 && this.cameraNearFloor(a, g.world.camera.position.y)) { const d = Math.sqrt(dd); const push = (1.8 - d) * 0.12; this.moveIfClear(a, a.x + dx / d * push, a.y + dy / d * push); } }
       if (SC.length && a.state !== 'sit') this.offCars(a, dt, think);
       // on the way back to a walk after a run: not through a wall; pressed against one and getting nowhere, look again for a way, then give up and stand
       if (a.fbBack > 0) { a.fbBack -= dt; if (st0.resolve(a.x, a.y, 0.3, _o, true)) { a.x = _o.x; a.y = _o.y; }

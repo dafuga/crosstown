@@ -34,6 +34,7 @@ function fallenHalfLength(person) {
   return 0.85 * (person.scale || 1) * (person.fall || 0);
 }
 
+const PARKFREE = !(typeof location !== 'undefined' && new URLSearchParams(location.search).get('parkcars') === '1');     /* uptown lane, park lane's word 17:04 Nov 15 */
 export class Traffic {
   constructor(game) {
     this.g = game; this.cars = []; this.rand = rng(1234); this.target = 90; this.heldT = -1e9; this._pg = 1e9; this._mb = null; this._blk = null; this.room = game.P && game.P.get('unstick') === '0' ? 0 : 3.2; this.spawnT = 0; this.busT = 0; this.near = []; this.nearT = 0;
@@ -76,7 +77,7 @@ export class Traffic {
   populate(px, py) {
     const R = this.g.roads;
     for (const e of R.edges) {
-      if (e.s0 === undefined) continue; const mid = e.line.at(e.len / 2, tmp); const d = Math.hypot(mid.x - px, mid.y - py); if (d > 360 || !this.g.bounds.in(mid.x, mid.y, 150)) continue;
+      if (e.s0 === undefined || (e.park === 1 && PARKFREE)) continue;     /* uptown: Central Park's drives (edge key park = 1) are car-free: the game's own traffic is not put on them (a player may still drive them); ?parkcars=1 = as before */ const mid = e.line.at(e.len / 2, tmp); const d = Math.hypot(mid.x - px, mid.y - py); if (d > 360 || !this.g.bounds.in(mid.x, mid.y, 150)) continue;
       for (const dir of [1, -1]) { const n = R.laneCount(e, dir); for (let li = 0; li < n; li++) {
         let s = 12 + this.rand() * 40; while (s < e.len - 14) { if (this.rand() < 0.5 && this.cars.length < this.target * 1.15) { R.lanePos(e, dir, li, s, tmp); if (Math.hypot(tmp.x - px, tmp.y - py) > 35) this.spawn(e, dir, li, s); } s += 22 + this.rand() * 60; }
       } }
@@ -85,7 +86,7 @@ export class Traffic {
   // a new car somewhere out of sight: on a block near the player, behind a building or far enough off not to be seen arriving
   trySpawn(px, py) {
     const g = this.g, R = g.roads;
-    this.nearT--; if (this.nearT <= 0) { this.nearT = 8; this.near.length = 0; for (const e of R.edges) { if (e.s0 === undefined) continue; e.line.at(e.len / 2, tmp); const d = Math.hypot(tmp.x - px, tmp.y - py); if (d < 420 + e.len / 2) this.near.push(e); } }
+    this.nearT--; if (this.nearT <= 0) { this.nearT = 8; this.near.length = 0; for (const e of R.edges) { if (e.s0 === undefined || (e.park === 1 && PARKFREE)) continue; e.line.at(e.len / 2, tmp); const d = Math.hypot(tmp.x - px, tmp.y - py); if (d < 420 + e.len / 2) this.near.push(e); } }
     if (!this.near.length) return;
     for (let k = 0; k < 8; k++) {
       const e = this.near[Math.floor(this.rand() * this.near.length)];
@@ -106,7 +107,7 @@ export class Traffic {
     const hin = R.lanePos(c.e, c.dir, c.li, c.e.len, tmp).h; let tot = 0; const w = [];
     // turns are made from the lane on that side (left turns from the left lane, right turns from the right); the lanes between go straight
     const nl = R.laneCount(c.e, c.dir);
-    for (const x of ex) { const ho = R.lanePos(x.e, x.dir, 0, 0, tmp2).h; const sgn = wrapPi(ho - hin), turn = Math.abs(sgn); let k = turn < 0.5 ? 7 : turn < 2.2 ? 2 : 0.05; if (c.type === 'bus' && turn > 0.5) k *= 0.15;
+    for (const x of ex) { const ho = R.lanePos(x.e, x.dir, 0, 0, tmp2).h; const sgn = wrapPi(ho - hin), turn = Math.abs(sgn); let k = turn < 0.5 ? 7 : turn < 2.2 ? 2 : 0.05; if (c.type === 'bus' && turn > 0.5) k *= 0.15; if (x.e.park === 1 && PARKFREE) k *= 1e-6;     /* uptown: no turn into a park drive unless it is the only way on */
       if (nl > 1 && turn >= 0.5 && ((sgn > 0 && c.li !== 0) || (sgn < 0 && c.li !== nl - 1))) k *= 0.002; w.push(k); tot += k; }
     let r = this.rand() * tot, pick = ex[0]; for (let i = 0; i < ex.length; i++) { r -= w[i]; if (r <= 0) { pick = ex[i]; break; } }
     const n = R.laneCount(pick.e, pick.dir); const ho = R.lanePos(pick.e, pick.dir, 0, 0, tmp2).h; const turn = wrapPi(ho - hin);
@@ -556,7 +557,7 @@ export class Parked {
 
 // Pedestrians walking the sidewalk loops near the player.
 const nearbyParked = [];
-function vehicleBlocksShove(game, pushingCar, x, y, toX, toY, radius) {
+function vehicleBlocksPath(game, pushingCar, x, y, toX, toY, radius, speedLimit = Infinity) {
   const dx = (toX-x)/2, dy = (toY-y)/2, cx = x+dx, cy = y+dy;
   const pathReach = Math.abs(dx) + Math.abs(dy) + 2*radius;
   const blocks = car => {
@@ -570,7 +571,12 @@ function vehicleBlocksShove(game, pushingCar, x, y, toX, toY, radius) {
     const epsilon = 8 * Number.EPSILON * Math.max(1, Math.abs(toX), Math.abs(toY), Math.abs(car.x), Math.abs(car.y));
     return !exitsNearestBoxFace(u-du, v-dv, u+du, v+dv, length, width, epsilon);
   };
-  if (game.vehicles?.some(blocks) || game.traffic?.cars?.some(blocks)) return true;
+  const ownedBlocks = speedLimit === Infinity ? blocks : car => {
+    if (!blocks(car)) return false;
+    const speed = car.vx === undefined ? Math.abs(car.v || 0) : Math.hypot(car.vx, car.vy);
+    return speed < speedLimit;
+  };
+  if (game.vehicles?.some(ownedBlocks) || game.traffic?.cars?.some(blocks)) return true;
   const parked = game.parked;
   if (!parked?.bodyReach) return false;
   const reach = parked.bodyReach + radius*Math.SQRT2 + Math.hypot(dx, dy);
@@ -622,11 +628,24 @@ export class Peds {
     const out = this.loops.filter((l) => { const b = l.box || (l.box = l.p.reduce((a, p) => [Math.min(a[0], p[0]), Math.min(a[1], p[1]), Math.max(a[2], p[0]), Math.max(a[3], p[1])], [1e9, 1e9, -1e9, -1e9])); return px > b[0] - 110 && px < b[2] + 110 && py > b[1] - 110 && py < b[3] + 110; });
     this._nl = out.length ? out : this.loops; this._nx = px; this._ny = py; return this._nl;
   }
+  sidewalkBuilding(x, y, fromX, fromY) {
+    const g = this.g;
+    this.inBuilding ||= buildingQuery(g.city, 2.5, 2.65);
+    const floor = g.statics.onSidewalk(x, y) ? 0.15 : 0;
+    const start = fromX === undefined ? floor : g.statics.onSidewalk(fromX, fromY) ? 0.15 : 0;
+    return this.inBuilding(x, y, Math.max(start, floor) + 2.5, Math.min(start, floor), fromX, fromY);
+  }
   furnitureGrid() {
     const g = this.g;
     if (g.crowd?.nav) return g.crowd.nav;
-    if (g.streets?.parts?.furniture || g.streets?.parts?.storefronts)
-      return this.furniture || (this.furniture = pedestrianFurniture(g));
+    const parts = g.streets?.parts;
+    if (!parts?.furniture && !parts?.storefronts) return;
+    if (!this.furniture || this.furniturePart !== parts.furniture || this.storefrontPart !== parts.storefronts) {
+      this.furniture = pedestrianFurniture(g);
+      this.furniturePart = parts.furniture;
+      this.storefrontPart = parts.storefronts;
+    }
+    return this.furniture;
   }
   spawn(px, py, anywhere) {
     const furniture = this.furnitureGrid();
@@ -635,8 +654,9 @@ export class Peds {
     for (let k = 0; k < 8; k++) {
       const l = near[Math.floor(this.rand() * near.length)], s = this.rand() * l.len; l.at(s, tmp);
       const d = Math.hypot(tmp.x - px, tmp.y - py); if (d > 120 || (!anywhere && d < 55)) continue; if (d < 6) continue;
-      this.inBuilding ||= buildingQuery(this.g.city, 2.5);
-      if (this.inBuilding(tmp.x, tmp.y) || insideVehicle(this.g, tmp.x, tmp.y, 0.25) ||
+      this.inBuilding ||= buildingQuery(this.g.city, 2.5, 2.65);
+      const walls = this.g.P?.get('crowdwalls') !== '0' && this.g.P?.get('crowdfb') !== '0';
+      if ((walls ? this.sidewalkBuilding(tmp.x, tmp.y) : this.inBuilding(tmp.x, tmp.y)) || insideVehicle(this.g, tmp.x, tmp.y, 0.25) ||
           furniture?.push(tmp.x, tmp.y, 0.25, tmp2) ||
           this.g.statics.resolvePedestrian(tmp.x, tmp.y, 0.25, tmp2)) continue;
       const kind = this.kinds[Math.floor(this.rand() * this.kinds.length)];
@@ -656,7 +676,6 @@ export class Peds {
     const g = this.g, px = g.focus.x, py = g.focus.y;
     this.spawnT -= dt; if (this.spawnT <= 0 && this.list.length < this.target) { this.spawnT = 0.15; this.spawn(px, py, false); }
     const checkWalls = this.list.length && g.P?.get('crowdwalls') !== '0' && g.P?.get('crowdfb') !== '0';
-    const inside = checkWalls && (this.inBuilding ||= buildingQuery(g.city, 2.5));
     const furniture = this.list.length ? this.furnitureGrid() : null;
     const car = g.player.vehicle; const cars = g.vehicles;
     for (let i = this.list.length - 1; i >= 0; i--) {
@@ -700,7 +719,10 @@ export class Peds {
             if (g.statics.raycast(p.x, p.y, tmp2.x, tmp2.y) < 1 ||
                 g.statics.resolvePedestrian(tmp2.x, tmp2.y, 0.3, tmp)) { tmp2.x = p.x; tmp2.y = p.y; }
           }
-          if (!(inside && inside(tmp2.x, tmp2.y, 2.5, -Infinity, p.x, p.y)) && !insideVehicle(g, tmp2.x, tmp2.y, 0.3, 2.2)) {
+          if ((!checkWalls || (!staticPathBlocked(g.statics, p.x, p.y, tmp2.x, tmp2.y, true, undefined, undefined, 0.3) &&
+              !vehicleBlocksPath(g, null, p.x, p.y, tmp2.x, tmp2.y, 0.3, 2.2) &&
+              !furnitureCrossing(furniture, this._walkFurniture ||= [], p.x, p.y, tmp2.x, tmp2.y, undefined, 0.3))) &&
+              !(checkWalls && this.sidewalkBuilding(tmp2.x, tmp2.y, p.x, p.y)) && !insideVehicle(g, tmp2.x, tmp2.y, 0.3, 2.2)) {
             p.x = tmp2.x; p.y = tmp2.y;
           }
           p.h = Math.atan2(p.fy, p.fx);
@@ -732,7 +754,10 @@ export class Peds {
           // A prescribed sidewalk loop can cross a facade or a fence. Turn
           // back on the same side and ease onto the return lane from here.
           // Traffic stopped at a light has no parked-car circles.
-          if ((inside && inside(p.x, p.y, 2.5, -Infinity, oldX, oldY)) || insideVehicle(g, p.x, p.y, 0.25, 2.2) || furniture?.push(p.x, p.y, 0.25, tmp2) || g.statics.resolvePedestrian(p.x, p.y, 0.25, tmp2) ||
+          if ((checkWalls && (vehicleBlocksPath(g, null, oldX, oldY, p.x, p.y, 0.25, 2.2) ||
+              staticPathBlocked(g.statics, oldX, oldY, p.x, p.y, true) ||
+              furnitureCrossing(furniture, this._walkFurniture ||= [], oldX, oldY, p.x, p.y))) ||
+              (checkWalls && this.sidewalkBuilding(p.x, p.y, oldX, oldY)) || insideVehicle(g, p.x, p.y, 0.25, 2.2) || furniture?.push(p.x, p.y, 0.25, tmp2) || g.statics.resolvePedestrian(p.x, p.y, 0.25, tmp2) ||
               g.statics.raycast(oldX, oldY, p.x, p.y) < 1) {
             p.x = oldX; p.y = oldY; p.s = p.rejoinStart ?? oldS; p.rejoinStart = undefined;
             p.dir = -p.dir; p.off = -p.off; p.back = 1;
@@ -745,11 +770,26 @@ export class Peds {
                 fromX -= tx * 1e-4; fromY -= ty * 1e-4;
                 g.statics.resolvePedestrian(fromX, fromY, 0.25, tmp2);
               }
-              const x = tmp2.x, y = tmp2.y;
-              if (!(inside && inside(x, y, 2.5, -Infinity, oldX, oldY)) && !furniture?.push(x, y, 0.25 - 1e-6, tmp) &&
+              let x = tmp2.x, y = tmp2.y;
+              const clear = () => !(checkWalls && this.sidewalkBuilding(x, y, oldX, oldY)) && !furniture?.push(x, y, 0.25 - 1e-6, tmp) &&
                   g.statics.raycast(fromX, fromY, x, y) >= 1 &&
+                  (!checkWalls || (!staticPathBlocked(g.statics, fromX, fromY, x, y, true) &&
+                      !vehicleBlocksPath(g, null, oldX, oldY, x, y, 0.25) &&
+                      !furnitureCrossing(furniture, this._walkFurniture ||= [], oldX, oldY, x, y))) &&
                   !g.statics.resolvePedestrian(x, y, 0.25, tmp) &&
-                  !insideVehicle(g, x, y, 0.25)) {
+                  !insideVehicle(g, x, y, 0.25);
+              let recovered = clear();
+              if (!recovered && checkWalls && furniture?.push(oldX, oldY, 0.25, tmp)) {
+                // A fence or car can block the shortest way out of a streamed table.
+                // Try either side of that path, checking the full displacement each time.
+                const dx = x - oldX, dy = y - oldY;
+                for (const side of [-1, 1]) {
+                  x = oldX + dx - side*dy;
+                  y = oldY + dy + side*dx;
+                  if (clear()) { recovered = true; break; }
+                }
+              }
+              if (recovered) {
                 p.x = x; p.y = y; p.s = p.loop.project(x, y).s;
               }
             }
@@ -760,13 +800,13 @@ export class Peds {
         const contact = g.traffic?.pushPlayer && overlapsVehicle(g.traffic.cars, p.x, p.y, 0.25, Infinity);
         if (contact) {
           const x = p.x, y = p.y;
-          const clear = () => !(inside && inside(p.x, p.y, 2.5, -Infinity, x, y)) && g.statics.raycast(x, y, p.x, p.y) >= 1 &&
+          const clear = () => !(checkWalls && this.sidewalkBuilding(p.x, p.y, x, y)) && g.statics.raycast(x, y, p.x, p.y) >= 1 &&
             !staticPathBlocked(g.statics, x, y, p.x, p.y, true) &&
             !g.statics.resolvePedestrian(p.x, p.y, 0.25, tmp2) &&
             !furniture?.push(p.x, p.y, 0.25, tmp2) &&
             !furnitureCrossing(furniture, this._shoveFurniture ||= [], x, y, p.x, p.y) &&
             !insideVehicle(g, p.x, p.y, 0.25) &&
-            !vehicleBlocksShove(g, contact, x, y, p.x, p.y, 0.25);
+            !vehicleBlocksPath(g, contact, x, y, p.x, p.y, 0.25);
           g.traffic.pushPlayer(p);
           if (!clear()) {
             p.x = x; p.y = y;
@@ -806,7 +846,7 @@ export class Peds {
           }
           p.state = 'down'; p.t = 0; p.vx = v.vx * 0.9 + (-fy) * Math.sign(s || 1) * 2; p.vy = v.vy * 0.9 + fx * Math.sign(s || 1) * 2; p.fall = 0; g.onPedHit(p, v); delete p.beforeHit; if (p.vis.mixer) p.vis.mixer.timeScale = 0; break; } }
       } else if (p.state === 'down') {
-        plainSlide(g, p, dt); const k = Math.exp(-3.5 * dt); p.vx *= k; p.vy *= k; p.fall = Math.min(1, p.fall + dt * 4);
+        plainSlide(g, p, dt, checkWalls, furniture); const k = Math.exp(-3.5 * dt); p.vx *= k; p.vy *= k; p.fall = Math.min(1, p.fall + dt * 4);
       }
       const o = p.vis.object; const z = g.statics.onSidewalk(p.x, p.y) ? 0.15 : 0;
       o.position.set(p.x, z + (p.state === 'down' ? 0.12 * p.fall : 0), -p.y); o.rotation.set(0, p.h, 0);

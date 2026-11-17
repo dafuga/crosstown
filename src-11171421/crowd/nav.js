@@ -64,14 +64,21 @@ function swIndex(st) {
       if (inside(x, y, b.poly.ext)) { let hole = false; for (const h of b.poly.holes) if (inside(x, y, h)) { hole = true; break; } if (!hole) return true; } }
     return false; };
 }
-export function furnitureCrossing(nav, nearby, px, py, tx, ty, person) {
+export function furnitureCrossing(nav, nearby, px, py, tx, ty, person, radius = 0.25, footZ, upperFootZ = footZ) {
   if (!nav?.soft) return false;
-  const radius = 0.25, dx = tx - px, dy = ty - py, length2 = dx*dx + dy*dy;
+  const dx = tx - px, dy = ty - py, length2 = dx*dx + dy*dy;
   if (!length2) return false;
   nearby.length = 0;
   nav.soft(Math.min(px, tx) - radius, Math.min(py, ty) - radius,
     Math.max(px, tx) + radius, Math.max(py, ty) + radius, nearby);
+  if (footZ !== undefined && upperFootZ + radius > 1)
+    nav.raisedTablesNear?.(Math.min(px, tx) - radius, Math.min(py, ty) - radius,
+      Math.max(px, tx) + radius, Math.max(py, ty) + radius, nearby);
   for (const o of nearby) {
+    if (footZ !== undefined) {
+      const bounds = o.seatObstacle;
+      if (bounds ? footZ >= bounds.top || upperFootZ + radius <= bounds.base : footZ >= 1) continue;
+    }
     const u = clamp(((o.x - px)*dx + (o.y - py)*dy) / length2, 0, 1);
     if (person && u === 0 && Math.hypot(px-o.x, py-o.y) < o.h + radius) person.retreatingFromObstacle = true;
     if (u > 0 && Math.hypot(px + u*dx - o.x, py + u*dy - o.y) < o.h + radius) return true;

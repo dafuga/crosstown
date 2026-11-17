@@ -19,6 +19,10 @@ import * as THREE from 'three';
 const V2_DEFAULT = true;   // round 9: spray-card crowns, the trunk's own root flare, sunk pits; ?trees2=1 / ?trees2=0
 import { BAKE_LIGHT_GLSL, NOISE_GLSL } from '../facade.js';
 import { makeTree, SPECIES, rng } from './trees_gen_next.js';
+/* merge lane batch 9: parkside.js is fetched only on a map that can use it (one of the uptown lane's sets in city.meta.sets, or one of its four switches in the address); every other map gets the same empty answer parkside() gives there, with no request */
+const upSide = async (game) => { if (game.__parkside) return game.__parkside; const Q = game.P, has = (k) => !!(Q && Q.get && Q.get(k) !== null);
+  if ((game.city && game.city.meta && (game.city.meta.sets || []).some((s) => /^u\d/.test((s && s.set) || ''))) || has('pkside') || has('hexwalk') || has('pkbench') || has('pkwall')) return (await import('./parkside.js')).parkside(game);
+  return (game.__parkside = { hex: false, bench: false, wall: false, wallH: 1.3, segs: [], strips: [], byExt: new Map(), inStrip: () => false, report: { segs: 0 } }); };
 
 const LOD_D = [13, 42], LOD_CARD = [19, 44];   // spray-card crowns are a fifth of the triangles, so their full band reaches further
 const V2 = typeof location !== 'undefined' && /[?&]trees2=1/.test(location.search) ? true : typeof location !== 'undefined' && /[?&]trees2=0/.test(location.search) ? false : V2_DEFAULT;
@@ -1716,6 +1720,11 @@ export async function add(game, ctx) {
   let nCirc = 0;
   const sigs = new Map(); for (const g of (ctx.city.props.signal || [])) { const k = Math.floor(g[0] / 16) + ',' + Math.floor(g[1] / 16); if (!sigs.has(k)) sigs.set(k, []); sigs.get(k).push(g); }
   const nearSignal = (t) => { const cx = Math.floor(t.x / 16), cy = Math.floor(t.y / 16); for (let i = cx - 1; i <= cx + 1; i++) for (let j = cy - 1; j <= cy + 1; j++) { const l = sigs.get(i + ',' + j); if (l) for (const g of l) if (Math.hypot(g[0] - t.x, g[1] - t.y) < 12) return true; } return false; };
+  /* uptown (landmarks 11, critic r9: the park side of Central Park West has 'huge old elms and planes arching over the sidewalk and half the avenue', ours were young street trees): a street tree that
+     stands on the sidewalk between Central Park's wall and the kerb (parkside.js: the perimeter edges, the wall line to the kerb) is a MATURE park elm / oak or big plane, 1.3-1.6 x the model
+     (17-25 m tall, crown 9-10 m to a side: over the sidewalk and about half the roadway), never squeezed towards a wall, never a young replacement. Decided once here, at build; nothing per frame. ?pktrees=0 = as before. */
+  const PKT = /[?&]pktrees=0/.test(location.search) ? [] : ((await upSide(game)).segs || []); let nPkBig = 0;
+  const pkSide = (t) => { for (const s of PKT) { const u = (t.x - s.ax) * s.tx + (t.y - s.ay) * s.ty, v = (t.x - s.ax) * s.nx + (t.y - s.ay) * s.ny; if (u > -1 && u < s.L + 1 && v > 0.4 && v < s.sw + 1.2) return true; } return false; };
   for (const t of trees) {
     const hx0 = t.from ? t.from[0] : t.x, hy0 = t.from ? t.from[1] : t.y, r = (k) => h2(t.from ? hx0 : t.x, t.from ? hy0 : t.y, k);   // a tree moved off the paving keeps the species, size and colour its planting spot gave it
     const co = t.park ? circOf(t) : null;
@@ -1742,11 +1751,13 @@ export async function add(game, ctx) {
       sp = r(1) < 0.68 ? lead : pick(r(2), [['plane', 0.36], ['locust', 0.36], ['pear', 0.28]]);
       if (t.wall < 2.3) sp = 'pear'; else if (t.wall < 3.2 && sp === 'plane') sp = 'locust';
     }
+    const pkBig = !t.park && PKT.length > 0 && (bySpecies.broad || []).length > 0 && (bySpecies.planeBig || []).length > 0 && pkSide(t); if (pkBig) { sp = r(2) < 0.55 ? 'broad' : 'planeBig'; nPkBig++; }     /* uptown (landmarks 11) */
     const list = bySpecies[sp], m = list[Math.floor(r(3) * list.length) % list.length], S = m.spec;
     let f = t.park ? (1.0 + 0.3 * Math.min(1, Math.max(0, (t.s - 1) / 0.7))) * (0.72 + 0.6 * r(4)) : (0.78 + 0.28 * Math.min(1, Math.max(0, (t.s - 0.8) / 0.5))) * (0.72 + 0.5 * r(4));
     if (r(13) < (t.park ? 0.12 : 0.07)) f *= 0.55;                                         // a young replacement tree now and then
+    if (pkBig) f = 1.3 + 0.3 * r(4);     /* uptown (landmarks 11) */
     const cr = m.info.radius * f;
-    const sAcross = t.park ? 1 : Math.max(0.5, Math.min(1.0, (t.wall + 0.9) / cr)), sAlong = 0.9 + 0.25 * r(5), sy = 0.86 + 0.3 * r(6);
+    const sAcross = t.park || pkBig ? 1 : Math.max(0.5, Math.min(1.0, (t.wall + 0.9) / cr)), sAlong = 0.9 + 0.25 * r(5), sy = 0.86 + 0.3 * r(6);
     P.set(t.x, 0.15, -t.y);
     E.set((r(7) - 0.5) * 0.14, t.park ? r(8) * 6.283 : t.kh + (r(8) < 0.5 ? Math.PI : 0), (r(9) - 0.5) * 0.14, 'YXZ'); Q.setFromEuler(E);
     Sc.set(f * sAlong, f * sy, f * sAcross);
@@ -1760,6 +1771,7 @@ export async function add(game, ctx) {
     m.trees.push(t);
   }
 
+  if (nPkBig) console.log('[trees] uptown: ' + nPkBig + ' mature trees on Central Park\'s perimeter sidewalk (?pktrees=0 = street size)');
   mark('pertree');
   // ---- what is drawn, filled each time the camera moves:
   //   band 0 (to 16 m) and band 1 (to 50 m): real leaf and wood meshes with the scanned foot, per model;

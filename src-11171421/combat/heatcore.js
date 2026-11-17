@@ -48,7 +48,9 @@ const sm = (u) => { u = clamp(u, 0, 1); return u * u * (3 - 2 * u); };
 const REAL = (() => { try { return !!document.createElement('canvas').getContext('2d').createImageData(1, 1).data; } catch (e) { return false; } })();
 const CLINICS = [['Mercy Walk-In', -196, -214], ['Eastside Urgent Care', 260, 280], ['St. Odile Clinic', -340, 240], ['Fifth Ward Medical', 300, -300], ['Midtown Walk-In', 30, 32] /* gameplay/north, Nov 14: was 20, 10, which is inside building 3744: he woke shut in behind its walls */,
   /* gameplay/north, Nov 14: the map runs to y 1711 now and every clinic stood south of y 280: a man who went down at W 47th St woke 1.4 km away. Four in the north area (invented names; each point is on a sidewalk, outside every footprint) */
-  ['Garment Row Walk-In', -308, 784], ['Sixth Avenue Urgent Care', 240, 930], ['Midtown North Clinic', -82, 1374], ['Forty-Seventh Street Medical', 290, 1530]];
+  ['Garment Row Walk-In', -308, 784], ['Sixth Avenue Urgent Care', 240, 930], ['Midtown North Clinic', -82, 1374], ['Forty-Seventh Street Medical', 290, 1530],
+  /* uptown: four for the row W 63rd - W 79th St, river to river (invented names; each point is a street crossing, the wake search takes the nearest open pavement to it). A clinic is used only on a map whose playable box holds it (inMap below), so these change nothing on a map without the row */
+  ['Park West Walk-In', 909.8, 3480.5], ['Verdi Square Urgent Care', 396.2, 3763.6], ['Lexington Avenue Walk-In', 2268.4, 3196.2], ['First Avenue Medical', 2873.5, 3051.1]];
 
 export async function addHeat(game, combat) {
   if (game.P.get('heat') === 'none' || game.P.get('heat') === '0') return null;
@@ -856,7 +858,7 @@ export class Heat {
     if (!D.woke && D.t > 3.1) {
       /* wake outside the nearest clinic (or leave the precinct); the bill is a tenth of the cash on hand; the guns stay, half of the spare rounds do not */
       D.woke = true; this.sub = null /* no bark from the fight he lost over the wake-up card */; if (D.p) { D.p.state = 'gone'; const i = g.peds.list.indexOf(D.p); if (i >= 0) g.peds.list.splice(i, 1); const vis = pl.vis; vis.object.visible = true; vis.used = true; if (D.hips) D.hips.b.position.copy(D.hips.p); if (vis.mixer) { vis.mixer.timeScale = 1; vis.mixer.stopAllAction(); } vis.cur = null; D.p = null; }
-      let best = null; for (const q of CLINICS) { const d = Math.hypot(q[1] - D.x, q[2] - D.y); if (!best || d < best.d) best = { q, d }; }
+      let best = null; const inMap = CLINICS.filter((q) => this.g.bounds.in(q[1], q[2])) /* uptown: only the clinics inside this map's playable box (all of them when none is, as before) */; for (const q of inMap.length ? inMap : CLINICS) { const d = Math.hypot(q[1] - D.x, q[2] - D.y); if (!best || d < best.d) best = { q, d }; }
       const P = this.wakeAt(best.q); pl.x = P.x; pl.y = P.y; pl.h = P.h; g.focus.x = pl.x; g.focus.y = pl.y; pl.speed = 0;
       /* THE HOOK: game.onBust({ kind: 'arrest' | 'down', level, place }) may take cash and return the amount it took (shown on the card). Nothing is taken here: no cash, no guns, no rounds. */
       let fee = 0; try { if (typeof g.onBust === 'function') fee = +g.onBust({ kind: D.arrest ? 'arrest' : 'down', level: D.level, place: best.q[0] }) || 0; } catch (e) { this.oops('bust', e); }
