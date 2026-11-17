@@ -15,10 +15,10 @@ const UP = 0.3;       // above this a body is "on a deck": deck rails instead of
 const HIGH = 2.0;     // above this it does not touch street-level cars and people at all
 const FAR = 1e6;
 
-export async function install(game) {
+export async function install(game, file) {     /* penn lane, Nov 17: file = another data file in assets/decks/ (decks-penn.json: the post office steps) */
   const g = game, P = g.P; if (g.decks || (P && P.get('decks') === '0')) return g.decks || null;
   let data = null;
-  try { const r = await fetch('assets/decks/' + (P && P.get('decks') === 'test' ? 'test-decks.json' : 'decks.json')); if (r.ok) data = await r.json(); } catch (e) {}
+  try { const r = await fetch('assets/decks/' + (file || (P && P.get('decks') === 'test' ? 'test-decks.json' : 'decks.json'))); if (r.ok) data = await r.json(); } catch (e) {}
   if (!data || !Array.isArray(data.decks) || !data.decks.length) return null;
   const D = new Decks(data.decks); if (!D.list.length) return null;
   const pl = g.player, st = g.statics, _o = {}, _ax = [0, 0];
@@ -30,13 +30,13 @@ export async function install(game) {
 
   // ---------------------------------------------------------------- walls
   const res0 = st.resolve;
-  st.resolve = function (x, y, r, out, skip) {
+  st.resolve = function (x, y, r, out, skip, ped) {     /* penn lane, Nov 17: the sixth argument (pedestrian) is passed on; it was dropped */
     if (S.on) {
       if (S.up.length) { const v = upNear(x, y); if (v) return D.rails(x, y, r, v._dk.z, out, kindOf(v)); }
-      const n = res0.call(this, x, y, r, out, skip);
+      const n = res0.call(this, x, y, r, out, skip, ped);
       return D.near(out.x, out.y) ? n + D.block(out.x, out.y, r, 0, CLEAR, out, r > 0.5 ? 'car' : 'walk') : n;
     }
-    return res0.call(this, x, y, r, out, skip);
+    return res0.call(this, x, y, r, out, skip, ped);
   };
   const side0 = st.onSidewalk;
   st.onSidewalk = function (x, y) { if (S.on && S.up.length && upNear(x, y)) return false; return side0.call(this, x, y); };

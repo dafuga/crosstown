@@ -28,7 +28,7 @@ vec3 sfBake(vec2 xz){ return texture2D(tLight, vec2(xz.x / (2.0 * uHalf.x) + 0.5
 // ------------------------------------------------------------------------------------------------ solid pieces (boxes, awnings)
 export const BOX_VERT_PARS = /* glsl */`
 attribute vec4 aCol; attribute vec4 aPar;
-varying vec4 vCol; varying vec4 vPar; varying vec3 vWPos; varying vec3 vLN; varying vec3 vSc; varying vec2 vUv0; varying vec3 vOut; varying vec3 vAl; varying float vBoxH;`;
+varying vec4 vCol; flat varying vec4 vPar; varying vec3 vWPos; varying vec3 vLN; varying vec3 vSc; varying vec2 vUv0; varying vec3 vOut; varying vec3 vAl; varying float vBoxH;`;
 export const BOX_VERT = /* glsl */`
 vCol = aCol; vPar = aPar; vLN = normal; vUv0 = uv; vBoxH = 0.0;
 #ifdef USE_INSTANCING
@@ -40,7 +40,7 @@ vCol = aCol; vPar = aPar; vLN = normal; vUv0 = uv; vBoxH = 0.0;
   vSc = vec3(1.0); vWPos = (modelMatrix * vec4(position, 1.0)).xyz; vOut = vec3(0.0, 0.0, 1.0); vAl = vec3(1.0, 0.0, 0.0);
 #endif`;
 export const BOX_FRAG_PARS = /* glsl */`
-varying vec4 vCol; varying vec4 vPar; varying vec3 vWPos; varying vec3 vLN; varying vec3 vSc; varying vec2 vUv0; varying vec3 vOut; varying vec3 vAl; varying float vBoxH;
+varying vec4 vCol; flat varying vec4 vPar; varying vec3 vWPos; varying vec3 vLN; varying vec3 vSc; varying vec2 vUv0; varying vec3 vOut; varying vec3 vAl; varying float vBoxH;
 uniform sampler2D tMask; uniform sampler2D tLight; uniform vec2 uHalf; uniform vec3 uSunColor; uniform vec3 uSunDir; uniform float uShadowFar; uniform vec3 uShadowCenter;
 precision highp sampler2DArray; uniform sampler2DArray tDet; uniform sampler2DArray tDetN; uniform vec3 uDetMean[4];
 vec3 bakeV; vec3 bakeN; vec3 sfAlb; float sfRough; float sfMetal; vec3 sfEmis; vec3 sfBump;

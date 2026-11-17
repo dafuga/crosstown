@@ -233,44 +233,57 @@ export function layout(C, opts = {}) {
       if (SL < 0.6 || skippedRuns?.has(bid + ':' + ri)) continue;
       const nx = dy, ny = -dx, ns = Math.max(1, Math.floor(SL / 3)), frs = [];
       for (let k = 0; k < ns; k++) frs.push(front(x0 + dx * SL * (k + 0.5) / ns, y0 + dy * SL * (k + 0.5) / ns, nx, ny));
-      if (!frs.some((q) => q !== null)) {
-        const bay = SH?.plazaStorefronts?.[bid + ':' + ri];
-        if (!bay) continue;
-        const { offset, width } = bay, key = ri * 64 + 63;
-        if (!SH.rows[bid + ':' + key] || !(width >= 2.6 && offset >= width / 2 && offset + width / 2 <= SL)) continue;
-        const clear = [-width / 2, 0, width / 2].every(u => {
-          const x = x0 + dx * (offset + u) + nx * 0.4, y = y0 + dy * (offset + u) + ny * 0.4;
-          return !inBuilding(x, y) && !bgrid.ray(x, y, nx, ny, 2);
-        });
-        if (clear) plazaPieces.push({ x: x0 + dx * offset, y: y0 + dy * offset, dx, dy, nx, ny,
-          Lp: width, kd: 2, SL, mid: offset, extA: 0, extB: 0, key, ox: x0, oy: y0, ri, role: 'shop' });
-        continue;
-      }
-      const cuts = [0]; for (let k = Math.ceil((u0 + 0.4) / L.shopW - 0.5); (k + 0.5) * L.shopW < u0 + SL - 0.4; k++) cuts.push((k + 0.5) * L.shopW - u0); cuts.push(SL);
-      for (let guard = 0; guard < 40 && cuts.length > 2; guard++) {     // no slivers: a bay narrower than 2.6 m joins its smaller neighbour
-        let m = -1; for (let i = 0; i + 1 < cuts.length; i++) if (cuts[i + 1] - cuts[i] < 2.6 && (m < 0 || cuts[i + 1] - cuts[i] < cuts[m + 1] - cuts[m])) m = i;
-        if (m < 0) break; const left = m > 0 ? cuts[m] - cuts[m - 1] : 1e9, right = m + 2 < cuts.length ? cuts[m + 2] - cuts[m + 1] : 1e9; cuts.splice(left < right ? m : m + 1, 1);
-      }
-      const endWidth = SH?.storefrontEndBayWidths?.[bid + ':' + ri];
-      if (cuts.length === 2 && endWidth >= 2.6 && SL - endWidth >= 2.6) cuts.splice(1, 0, SL - endWidth);
-      const tailWidths = SH?.storefrontLastBayWidths?.[bid + ':' + ri];
-      if (tailWidths) {
-        const widths = Array.isArray(tailWidths) ? tailWidths : [tailWidths];
-        const lastStart = cuts[cuts.length - 2];
-        let end = SL;
-        const extra = [];
-        for (const width of widths) {
-          if (!Number.isFinite(width) || width < 2.6 || end - width - lastStart < 2.6) break;
-          end -= width;
-          extra.push(end);
+      const hasFront = frs.some(q => q !== null);
+      const bay = SH?.plazaStorefronts?.[bid + ':' + ri];
+      if (!hasFront && !bay) continue;
+      const firstPiece = pieces.length;
+      if (hasFront) {
+        const cuts = [0]; for (let k = Math.ceil((u0 + 0.4) / L.shopW - 0.5); (k + 0.5) * L.shopW < u0 + SL - 0.4; k++) cuts.push((k + 0.5) * L.shopW - u0); cuts.push(SL);
+        for (let guard = 0; guard < 40 && cuts.length > 2; guard++) {     // no slivers: a bay narrower than 2.6 m joins its smaller neighbour
+          let m = -1; for (let i = 0; i + 1 < cuts.length; i++) if (cuts[i + 1] - cuts[i] < 2.6 && (m < 0 || cuts[i + 1] - cuts[i] < cuts[m + 1] - cuts[m])) m = i;
+          if (m < 0) break; const left = m > 0 ? cuts[m] - cuts[m - 1] : 1e9, right = m + 2 < cuts.length ? cuts[m + 2] - cuts[m + 1] : 1e9; cuts.splice(left < right ? m : m + 1, 1);
         }
-        if (extra.length === widths.length) cuts.splice(-1, 0, ...extra.reverse());
+        const endWidth = SH?.storefrontEndBayWidths?.[bid + ':' + ri];
+        if (cuts.length === 2 && endWidth >= 2.6 && SL - endWidth >= 2.6) cuts.splice(1, 0, SL - endWidth);
+        const tailWidths = SH?.storefrontLastBayWidths?.[bid + ':' + ri];
+        if (tailWidths) {
+          const widths = Array.isArray(tailWidths) ? tailWidths : [tailWidths];
+          const lastStart = cuts[cuts.length - 2];
+          let end = SL;
+          const extra = [];
+          for (const width of widths) {
+            if (!Number.isFinite(width) || width < 2.6 || end - width - lastStart < 2.6) break;
+            end -= width;
+            extra.push(end);
+          }
+          if (extra.length === widths.length) cuts.splice(-1, 0, ...extra.reverse());
+        }
+        const surveyedCuts = SH?.storefrontBayBoundaries?.[bid + ':' + ri];
+        if (Array.isArray(surveyedCuts) && surveyedCuts.length === cuts.length - 2) {
+          const bounds = [0, ...surveyedCuts, SL];
+          if (bounds.every((u, i) => Number.isFinite(u) && (!i || u - bounds[i - 1] >= 2.6))) {
+            cuts.splice(1, surveyedCuts.length, ...surveyedCuts);
+          }
+        }
+        const dp = dirs[(ri - 1 + n) % n], dn = dirs[(ri + 1) % n], convA = dp[0] * dy - dp[1] * dx > 0.3, convB = dx * dn[1] - dy * dn[0] > 0.3;
+        for (let i = 0; i + 1 < cuts.length; i++) {
+          const a = cuts[i], bb = cuts[i + 1], mid = (a + bb) / 2, kd = frs[Math.max(0, Math.min(ns - 1, Math.floor(mid / SL * ns)))]; if (kd === null) continue;
+          pieces.push({ x: x0 + dx * mid, y: y0 + dy * mid, dx, dy, nx, ny, Lp: bb - a, kd, SL, mid, extA: i === 0 && convA ? pproud : 0, extB: i + 2 === cuts.length && convB ? pproud : 0, key: ri * 64 + i, ox: x0, oy: y0, ri });
+        }
       }
-      const dp = dirs[(ri - 1 + n) % n], dn = dirs[(ri + 1) % n], convA = dp[0] * dy - dp[1] * dx > 0.3, convB = dx * dn[1] - dy * dn[0] > 0.3;
-      for (let i = 0; i + 1 < cuts.length; i++) {
-        const a = cuts[i], bb = cuts[i + 1], mid = (a + bb) / 2, kd = frs[Math.max(0, Math.min(ns - 1, Math.floor(mid / SL * ns)))]; if (kd === null) continue;
-        pieces.push({ x: x0 + dx * mid, y: y0 + dy * mid, dx, dy, nx, ny, Lp: bb - a, kd, SL, mid, extA: i === 0 && convA ? pproud : 0, extB: i + 2 === cuts.length && convB ? pproud : 0, key: ri * 64 + i, ox: x0, oy: y0, ri });
-      }
+      if (!bay || (hasFront && !bay.partial)) continue;
+      const { offset, width } = bay, key = ri * 64 + 63;
+      if (!SH.rows[bid + ':' + key] || !(width >= 2.6 && offset >= width / 2 && offset + width / 2 <= SL)) continue;
+      const overlaps = pieces.slice(firstPiece).some(p =>
+        offset + width / 2 > p.mid - p.Lp / 2 - p.extA &&
+        offset - width / 2 < p.mid + p.Lp / 2 + p.extB);
+      if (overlaps) continue;
+      const clear = [-width / 2, 0, width / 2].every(u => {
+        const x = x0 + dx * (offset + u) + nx * 0.4, y = y0 + dy * (offset + u) + ny * 0.4;
+        return !inBuilding(x, y) && !bgrid.ray(x, y, nx, ny, 2);
+      });
+      if (clear) plazaPieces.push({ x: x0 + dx * offset, y: y0 + dy * offset, dx, dy, nx, ny,
+        Lp: width, kd: 2, SL, mid: offset, extA: 0, extB: 0, key, ox: x0, oy: y0, ri, role: 'shop' });
     }
     if (!pieces.length && !plazaPieces.length) return;
     stats.buildings++;
@@ -288,6 +301,10 @@ export function layout(C, opts = {}) {
     else if (((style === 0 || style === 4 || style === 3) && h > 8) || (RESW && pieces.some((q) => q.res))) {
       let P = pieces.find((q) => q.Lp >= 5.2);
       if (RESW && pieces.some((q) => q.res)) { let P2 = null; for (const q of pieces) if (q.res && q.Lp >= 3.4 && (!P2 || q.Lp > P2.Lp)) P2 = q; if (P2) P = P2; else if (!((style === 0 || style === 4 || style === 3) && h > 8)) P = null; }     /* uptown: a house on a street with no shops has its one door on that street, in its widest bay */
+      const entranceKey = SH?.mappedBuildingEntrances?.[bid];
+      const hasMappedLobby = entranceKey && pieces.some(p => bid + ':' + p.key === entranceKey &&
+        SH.types[SH.rows[entranceKey]?.[0]] === 'lobby');
+      if (hasMappedLobby) P = null;     /* aushops 565-571: a building whose catalog row is already its lobby gets no second generated entry */
       if (P) { const side = rnd(bid, 701) < 0.5 ? -1 : 1, w = 1.7; pieces.push({ ...P, x: P.x + P.dx * side * (P.Lp - w) / 2, y: P.y + P.dy * side * (P.Lp - w) / 2, Lp: w, role: 'entry', extA: side < 0 ? P.extA : 0, extB: side > 0 ? P.extB : 0, key: P.key + 32 });
         P.x -= P.dx * side * w / 2; P.y -= P.dy * side * w / 2; P.Lp -= w; if (side < 0) P.extA = 0; else P.extB = 0; }
     }
@@ -347,8 +364,14 @@ export function layout(C, opts = {}) {
       const eA = P.extA ? solExt(P.x + P.dx * xa, P.y + P.dy * xa, -P.dx, -P.dy, P.nx, P.ny, P.extA, pproud) : 0, eB = P.extB ? solExt(P.x + P.dx * xb, P.y + P.dy * xb, P.dx, P.dy, P.nx, P.ny, P.extB, pproud) : 0;
       // entablature over the bay and its lip
       const entCol = style === 2 ? baseCol : mul(baseCol, 1.04);
-      bx(1, xa - P.extA, xb + P.extB, sHi, Hh + 0.03, 0, pproud - 0.05, K.MAS, entCol, mas === 1 ? 2 : mas, 0, 0, seed);
-      if (style !== 2) bx(1, xa - P.extA - 0.04, xb + P.extB + 0.04, Hh - 0.08, Hh + 0.05, 0, pproud + 0.10, K.MAS, mul(entCol, 1.05), 2, 0, 0, seed);
+      // At 1367–69 Broadway the base tile paints its stock signs up to 5.038 m.
+      let cornice = fixedCat && bid === 102632 ? Math.max(Hh, 5.04 - SW) : Hh;
+      // CVS wraps the first four West 40th bays. The base sign band ends at 5.226 m.
+      if (fixedCat && bid === 106257 && P.key >= 319 && P.key <= 323 && P.sh === 'pharmacy') {
+        cornice = Math.max(Hh, 5.23 - SW);
+      }
+      bx(1, xa - P.extA, xb + P.extB, sHi, cornice + 0.03, 0, pproud - 0.05, K.MAS, entCol, mas === 1 ? 2 : mas, 0, 0, seed);
+      if (style !== 2) bx(1, xa - P.extA - 0.04, xb + P.extB + 0.04, cornice - 0.08, cornice + 0.05, 0, pproud + 0.10, K.MAS, mul(entCol, 1.05), 2, 0, 0, seed);
       if (P.role === 'infill') { so(xa - eA, xb + eB, pproud); bx(1, xa - P.extA, xb + P.extB, 0, sHi, 0, pproud, K.MAS, baseCol, ...masP); bx(0, xa - P.extA - 0.03, xb + P.extB + 0.03, 0, 0.4, 0, pproud + 0.04, K.MAS, mul(baseCol, 0.85), mas === 1 ? 0 : mas, 0, 0, seed); continue; }
       const ppw = P.role === 'entry' ? 0.3 : pw;
       // piers with a plinth
@@ -478,6 +501,17 @@ export function layout(C, opts = {}) {
         }
         stats.shops++;
         if (P.role === 'shop') shops.push({ x: +P.x.toFixed(2), y: +P.y.toFixed(2), h: +rot.toFixed(4), nx: +P.nx.toFixed(4), ny: +P.ny.toFixed(4), w: +W.toFixed(2), kerb: +P.kd.toFixed(2), out: +Math.max(zF + 0.1, pproud).toFixed(2), door: +dxc.toFixed(2), type: TY.name, food: ['deli', 'diner', 'pizza', 'bar', 'cafe', 'restaurant', 'fastfood', 'bakery'].includes(TY.name), stand: !!(TY.out && P.kd - zF > 3.3 && r(59) < 0.75), shed });
+      }
+      // 1600 Broadway: the full north tile places the glazed Broadway corner
+      // west of its survey footprint. Mount the upper display on that tile face.
+      if (fixedCat && bid === 105401 && P.key === 384 && P.role === 'shop' &&
+          SH.names[SH.rows['105401:384']?.[1]] === 'CANDY SHELL WORLD|') {
+        const bayFrame = fi;
+        fi = frames.length / 3;
+        frames.push(181.935, 1702.99, Math.atan2(-4.52, -1.69));
+        bx(1, -2.22, 2.22, 4.4 - SW, 7.6 - SW, 0.025, 0.09, K.SIGN,
+          [0.52, 0.045, 0.025], P.nameCell, 2, pack([0.98, 0.94, 0.72]), seed);
+        fi = bayFrame;
       }
       // ---- sign fascia
       const zs = zF > 0.2 ? zF + 0.04 : pproud + 0.02, sx0 = x0, sx1 = x1;
@@ -611,6 +645,21 @@ export async function add(game, ctx) {
         console.warn('[storefronts]', file, err);
       }
     }
+  }
+  if (shared.uOliviaFrontage) {
+    const bakery = shopsJ?.rows?.['701404:199'];
+    const infill = shopsJ?.rows?.['701404:200'];
+    shared.uOliviaFrontage.value = shopsJ?.names?.[bakery?.[1]] === "SOAKIN' DONUTS|COFFEE" &&
+      shopsJ?.types?.[infill?.[0]] === 'blank' && infill[1] === -1;
+  }
+  if (shared.uCandyFrontage) {
+    const name = shopsJ?.rows?.['105400:64']?.[1];
+    shared.uCandyFrontage.value = shopsJ?.names?.[name] === 'CANDY SHELL WORLD|';
+  }
+  if (shared.uTorchConstruction) {
+    shared.uTorchConstruction.value = !!shopsJ?.excludedStorefrontInteriors?.includes('106346:260') &&
+      [256, 257, 258, 259, 260, 261, 262].every(bay =>
+        shopsJ.types[shopsJ.rows['106346:' + bay]?.[0]] === 'blank');
   }
   const hidden = shopsJ?.hiddenFacadeSign;
   if (shared.uHiddenShopSign) {
