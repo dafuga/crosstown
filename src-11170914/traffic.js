@@ -1,8 +1,8 @@
 // traffic.js: moving traffic on the lane graph, parked cars along the kerbs, pedestrians on the sidewalks.
 import * as THREE from 'three';
-import { clamp, wrapPi, rng, Polyline, TAU } from './geo.js';
+import { staticPathBlocked, exitsNearestBoxFace, segmentHitsBox, clamp, wrapPi, rng, Polyline, TAU } from './geo.js';
 import { PAINTS } from './models.js';
-import { buildingQuery, pedestrianFurniture } from './crowd/nav.js';
+import { buildingQuery, furnitureCrossing, pedestrianFurniture } from './crowd/nav.js';
 import { plainSlide } from './move/plainfall.js';
 
 // What is on a Manhattan street: yellow cabs first, then black hire cars and SUVs, white vans, and everyone else.
@@ -29,6 +29,11 @@ const SHOVE = 1.5, LO_MAX = 1.4, REAR = 0.7;
 // the car waits for him as it always did (it does not push through the player).
 const B_WAIT = 3, B_RAD = 0.8, B_BACK = 1.6, B_SLOW = 2.2, B_CREEP = 1.2, B_GIVEUP = 6, B_TURN = 0.55;
 
+// The fallen model tips about its feet, with its head pointing along its heading.
+function fallenHalfLength(person) {
+  return 0.85 * (person.scale || 1) * (person.fall || 0);
+}
+
 export class Traffic {
   constructor(game) {
     this.g = game; this.cars = []; this.rand = rng(1234); this.target = 90; this.heldT = -1e9; this._pg = 1e9; this._mb = null; this._blk = null; this.room = game.P && game.P.get('unstick') === '0' ? 0 : 3.2; this.spawnT = 0; this.busT = 0; this.near = []; this.nearT = 0;
@@ -47,7 +52,25 @@ export class Traffic {
     const R = this.g.roads, type = this.pickType(), def = this.g.kit.cars[type];
     if (type === 'bus' && !e.ave) return null;
     const c = { type, def, e, dir, li, s, v: 0, x: 0, y: 0, h: 0, color: this.colorFor(type), spin: 0, steer: 0, junction: null, stun: 0, wait: 0, ghost: 0, v0: (e.ave ? 11.5 : 8) * (0.85 + this.rand() * 0.3), id: Math.floor(this.rand() * 1e9), honk: 0, lo: 0, lo0: 1, brake: false, held: 0, nx: undefined, plan: null, pass: null, passT: 0, heldByPlayer: 0, yield: false, dead: false, dbl: false, pt: -1e9, rev: 0, backT: 0, backV: 0, backD: 0, jamT: 0, avoid: null, mvT: -1e9, _shF: -1, _shD: 0, bd: null, bs: 0, bv: 0 };
-    R.lanePos(e, dir, li, s, c); c.v = c.v0 * 0.8; this.cars.push(c); return c;
+    R.lanePos(e, dir, li, s, c);
+    if (this.spawnOccupied(c)) return null;
+    c.v = c.v0 * 0.8; this.cars.push(c); return c;
+  }
+  spawnOccupied(c) {
+    const cos = Math.cos(c.h), sin = Math.sin(c.h);
+    const inside = person => {
+      if (!person || person.gone) return false;
+      const dx = person.x - c.x, dy = person.y - c.y;
+      const u = dx*cos + dy*sin, v = dy*cos - dx*sin;
+      const length = c.def.len/2 + 0.25, width = c.def.wid/2 + 0.25;
+      if (Math.abs(u) < length && Math.abs(v) < width) return true;
+      if (person.state !== 'down' || !person.fall) return false;
+      const r = fallenHalfLength(person);
+      const du = Math.cos(person.h-c.h)*r, dv = Math.sin(person.h-c.h)*r;
+      return segmentHitsBox(u+du, v+dv, du, dv, length, width);
+    };
+    return this.g.peds?.list.some(inside) || this.g.crowd?.sim?.agents.some(inside) ||
+        (this.bodyOn && this.bod.some(inside));
   }
   // fill the streets around a point at start
   populate(px, py) {
@@ -73,7 +96,7 @@ export class Traffic {
       if (!g.bounds.in(tmp.x, tmp.y, -5)) continue;
       if (d < 300 && g.statics.raycast(px, py, tmp.x, tmp.y) >= 1) continue;      // in plain view down the street
       let ok = true; for (const c of this.cars) if (Math.hypot(c.x - tmp.x, c.y - tmp.y) < 14) { ok = false; break; }
-      if (ok) { this.spawn(e, dir, li, s); return; }
+      if (ok && this.spawn(e, dir, li, s)) return;
     }
   }
 
@@ -164,7 +187,7 @@ export class Traffic {
     const g = this.g, L = this.bod, st = g.statics, k = ++this._bk;
     const put = (o, x, y) => { if (st.onSidewalk(x, y)) return; let B = null; for (const q of L) if (q.o === o) { B = q; break; } if (!B) L.push((B = { o, x, y, ax: x, ay: y, t0: -1, cr: 0, k }));
       B.x = x; B.y = y; B.k = k; if (Math.abs(x - B.ax) > 1 || Math.abs(y - B.ay) > 1) { B.ax = x; B.ay = y; B.t0 = -1; B.cr = 0; } };
-    const lying = (p) => { const r = 0.85 * (p.scale || 1) * (p.fall || 0); put(p, p.x + Math.cos(p.h) * r, p.y + Math.sin(p.h) * r); };      // drawn tipped over about his feet, head towards h (a ragdoll or a doll keeps fall at 0 and x, y at the hips)
+    const lying = (p) => { const r = fallenHalfLength(p); put(p, p.x + Math.cos(p.h) * r, p.y + Math.sin(p.h) * r); };      // drawn tipped over about his feet, head towards h (a ragdoll or a doll keeps fall at 0 and x, y at the hips)
     for (const p of g.peds.list) if (p.state === 'down') lying(p);
     const S = g.crowd && g.crowd.sim; if (S && S.agents) { const D = this._dn; if (--this._dnT <= 0) { this._dnT = 8; D.length = 0; for (const a of S.agents) if (a && !a.gone && a.state === 'down') D.push(a); } for (const a of D) if (!a.gone && a.state === 'down') lying(a); }
     const PH = g.__pedhit; if (PH && PH.list) for (const R of PH.list) if (R.fig && R.fig.crowd && R.P && R.P.hips.p.y < 1.1) put(R, R.P.hips.p.x, -R.P.hips.p.z);      // (one lying on a bonnet or a roof is not in the road)
@@ -276,7 +299,7 @@ export class Traffic {
     scanPeople(g.peds.list);
     if (g.crowd?.on) {
       const sim = g.crowd.sim;
-      if (turn || c.ghost > 0) scanPeople(sim.road);
+      if (turn || c.ghost > 0 || sim.fbWalls) scanPeople(sim.road);
       if (turn) {
         scanPeople(sim.kerbInBounds(x0, y0, x1, y1, 2));
       } else {
@@ -409,8 +432,8 @@ export class Traffic {
 
   step(dt, t) {
     const g = this.g, R = g.roads, px = g.focus.x, py = g.focus.y, pv = g.demo ? null : g.player.vehicle;
-    this.spawnT -= dt; if (this.spawnT <= 0 && this.cars.length < this.target) { this.spawnT = 0.25; this.trySpawn(px, py); }
     if (this.bodyOn) this.bodies();
+    this.spawnT -= dt; if (this.spawnT <= 0 && this.cars.length < this.target) { this.spawnT = 0.25; this.trySpawn(px, py); }
     for (let i = this.cars.length - 1; i >= 0; i--) {
       const c = this.cars[i];
       if (Math.hypot(c.x - px, c.y - py) > 420 || c.dead) { this.cars.splice(i, 1); continue; }
@@ -533,6 +556,26 @@ export class Parked {
 
 // Pedestrians walking the sidewalk loops near the player.
 const nearbyParked = [];
+function vehicleBlocksShove(game, pushingCar, x, y, toX, toY, radius) {
+  const dx = (toX-x)/2, dy = (toY-y)/2, cx = x+dx, cy = y+dy;
+  const pathReach = Math.abs(dx) + Math.abs(dy) + 2*radius;
+  const blocks = car => {
+    if (car === pushingCar ||
+        Math.abs(cx-car.x) + Math.abs(cy-car.y) > car.def.len + car.def.wid + pathReach) return false;
+    const c = Math.cos(car.h), s = Math.sin(car.h);
+    const u = (cx-car.x)*c + (cy-car.y)*s, v = (cy-car.y)*c - (cx-car.x)*s;
+    const du = dx*c + dy*s, dv = dy*c - dx*s;
+    const length = car.def.len/2 + radius, width = car.def.wid/2 + radius;
+    if (!segmentHitsBox(u, v, du, dv, length, width)) return false;
+    const epsilon = 8 * Number.EPSILON * Math.max(1, Math.abs(toX), Math.abs(toY), Math.abs(car.x), Math.abs(car.y));
+    return !exitsNearestBoxFace(u-du, v-dv, u+du, v+dv, length, width, epsilon);
+  };
+  if (game.vehicles?.some(blocks) || game.traffic?.cars?.some(blocks)) return true;
+  const parked = game.parked;
+  if (!parked?.bodyReach) return false;
+  const reach = parked.bodyReach + radius*Math.SQRT2 + Math.hypot(dx, dy);
+  return parked.near(cx, cy, reach, nearbyParked).some(blocks);
+}
 function insideVehicle(game, x, y, radius, speedLimit = Infinity) {
   return overlapsVehicle(game.vehicles, x, y, radius, speedLimit) ||
     overlapsVehicle(game.traffic?.cars, x, y, radius, Infinity) ||
@@ -675,7 +718,15 @@ export class Peds {
           }
           else { p.x = gx; p.y = gy; p.h += wrapPi(Math.atan2(ty, tx) - p.h) * Math.min(1, dt * 6); }
           // step around the player on foot
-          const pl = g.player; if (!pl.vehicle) { const dx = p.x - pl.x, dy = p.y - pl.y, dd = Math.hypot(dx, dy); if (dd < 0.7 && dd > 1e-3) { p.x += (dx / dd) * (0.7 - dd); p.y += (dy / dd) * (0.7 - dd); } }
+          const pl = g.player;
+          if (!pl.vehicle) {
+            const dx = p.x - pl.x, dy = p.y - pl.y, dd = Math.hypot(dx, dy);
+            if (dd < 0.7 && dd > 1e-3) {
+              const step = Math.min(0.7 - dd, stride);
+              p.x += (dx / dd) * step;
+              p.y += (dy / dd) * step;
+            }
+          }
           // A prescribed sidewalk loop can cross a facade or a fence. Turn
           // back on the same side and ease onto the return lane from here.
           // Traffic stopped at a light has no parked-car circles.
@@ -708,9 +759,12 @@ export class Peds {
         if (contact) {
           const x = p.x, y = p.y;
           const clear = () => g.statics.raycast(x, y, p.x, p.y) >= 1 &&
+            !staticPathBlocked(g.statics, x, y, p.x, p.y, true) &&
             !g.statics.resolvePedestrian(p.x, p.y, 0.25, tmp2) &&
             !furniture?.push(p.x, p.y, 0.25, tmp2) &&
-            !insideVehicle(g, p.x, p.y, 0.25);
+            !furnitureCrossing(furniture, this._shoveFurniture ||= [], x, y, p.x, p.y) &&
+            !insideVehicle(g, p.x, p.y, 0.25) &&
+            !vehicleBlocksShove(g, contact, x, y, p.x, p.y, 0.25);
           g.traffic.pushPlayer(p);
           if (!clear()) {
             p.x = x; p.y = y;
@@ -722,6 +776,21 @@ export class Peds {
               p.x += nx * Math.sign(side || 1) * step;
               p.y += ny * Math.sign(side || 1) * step;
               if (!clear()) { p.x = x; p.y = y; }
+            } else if (Math.abs(side) < 1e-6) {
+              // On the centerline either side is equally close. Try the other door.
+              p.x = x - nx * Math.sign(side || 1) * step;
+              p.y = y - ny * Math.sign(side || 1) * step;
+              if (!clear()) { p.x = x; p.y = y; }
+            }
+            if (p.x === x && p.y === y) {
+              // Near a corner the bumper can be clear even when the side is blocked.
+              const forward = (x-contact.x)*ny - (y-contact.y)*nx;
+              const toEnd = contact.def.len/2 + 0.30 - Math.abs(forward);
+              if (toEnd > 0 && toEnd <= 0.35) {
+                p.x += ny * Math.sign(forward || 1) * toEnd;
+                p.y -= nx * Math.sign(forward || 1) * toEnd;
+                if (!clear()) { p.x = x; p.y = y; }
+              }
             }
           }
           if (p.state === 'walk' && (p.x !== x || p.y !== y)) p.back = 1;

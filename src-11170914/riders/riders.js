@@ -176,13 +176,26 @@ export async function install(g) {
     vis.object.scale.setScalar(1); vis.object.position.set(x, z, -y); vis.object.rotation.set(0, h, 0);
     if (vis.mixer) { vis.mixer.stopAllAction(); vis.cur = null; vis.mixer.timeScale = 1; const a = vis.acts[act] || vis.acts.idle; if (a) a.reset().play(); vis.mixer.setTime(0.2); vis.mixer.timeScale = 0; }
     vis.object.updateMatrixWorld(true); pd.list.push(p); try { g.onPedHit(p, v); } catch (e) { console.log('[riders] cychit: ' + (e && e.message)); } if (vis.mixer) vis.mixer.timeScale = 0; return true; }
+  // ragdoll lane, Nov 17 (PRIORITIES item 4, Matt: hitting a biker 'looks stupid'; 'bike tumbles apart'): what a struck bike carries comes off it. The delivery box on
+  // the rack, the crate, the box on the rider's back leave on their own way, turn over in the air, bounce and come to rest on a flat side. ?cycbox=0 = they stay on.
+  const LOOSE = CYC && !(P && P.get('cycbox') === '0'), loose = []; out.loose = loose;
+  function shed(r, v, cs, ux, uy, sg) { if (!LOOSE || !r.box || cs < 6) return; const k = r.box, one = (crate, back) => { const s2 = back ? sg : -sg, f = 0.8 + rand() * 0.35;
+      loose.push({ crate, tint: crate ? r.tc : r.tx, bs: crate ? 1 : r.bs || 1, bh: crate ? 1 : r.bh || 1, x: r.x - ux * 0.5, y: r.y - uy * 0.5, z: (r.z || 0) + (back ? 1.15 : 0.85), vx: v.vx * f - uy * s2 * (0.8 + rand() * 2.2), vy: v.vy * f + ux * s2 * (0.8 + rand() * 2.2), vz: 2 + 0.17 * cs + rand() * 1.2,
+        a: [rand() * 6.28, r.hv || 0, rand() * 6.28], w: [(rand() - 0.5) * (5 + cs * 0.5), (rand() - 0.5) * (4 + cs * 0.3), (rand() - 0.5) * (5 + cs * 0.5)], t: 0, rest: false, n: 0 }); };
+    if (k === 1) one(false, false); else if (k === 2) one(false, true); else if (k === 3) one(true, false); else { one(true, false); one(false, true); } r.box = 0; out.stats.shed = (out.stats.shed || 0) + 1; while (loose.length > 12) loose.shift(); }
+  function looseStep(dt) { for (let i = loose.length - 1; i >= 0; i--) { const L = loose[i]; L.t += dt; if (L.t > 45) { loose.splice(i, 1); continue; } if (L.rest) continue;
+      L.vz -= 9.81 * dt; L.z += L.vz * dt; for (let k = 0; k < 3; k++) L.a[k] += L.w[k] * dt; st.resolve(L.x + L.vx * dt, L.y + L.vy * dt, 0.25, o2, true); if (o2.depth > 0) { L.vx *= -0.3; L.vy *= -0.3; } L.x = o2.x; L.y = o2.y;
+      const gz = kerbZ(L.x, L.y); if (L.z <= gz) { L.z = gz; const hit = -L.vz; if (hit > 1.3 && L.n < 4) { L.n++; L.vz = hit * 0.38; L.vx *= 0.62; L.vy *= 0.62; for (let k = 0; k < 3; k++) L.w[k] *= 0.55; clatter(Math.min(5, hit * 0.9)); }
+        else { L.vz = 0; const k2 = Math.exp(-6 * dt); L.vx *= k2; L.vy *= k2; const q = Math.PI / 2; L.a[0] += (Math.round(L.a[0] / q) * q - L.a[0]) * Math.min(1, dt * 12); L.a[2] += (Math.round(L.a[2] / q) * q - L.a[2]) * Math.min(1, dt * 12); L.w[0] = L.w[2] = 0; L.w[1] *= k2; if (Math.hypot(L.vx, L.vy) < 0.15) { L.rest = true; L.a[0] = Math.round(L.a[0] / q) * q; L.a[2] = Math.round(L.a[2] / q) * q; } } } } }
+  const _eu = new THREE.Euler();
+  function looseDraw() { for (const L of loose) { _q.setFromEuler(_eu.set(L.a[0], L.a[1], L.a[2], 'YXZ')); const hb = 0.2 * L.bs * L.bh;      /* turned about its own middle, not about the rack it stood on */ _m.compose(_p.set(L.x, L.z + hb, -L.y), _q, _s.set(L.bs, L.bs * L.bh, L.bs)); _l.makeTranslation(0, -0.2, 0); put(L.crate ? CR : BX, _m2.multiplyMatrices(_m, _l), L.tint); } }
   function knock(r, v, own) {      // own: he was riding, so his own speed counts; false: a bike on its stand. false back = not hard enough (or no ragdoll to give him): the caller tips him over as before
     const sp = Math.hypot(v.vx || 0, v.vy || 0), ox = own ? Math.cos(r.h) * r.v : 0, oy = own ? Math.sin(r.h) * r.v : 0, cs = Math.hypot(v.vx - ox, v.vy - oy); if (cs < HARD || sp < 0.5) return false;
     const had = own || !!r.rider; if (had && !body(r.x, r.y, r.z || 0, r.hv, own ? r.pv : r.sit ? r.sit.pv : r.pv, v, 'drive', own ? r : r.sit ? Object.assign({ astride: true }, r.sit) : r)) return false;
     const ux = v.vx / sp, uy = v.vy / sp, lat = -(r.x - v.x) * uy + (r.y - v.y) * ux, sg = Math.abs(lat) < 0.05 ? (rand() < 0.5 ? 1 : -1) : lat > 0 ? 1 : -1, side = 1.6 + 0.14 * cs + rand();
     r.state = 'down'; r.t = 0; r.mode = 'fallen'; r.rider = false; r.kn = 1; r.air = true; r.bz = 0; r.bvz = Math.min(5.5, 1.6 + 0.2 * cs); r.rest = 0;
     r.dvx = v.vx * 1.15 - uy * sg * side; r.dvy = v.vy * 1.15 + ux * sg * side; r.roll = -r.dvx * Math.sin(r.hv) + r.dvy * Math.cos(r.hv) > 0 ? -1 : 1;      // it turns over the way it is going
-    r.tum = r.roll * Math.min(11, 3 + 0.5 * cs); r.spin = (rand() - 0.5) * (4 + 0.4 * cs); r.cf = cs; out.stats.hits++; out.stats.thrown++; clatter(cs);
+    r.tum = r.roll * Math.min(11, 3 + 0.5 * cs); r.spin = (rand() - 0.5) * (4 + 0.4 * cs); r.cf = cs; out.stats.hits++; out.stats.thrown++; clatter(cs); shed(r, v, cs, ux, uy, sg);
     if (!had) { try { g.cam.shake = Math.min(0.6, (g.cam.shake || 0) + 0.08 + cs * 0.008); g.missions.onPedHit(); } catch (e) {} }
     return true; }
   function flyStep(r, dt) { r.t += dt;
@@ -348,6 +361,7 @@ export async function install(g) {
       if (r.sh > 0) r.sh -= dr; if (r.state === 'down') { if (r.kn) flyStep(r, dr); else downStep(r, dr); } else if (r.mode === 'road') { roadStep(r, dr, t); if (dr === dt) nr++; } else if (r.mode === 'walk') { walkStep(r, dr); if (dr === dt) nw++; } }
     if (nr < TARGET) spawnRoad(fx, fy, false); if (nw < WALKERS && rand() < 0.1) spawnWalk(fx, fy, false);
     if (CLUMPS) { clumpHits(); clumpPush(dt, fx, fy); for (const C of out.clumps) for (const q of C.men) if (q.fall) { const F = q.fall; F.t += dt; const k = Math.exp(-3 * dt); F.vx *= k; F.vy *= k; q.x += F.vx * dt; q.y += F.vy * dt; } }
+    if (loose.length) looseStep(dt);
     { const d = performance.now() - t0; out.stats.ms += (d - out.stats.ms) * 0.05; if (d > (out.stats.stepMax || 0)) out.stats.stepMax = d; out.stats.stepSum = (out.stats.stepSum || 0) + d; }
   }
   // ------------------------------------------------------------------ the frame
@@ -359,6 +373,7 @@ export async function install(g) {
       const nb = near(C.cx, C.cy); for (const b of C.bikes) { draw(b, b.x, b.y, 0.15, b.h, b.lean, null); if (b.sit) put(nb && PP ? PP.astride[b.sit.pv] : RD['astride' + b.sit.gear], bikeMat(b.x, b.y, 0.15, b.h, b.lean), b.sit.tr); }
       for (const q of C.men) { if (q.fall) { if (q.fall.t > 9) continue; _q.setFromAxisAngle(AY, q.h); _q2.setFromAxisAngle(AX, q.fall.sg * 1.5 * Math.min(1, q.fall.t * 4)); _q.multiply(_q2); _m.compose(_p.set(q.x, kerbZ(q.x, q.y) + 0.14, -q.y), _q, ONE); } else { _q.setFromAxisAngle(AY, q.h); _m.compose(_p.set(q.x, 0.15, -q.y), _q, _s.set(q.sc, q.sc, q.sc)); }
         put(nb && PP ? PP[q.pose][q.pv] : RD[q.pose + q.gear], _m, q.tr); } }
+    if (loose.length) looseDraw();
     let n = 0; for (const b of batches) { b.im.count = b.n; b.im.visible = b.n > 0; n += b.n; if (b.n) { b.im.instanceMatrix.needsUpdate = true; b.tint.needsUpdate = true; } } out.stats.drawn = n; out.stats.syncSum = (out.stats.syncSum || 0) + performance.now() - tS;
   }
   // ------------------------------------------------------------------ the hooks

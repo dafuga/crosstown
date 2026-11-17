@@ -24,8 +24,8 @@
 //   another walk he can reach, then stands until he can be taken away unseen.
 //   BODIES (lying): nobody walks over someone on the ground: they are passed like a thing in the way, and never stood on.
 // No three.js here: render.js reads the agents' public fields (x y z h scale fall char clip ph clipB phB blend tint acc).
-import { clamp, wrapPi, rng, TAU } from '../geo.js';
-import { bandAt } from './nav.js';
+import { staticPathBlocked, exitsNearestBoxFace, segmentHitsBox, clamp, wrapPi, rng, TAU } from '../geo.js';
+import { bandAt, furnitureCrossing } from './nav.js';
 import { plainSlide } from '../move/plainfall.js';
 
 const RP = 230, R_NEAR = 45, R_BACK = 95, BACK_F = 0.25, CELL = 2.5, GN = 216, TURN = 2.7, REF_WEIGHT = 2900;
@@ -220,6 +220,7 @@ export class CrowdSim {
     return a;
   }
   crowded(x, y, r) {
+    if (this.fbWalls && this.nav.inBuilding?.(x, y, 2.5)) return true;
     for (const q of this.agents) if (Math.abs(q.x - x) < r && Math.abs(q.y - y) < r) return true;
     for (const q of this.still) { const dx = x - q.x, dy = y - q.y; if (Math.abs(dx * q.c + dy * q.s) < q.hl + 0.3 && Math.abs(-dx * q.s + dy * q.c) < q.hw + 0.3) return true; }
     return this.vehicleAt(x, y) || this.g.statics.resolvePedestrian(x, y, 0.3, _o) > 0 || this.nav.blocked(x, y, 0.35);
@@ -235,19 +236,8 @@ export class CrowdSim {
       this.crossesFurniture(fromX, fromY, x, y, person);
   }
   crossesFurniture(px, py, tx, ty, person) {
-    if (!this.nav.soft) return false;
-    const radius = 0.25, dx = tx - px, dy = ty - py, length2 = dx*dx + dy*dy;
-    if (!length2) return false;
     const nearby = this._pathFurniture || (this._pathFurniture = []);
-    nearby.length = 0;
-    this.nav.soft(Math.min(px, tx) - radius, Math.min(py, ty) - radius,
-      Math.max(px, tx) + radius, Math.max(py, ty) + radius, nearby);
-    for (const o of nearby) {
-      const u = clamp(((o.x - px)*dx + (o.y - py)*dy) / length2, 0, 1);
-      if (person && u === 0 && Math.hypot(px-o.x, py-o.y) < o.h + radius) person.retreatingFromObstacle = true;
-      if (u > 0 && Math.hypot(px + u*dx - o.x, py + u*dy - o.y) < o.h + radius) return true;
-    }
-    return false;
+    return furnitureCrossing(this.nav, nearby, px, py, tx, ty, person);
   }
   vehicleAt(x, y, fromX = x, fromY = y, vehicles, allowExit = false, person) {
     const hx = (x - fromX) / 2, hy = (y - fromY) / 2;
@@ -269,12 +259,10 @@ export class CrowdSim {
           // Include contact at the face within world-coordinate roundoff.
           const epsilon = 8 * Number.EPSILON * Math.max(1, Math.abs(x), Math.abs(y), Math.abs(car.x), Math.abs(car.y));
           if (person) person.retreatingFromObstacle = true;
-          if (gapU <= gapV + epsilon && (Math.abs(startU) <= epsilon ? Math.abs(u+du) : Math.sign(startU)*(u+du)) >= length-epsilon) return false;
-          if (gapV <= gapU + epsilon && (Math.abs(startV) <= epsilon ? Math.abs(v+dv) : Math.sign(startV)*(v+dv)) >= width-epsilon) return false;
+          if (exitsNearestBoxFace(startU, startV, u+du, v+dv, length, width, epsilon)) return false;
         }
       }
-      return Math.abs(u) < length + Math.abs(du) && Math.abs(v) < width + Math.abs(dv) &&
-        Math.abs(u*dv - v*du) < length*Math.abs(dv) + width*Math.abs(du);
+      return segmentHitsBox(u, v, du, dv, length, width);
     };
     if (vehicles ? vehicles.some(hits) : this.g.vehicles?.some(hits) || this.g.traffic?.cars?.some(hits)) return true;
     const parked = this.g.parked;
@@ -321,7 +309,12 @@ export class CrowdSim {
       } }
     // anyone left where nothing is kept
     for (let i = this.agents.length - 1; i >= 0; i--) { const a = this.agents[i]; if (!a || a.lead) continue; const d = Math.hypot(a.x - this.cx, a.y - this.cy);
-      if (d > RP + 25 || (a.state === 'down' && a.t > 9 && this.unseen(a.x, a.y)) || (a.state === 'down' && a.t > 30) || (a.lost && a.state === 'stand' && a.t > 2 && this.unseen(a.x, a.y))) { for (const f of (a.fol || []).slice()) this.remove(f); this.remove(a); } }
+      if (d > RP + 25 || (a.state === 'down' && a.t > 9 && this.unseen(a.x, a.y)) || (a.state === 'down' && a.t > 30) || (a.lost && a.state === 'stand' && a.t > 2 && this.unseen(a.x, a.y))) { for (const f of (a.fol || []).slice()) this.remove(f); this.remove(a); }
+      else if (a.lost && a.state === 'stand' && this.g.t >= a.rejoinRetryAt) {
+        this.rejoin(a);
+        if (a.state === 'walk') this.nStand--;
+      }
+    }
     // People mix after they are put down. Someone whose double has come within 14 m changes body where that cannot be seen: outside the
     // camera's view or behind a building (new colours too), or in view but past the distance where everyone is drawn with one of the few
     // stand-in bodies (render.js tells the sim which: farOf, farR): there the body changes among those that share the stand-in and the
@@ -597,9 +590,24 @@ export class CrowdSim {
   // nearest the walk; it is walked for up to 3 s (ex, ey, escT in walkOn)
   wayOut(a) {
     const w = a.w; if (!w) return false; bandAt(w, clamp(a.s, 0, w.len), B); const s2 = clamp(a.s + a.d * 2, 0, w.len), l2 = clamp(a.lt, B.lo, Math.max(B.lo, B.hi)), tx = w.ax + w.ux * s2 + w.nx * l2, ty = w.ay + w.uy * s2 + w.ny * l2; let best = -1e9, bx = 0, by = 0;
-    for (let k = 0; k < 16; k++) { const h = k * 0.3927 + (a.id % 7) * 0.05, cx = Math.cos(h), cy = Math.sin(h); let px = a.x, py = a.y, n = 0; for (; n < 12; n++) { const qx = px + cx * 0.33, qy = py + cy * 0.33; if (!this.freeAt(qx, qy, px, py)) break; px = qx; py = qy; }
+    for (let k = 0; k < 16; k++) {
+      const h = k * 0.3927 + (a.id % 7) * 0.05, dx = Math.cos(h) * 0.33, dy = Math.sin(h) * 0.33;
+      let px = a.x, py = a.y, n = 0;
+      for (; n < 12; n++) {
+        if (!this.freeAt(px + dx, py + dy, px, py)) break;
+        px += dx; py += dy;
+      }
+      if (n >= 3 && this.vehicleAt(px, py, a.x, a.y, undefined, true)) {
+        // Only a heading that meets a vehicle needs a search for the last clear step.
+        const limit = n;
+        px = a.x; py = a.y;
+        for (n = 0; n < limit; n++) {
+          if (this.vehicleAt(px + dx, py + dy, px, py, undefined, true)) break;
+          px += dx; py += dy;
+        }
+      }
       if (n < 3) continue; const sc = n * 0.33 - 0.8 * Math.hypot(px - tx, py - ty); if (sc > best) { best = sc; bx = px; by = py; } }
-    if (best < -1e8) return false; a.ex = bx; a.ey = by; a.escT = 3; return true;
+    if (best < -1e8) return false; a.ex = bx; a.ey = by; a.escT = 3; a.escapeHeld = false; return true;
   }
   // PRESSED AND GETTING NOWHERE, in turn: turn back; the freest way out; another walk that can be reached; stand until one can be
   // taken away unseen. The count starts again after 25 s without trouble.
@@ -938,9 +946,9 @@ export class CrowdSim {
   }
 
   // ------------------------------------------------------------------ one agent, one step
-  steer(a, tx, ty, dt, want, turnInPlace = false) {
+  steer(a, tx, ty, dt, want, turnInPlace = false, alignFirst = a.retreatingFromObstacle) {
     const dh = wrapPi(Math.atan2(ty - a.y, tx - a.x) - a.h), ad = Math.abs(dh); a.h += clamp(dh, -TURN * dt, TURN * dt);
-    if (turnInPlace && ad > TURN * dt && (ad - TURN * dt >= Math.PI/2 || a.retreatingFromObstacle)) {
+    if (turnInPlace && ad > TURN * dt && (ad - TURN * dt >= Math.PI/2 || alignFirst)) {
       a.v = 0;
       return;
     }
@@ -949,6 +957,24 @@ export class CrowdSim {
     a.x += Math.cos(a.h) * a.v * dt; a.y += Math.sin(a.h) * a.v * dt;
   }
   walkOn(a, dt, think) {
+    const target = a.rejoinTarget;
+    if (target) {
+      const remaining = Math.hypot(target.x - a.x, target.y - a.y);
+      if (remaining > 0) {
+        const blocked = this.vehicleAt(target.x, target.y, a.x, a.y, undefined, true) ||
+          (think && this.staticApproachBlocked(a.x, a.y, target.x, target.y));
+        if (blocked) {
+          a.v = 0;
+          if (think) this.rejoin(a);
+        } else {
+          this.steer(a, target.x, target.y, dt, a.v0, true, true);
+          if (a.v * dt >= remaining) { a.x = target.x; a.y = target.y; }
+          this.gait(a, dt);
+        }
+        return;
+      }
+      a.rejoinTarget = null;
+    }
     const w = a.w, dx = a.x - w.ax, dy = a.y - w.ay; a.s = dx * w.ux + dy * w.uy; a.l = dx * w.nx + dy * w.ny;
     const prog = a.d > 0 ? a.s : w.len - a.s, remain = w.len - prog, cross = w.kind === 'cross';
     if (!a.path && remain < 7 && a.noPlan !== w) { this.plan(a); if (!a.path) a.noPlan = w; }
@@ -968,7 +994,20 @@ export class CrowdSim {
     }
     const look = 1.3 + a.v * 0.7, s2 = a.s + a.d * look; let lt = clamp(a.lt + a.la, B.lo, Math.max(B.lo, B.hi));
     if (a.door) { if (a.l < B.hi - 0.2) a.door = 0; }
-    if (a.escT > 0) { a.escT -= dt; const ed = Math.hypot(a.ex - a.x, a.ey - a.y); if (ed < 0.35) a.escT = 0; else { a.vcap = Math.max(a.vcap, 0.8); this.steer(a, a.ex, a.ey, dt, Math.min(a.v0, 1.3)); a.onRoad = false; this.gait(a, dt); return; } }
+    // Traffic can enter an escape route during its three-second lifetime.
+    if (a.escT > 0) {
+      if (a.escapeHeld) a.escapeRetry -= dt;
+      if (think) {
+        const blocked = this.vehicleAt(a.ex, a.ey, a.x, a.y, undefined, true);
+        if (!blocked) a.escapeHeld = false;
+        else if (!a.escapeHeld || a.escapeRetry <= 0) {
+          a.escapeHeld = !this.wayOut(a);
+          if (a.escapeHeld) a.escapeRetry = 1;
+        }
+      }
+      if (a.escapeHeld) { a.v = 0; this.gait(a, dt); return; }
+    }
+    if (a.escT > 0) { a.escT -= dt; const ed = Math.hypot(a.ex - a.x, a.ey - a.y); if (ed < 0.35) a.escT = 0; else { a.vcap = Math.max(a.vcap, 0.8); this.steer(a, a.ex, a.ey, dt, Math.min(a.v0, 1.3), true, true); a.onRoad = false; this.gait(a, dt); return; } }
     if (a.carT > 0) { a.carT -= dt; lt = a.carL; if (!cross && !this.g.statics.onSidewalk(a.x, a.y)) a.carRoad = true; else a.carRoad = false; } else if (a.carRoad) a.carRoad = false;
     if (a.fbBack > 0 && a.s > 0.2 && a.s < w.len - 0.2 && a.l > B.lo - 0.2 && a.l < B.hi + 0.2) a.fbBack = 0;      /* back on the walk itself (not merely level with it past its end) */
     if (cross && a.crossYield === w) a.vcap = 0;
@@ -1090,58 +1129,41 @@ export class CrowdSim {
   // nowhere to walk to from here without a wall between: stay, standing, until the camera cannot see (populate then takes them away)
   strand(a) {
     if (this.unseen(a.x, a.y)) { this.remove(a); return; } if (a.wq) { a.wq.w.wait[a.wq.end][a.wq.n] = 0; a.wq = null; }
+    if (this.fbWalls) { a.rejoinTarget = null; a.rejoinRetryAt = this.g.t + 2; }
     if (a.state !== 'stand') this.nStand++; a.state = 'stand'; a.t = 0; a.standT = 1e9; a.tx = a.x; a.ty = a.y; a.th = a.h; a.v = 0; a.lost = true; a.talk = null; a.fbBack = 0; this.fb.lost++;
   }
   parkBlocksRejoin(x, y, px, py, allObstacles = false, person) {
-    const st = this.g.statics, dx = px - x, dy = py - y, length2 = dx * dx + dy * dy;
-    const gap2 = (qx, qy, ax, ay, vx, vy, len2) => {
-      const u = clamp(((qx - ax) * vx + (qy - ay) * vy) / (len2 || 1), 0, 1);
-      return (qx - ax - u * vx) ** 2 + (qy - ay - u * vy) ** 2;
-    };
-    // Trunks are center-indexed (radius <= 0.5 m). Larger park props span their grid cells.
-    const pad = allObstacles ? Math.max(0.7, st.maxCircleRadius + 0.25) : 0.7, size = st.cell;
-    for (let i = Math.floor((Math.min(x, px) - pad) / size); i <= Math.floor((Math.max(x, px) + pad) / size); i++) {
-      for (let j = Math.floor((Math.min(y, py) - pad) / size); j <= Math.floor((Math.max(y, py) + pad) / size); j++) {
-        const key = st.key(i, j);
-        const edges = st.segs.get(key);
-        if (edges) for (const edge of edges) {
-          if (!allObstacles && edge.kind !== 'rock') continue;
-          const [ax, ay, bx, by] = edge, vx = bx - ax, vy = by - ay, edge2 = vx * vx + vy * vy;
-          // The raycast handles crossings. For disjoint segments the minimum
-          // separation occurs at an endpoint. Allow existing contact to recede.
-          const startGap2 = gap2(x, y, ax, ay, vx, vy, edge2);
-          if (person && startGap2 < 0.25 ** 2) person.retreatingFromObstacle = true;
-          const limit = Math.min(0.25 ** 2, startGap2) - 1e-10;
-          if (gap2(px, py, ax, ay, vx, vy, edge2) < limit ||
-              gap2(ax, ay, x, y, dx, dy, length2) < limit ||
-              gap2(bx, by, x, y, dx, dy, length2) < limit) return true;
-        }
-        for (const index of [st.circ, st.parkEdges]) {
-          const circles = index?.get(key);
-          if (!circles) continue;
-          for (const o of circles) {
-            if (!o.on || !(allObstacles || o.parkSolid || o.set?.startsWith('park:trunks:'))) continue;
-            const u = ((o.x - x) * dx + (o.y - y) * dy) / length2;
-            if (u <= 0) {
-              if (person && Math.hypot(x-o.x, y-o.y) < o.r + 0.25) person.retreatingFromObstacle = true;
-              continue;
-            }
-            const t = Math.min(1, u);
-            if (Math.hypot(x + t * dx - o.x, y + t * dy - o.y) < o.r + (allObstacles ? 0.25 : 0.2) - 1e-8) return true;
-          }
-        }
-      }
-    }
-    return false;
+    return staticPathBlocked(this.g.statics, x, y, px, py, allObstacles, person);
   }
   // back onto the network after running or being let go: the nearest way (with ?crowdwalls on: the nearest that can be walked to without
   // a wall between; with none in reach they stay where they are, standing, and are taken away once the camera cannot see them)
   rejoin(a) {
-    const W = this.fbWalls, st = this.g.statics;
-    let best = null, bd = 1e9; for (const w of this.nav.near(a.x, a.y, 30, [])) { if (w.kind === 'cross') continue; const dx = a.x - w.ax, dy = a.y - w.ay, s = clamp(dx * w.ux + dy * w.uy, 0, w.len), l = dx * w.nx + dy * w.ny; bandAt(w, s, B); if (B.hi <= 0) continue; const px = w.ax + w.ux * s + w.nx * clamp(l, B.lo, B.hi), py = w.ay + w.uy * s + w.ny * clamp(l, B.lo, B.hi), d = Math.hypot(a.x - px, a.y - py); if (d < bd) { if (W && d > 0 && (st.raycast(a.x, a.y, px, py) < 1 || this.parkBlocksRejoin(a.x, a.y, px, py))) continue; bd = d; best = w; } }
-    if (!best && W) { this.strand(a); return; }
+    const W = this.fbWalls;
+    a.rejoinTarget = null;
+    let best = null, bd = 1e9, bestX, bestY;
+    for (const w of this.nav.near(a.x, a.y, 30, [])) {
+      if (w.kind === 'cross') continue;
+      const dx = a.x - w.ax, dy = a.y - w.ay;
+      const s = clamp(dx * w.ux + dy * w.uy, 0, w.len);
+      bandAt(w, s, B);
+      if (B.hi <= 0) continue;
+      const l = clamp(dx * w.nx + dy * w.ny, B.lo, B.hi);
+      const px = w.ax + w.ux * s + w.nx * l, py = w.ay + w.uy * s + w.ny * l;
+      const d = Math.hypot(a.x - px, a.y - py);
+      if (!(d < bd)) continue;
+      if (W && (!this.g.statics.onSidewalk(px, py) || !this.freeAt(px, py, px, py))) continue;
+      if (W && d > 0 && this.staticApproachBlocked(a.x, a.y, px, py)) continue;
+      if (W && this.vehicleAt(px, py, a.x, a.y, undefined, true)) continue;
+      best = w; bd = d; bestX = px; bestY = py;
+    }
+    if (!best && W) {
+      if (!a.lost || a.state !== 'stand') this.strand(a);
+      else a.rejoinRetryAt = this.g.t + 2;
+      return;
+    }
     if (!best) { this.remove(a); return; }
-    if (W) { a.lost = false; a.fbBack = 40; a.fbT = 0; a.fbN = 0; a.fbx = a.x; a.fby = a.y; }
+    if (W && bd > 0) a.rejoinTarget = {x:bestX, y:bestY};
+    if (W) { a.rejoinRetryAt = undefined; a.lost = false; a.fbBack = 40; a.fbT = 0; a.fbN = 0; a.fbx = a.x; a.fby = a.y; }
     if (a.w) { const j = a.w.agents.indexOf(a); if (j >= 0) a.w.agents.splice(j, 1); } best.agents.push(a); a.w = best; if (a.home) a.home.pop--; a.home = best; best.pop++; a.d = (best.ux * a.gx + best.uy * a.gy) >= 0 ? 1 : -1; a.path = null; a.state = 'walk'; a.la = 0; bandAt(best, clamp((a.x - best.ax) * best.ux + (a.y - best.ay) * best.uy, 0, best.len), B); a.lt = (B.lo + B.hi) / 2; this.setClip(a, a.walkClip);
   }
 
@@ -1170,6 +1192,7 @@ export class CrowdSim {
         case 'walk':
           if (a.lead) { if (a.lead.gone) { a.lead = null; break; } this.follow(a, dt, think); break; }
           this.walkOn(a, dt, think);
+          if (a.rejoinTarget) break; // Finish returning to the sidewalk before stopping or entering a doorway.
           if (think && !a.gone && a.state === 'walk' && a.w.kind === 'strip' && !a.path) {
             // now and then someone stops for a while; a trip that is over ends at a doorway when no one is near to watch
             const q = this.rand();
@@ -1278,6 +1301,10 @@ export class CrowdSim {
       if (KEEP && a.state !== 'sit') { this.keep(a, ox, oy);
         if (!a.lead && (a.state === 'walk' || a.state === 'cross')) { if ((a.kq = (a.kq || 0) + dt) > 1.5) { if (a.kh > 30 && Math.hypot(a.x - (a.kx || 0), a.y - (a.ky || 0)) < 0.4) this.unstick(a); a.kq = 0; a.kh = 0; a.kx = a.x; a.ky = a.y; } }
         if (a.gone) continue; }
+      if (this.fbWalls && ((a.rejoinTarget && a.state === 'walk') || (a.lost && a.state === 'stand'))) {
+        a.onRoad = !st0.onSidewalk(a.x, a.y);
+        a.z += ((a.onRoad ? 0 : 0.15) - a.z) * Math.min(1, dt * 12);
+      }
       if (a.onRoad) this.road.push(a);
       this.animate(a, dt);
     }

@@ -313,3 +313,63 @@ function pushCircles(circles, radius, out, pedestrian = false) {
   }
   return hits;
 }
+
+// Segment midpoint and half-displacement in the box's local coordinates.
+export function segmentHitsBox(u, v, du, dv, halfLength, halfWidth) {
+  if (!du && !dv) return Math.abs(u) < halfLength && Math.abs(v) < halfWidth;
+  return Math.abs(u) < halfLength + Math.abs(du) &&
+    Math.abs(v) < halfWidth + Math.abs(dv) &&
+    Math.abs(u*dv - v*du) < halfLength*Math.abs(dv) + halfWidth*Math.abs(du);
+}
+
+// True when an initially overlapping body clears a nearest face on its own side.
+export function exitsNearestBoxFace(u, v, endU, endV, length, width, epsilon) {
+  const gapU = length - Math.abs(u), gapV = width - Math.abs(v);
+  if (gapU < 0 || gapV < 0) return false;
+  const away = (start, end) => Math.abs(start) <= epsilon ? Math.abs(end) : Math.sign(start)*end;
+  return (gapU <= gapV + epsilon && away(u,endU) >= length-epsilon) ||
+    (gapV <= gapU + epsilon && away(v,endV) >= width-epsilon);
+}
+
+export function staticPathBlocked(st, x, y, px, py, allObstacles, person) {
+  const dx = px - x, dy = py - y, length2 = dx * dx + dy * dy;
+  const gap2 = (qx, qy, ax, ay, vx, vy, len2) => {
+    const u = clamp(((qx - ax) * vx + (qy - ay) * vy) / (len2 || 1), 0, 1);
+    return (qx - ax - u * vx) ** 2 + (qy - ay - u * vy) ** 2;
+  };
+  // Trunks are center-indexed (radius <= 0.5 m). Larger park props span their grid cells.
+  const pad = allObstacles ? Math.max(0.7, st.maxCircleRadius + 0.25) : 0.7, size = st.cell;
+  for (let i = Math.floor((Math.min(x, px) - pad) / size); i <= Math.floor((Math.max(x, px) + pad) / size); i++) {
+    for (let j = Math.floor((Math.min(y, py) - pad) / size); j <= Math.floor((Math.max(y, py) + pad) / size); j++) {
+      const key = st.key(i, j);
+      const edges = st.segs.get(key);
+      if (edges) for (const edge of edges) {
+        if (!allObstacles && edge.kind !== 'rock') continue;
+        const [ax, ay, bx, by] = edge, vx = bx - ax, vy = by - ay, edge2 = vx * vx + vy * vy;
+        // The raycast handles crossings. For disjoint segments the minimum
+        // separation occurs at an endpoint. Allow existing contact to recede.
+        const startGap2 = gap2(x, y, ax, ay, vx, vy, edge2);
+        if (person && startGap2 < 0.25 ** 2) person.retreatingFromObstacle = true;
+        const limit = Math.min(0.25 ** 2, startGap2) - 1e-10;
+        if (gap2(px, py, ax, ay, vx, vy, edge2) < limit ||
+            gap2(ax, ay, x, y, dx, dy, length2) < limit ||
+            gap2(bx, by, x, y, dx, dy, length2) < limit) return true;
+      }
+      for (const index of [st.circ, st.parkEdges]) {
+        const circles = index?.get(key);
+        if (!circles) continue;
+        for (const o of circles) {
+          if (!o.on || !(allObstacles || o.parkSolid || o.set?.startsWith('park:trunks:'))) continue;
+          const u = ((o.x - x) * dx + (o.y - y) * dy) / length2;
+          if (u <= 0) {
+            if (person && Math.hypot(x-o.x, y-o.y) < o.r + 0.25) person.retreatingFromObstacle = true;
+            continue;
+          }
+          const t = Math.min(1, u);
+          if (Math.hypot(x + t * dx - o.x, y + t * dy - o.y) < o.r + (allObstacles ? 0.25 : 0.2) - 1e-8) return true;
+        }
+      }
+    }
+  }
+  return false;
+}

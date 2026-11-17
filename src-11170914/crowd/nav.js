@@ -11,7 +11,7 @@
 //   nav.refresh(extra, pred) again for the ways pred picks: band, things in the way, density. For an area whose street things (fences,
 //                       shop fronts, trunks, furniture) arrive after the network was built: the far area of a public load is built after
 //                       ready. Returns more(ms): call it until it returns true (a few ways a frame, no hitch).
-import { pointInPoly } from '../geo.js';
+import { clamp, pointInPoly } from '../geo.js';
 
 const STEP = 2.5, FURN = 1.5, WALL = 0.5, HI_CAP = 12, CROSS_AT = 1.3, CROSS_HALF = 1.9;
 const hash = (a, b = 0) => { const s = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return s - Math.floor(s); };
@@ -52,6 +52,25 @@ function swIndex(st) {
       if (inside(x, y, b.poly.ext)) { let hole = false; for (const h of b.poly.holes) if (inside(x, y, h)) { hole = true; break; } if (!hole) return true; } }
     return false; };
 }
+export function furnitureCrossing(nav, nearby, px, py, tx, ty, person) {
+  if (!nav?.soft) return false;
+  const radius = 0.25, dx = tx - px, dy = ty - py, length2 = dx*dx + dy*dy;
+  if (!length2) return false;
+  nearby.length = 0;
+  nav.soft(Math.min(px, tx) - radius, Math.min(py, ty) - radius,
+    Math.max(px, tx) + radius, Math.max(py, ty) + radius, nearby);
+  for (const o of nearby) {
+    const u = clamp(((o.x - px)*dx + (o.y - py)*dy) / length2, 0, 1);
+    if (person && u === 0 && Math.hypot(px-o.x, py-o.y) < o.h + radius) person.retreatingFromObstacle = true;
+    if (u > 0 && Math.hypot(px + u*dx - o.x, py + u*dy - o.y) < o.h + radius) return true;
+  }
+  return false;
+}
+
+function furnitureQuery(fg, OC, ok_) {
+  return (x0, y0, x1, y1, out) => { for (let i = Math.floor((x0 - 1.6) / OC); i <= Math.floor((x1 + 1.6) / OC); i++) for (let j = Math.floor((y0 - 1.6) / OC); j <= Math.floor((y1 + 1.6) / OC); j++) { const a = fg.get(ok_(i, j)); if (a) for (const o of a) if (o.x + o.h > x0 && o.x - o.h < x1 && o.y + o.h > y0 && o.y - o.h < y1) out.push(o); } return out; };
+}
+
 function furniturePush(fg, OC, ok_) {
   return (x, y, r, out) => { out.x = x; out.y = y; let n = 0; const i0 = Math.floor((x - r - 1.6) / OC), i1 = Math.floor((x + r + 1.6) / OC), j0 = Math.floor((y - r - 1.6) / OC), j1 = Math.floor((y + r + 1.6) / OC);
     for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) { const a = fg.get(ok_(i, j)); if (a) for (const o of a) { let ex = out.x - o.x, ey = out.y - o.y; const d = Math.hypot(ex, ey), R = o.h + r; if (d < R) { if (d < 1e-6) { ex = 1; ey = 0; } else { ex /= d; ey /= d; } out.x += ex * (R - d); out.y += ey * (R - d); out.nx = ex; out.ny = ey; n++; } } }
@@ -66,13 +85,13 @@ export function pedestrianFurniture(game) {
     if (!cells.has(k)) cells.set(k, []);
     cells.get(k).push(o);
   }
-  return { push: furniturePush(cells, cell, key) };
+  return { push: furniturePush(cells, cell, key), soft: furnitureQuery(cells, cell, key) };
 }
 
 // Build the footprint index on the first query. Open courtyards are walkable.
 export function buildingQuery(city, maxBaseHeight) {
   let cells;
-  return (x, y) => {
+  return (x, y, baseHeight = maxBaseHeight) => {
     if (!cells) {
       cells = new Map();
       for (const b of city?.buildings || []) {
@@ -91,7 +110,7 @@ export function buildingQuery(city, maxBaseHeight) {
       }
     }
     const candidates = cells.get(Math.floor(x/32)*8192 + Math.floor(y/32));
-    return !!candidates?.some(b => pointInPoly(x, y, b.poly) &&
+    return !!candidates?.some(b => (b.minh || 0) < baseHeight && pointInPoly(x, y, b.poly) &&
       !b.holes?.some(hole => pointInPoly(x, y, hole)));
   };
 }
@@ -278,7 +297,7 @@ export function buildNav(game, plazas = [], extraObs = []) {
   // a body of radius r out of the furniture the game does not collide (fg): out.x, out.y; returns how many things it touched
   const push = furniturePush(fg, OC, ok_);
   // the furniture that reaches into a box, appended to out
-  const soft = (x0, y0, x1, y1, out) => { for (let i = Math.floor((x0 - 1.6) / OC); i <= Math.floor((x1 + 1.6) / OC); i++) for (let j = Math.floor((y0 - 1.6) / OC); j <= Math.floor((y1 + 1.6) / OC); j++) { const a = fg.get(ok_(i, j)); if (a) for (const o of a) if (o.x + o.h > x0 && o.x - o.h < x1 && o.y + o.h > y0 && o.y - o.h < y1) out.push(o); } return out; };
+  const soft = furnitureQuery(fg, OC, ok_);
   function obstaclesNear(x, y, radius, out) {
     for (let i = Math.floor((x-radius)/OC); i <= Math.floor((x+radius)/OC); i++) {
       for (let j = Math.floor((y-radius)/OC); j <= Math.floor((y+radius)/OC); j++) {
@@ -416,7 +435,7 @@ export function buildNav(game, plazas = [], extraObs = []) {
   for (const nd of nodes) { delete nd._arms; delete nd._corners; }
   rep.ways = ways.length; rep.verts = verts.length; rep.km = +(ways.reduce((s, w) => s + (w.kind === 'cross' ? 0 : w.len), 0) / 1000).toFixed(1); rep.spots = spots.length;
   rep.obstacles = allObs.length;
-  const nav = { ways, verts, spots, near, blocked, push, gapTo, soft, obstaclesNear, refresh, ver: 1, report: rep, STEP, weight: total };
+  const nav = { ways, verts, spots, near, inBuilding, blocked, push, gapTo, soft, obstaclesNear, refresh, ver: 1, report: rep, STEP, weight: total };
   return nav;
 }
 // the band at distance s along a way

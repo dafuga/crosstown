@@ -557,9 +557,13 @@ export class World {
         this._nearNow = no; this.nearPass.enabled = !!no; }
       if (no) { const c = this.nearCam, m = this.camera; c.position.copy(m.position); c.quaternion.copy(m.quaternion); c.fov = m.fov; c.aspect = m.aspect; c.near = 0.1; c.far = 40; c.updateProjectionMatrix(); c.updateMatrixWorld(); } }
     // audit item 6: three redraws the sun shadow map on every renderer.render() call (the scene pass, and again for the AO pass); once a frame is enough
-    this.renderer.shadowMap.autoUpdate = false; this.renderer.shadowMap.needsUpdate = true;
+    // light lane, Nov 17 (low tier, src/lowtier.js): on a machine that is slow at the smallest picture the sun-shadow map is redrawn only every
+    // shadowEvery-th frame (the map, its matrix and the box centre stay as they were in between, so they still agree). shadowEvery is 1 unless
+    // lowtier.js raises it: every other machine takes exactly the path it took before.
+    const shSkip = this.shadowEvery > 1 && (this.shN = (this.shN | 0) + 1) % this.shadowEvery !== 0;
+    this.renderer.shadowMap.autoUpdate = false; this.renderer.shadowMap.needsUpdate = !shSkip;
     if (this.tiles) this.tiles.update(this.camera); if (this.lmSlabs) this.lmSlabs.update(this.camera);
-    this.updateShadow(focus || this.camera.position);
+    if (!shSkip) this.updateShadow(focus || this.camera.position);
     if (!this.streetOff) this.updateStreet();
     this.composer.render();
     // every few frames: log-average luminance of the scene-referred frame (centre-weighted), ease the exposure toward a mid-grey key

@@ -288,6 +288,7 @@ class Heli {
       if (I.use) { I.use = false; if (this.canLeave()) this.leave(); else this.note = { t: 0, text: f.onGround ? 'LOWER THE COLLECTIVE AND LET IT SETTLE' : 'LAND FIRST' }; }
     } else { c.pitch = c.roll = c.yaw = 0; c.lift = -1; }
     const flying = this.piloted || dir;
+    if (this.piloted && !dir) this.ext('perch', 'assist', c, dt);     // heli lane, Nov 17: over the Empire State mark the last metres are helped onto it (perch.js; ?perchassist=0 off)
     if (flying || !f.onGround || f.nr > 0.002 || f.engine !== 'off' || f.vel.lengthSq() > 0.01) { f.step(dt, c); this.asleep = false; } else { this.asleep = true; f.coning = -0.055; f.collective = 0; }     // parked and still: the blades hang
     c.engine = false;
     for (const h of f.hits) { if (h.speed > 2 && this.hasCamera) this.cam.shake = Math.min(1, this.cam.shake + h.speed * 0.08); this.call('sound', 'hit', h); this.call('wash', 'hit', h); }
