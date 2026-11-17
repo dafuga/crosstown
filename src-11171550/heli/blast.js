@@ -48,9 +48,27 @@ const FRAG_SMOKE = /* glsl */`
     vec2 q = d * 2.0 + (vec2(n, n2) - 0.5) * 1.3; q = vec2(q.x * vRot.x + q.y * vRot.y, -q.x * vRot.y + q.y * vRot.x);      // back from the puff's own turn to the screen's axes
     vec3 N = normalize(vec3(q, sqrt(max(0.06, 1.0 - min(r * r, 0.94)))));
     float dif = max(dot(N, vL), 0.0), sky = 0.5 + 0.5 * N.y, hollow = smoothstep(0.0, 0.5, shape);
-    vec3 young = vec3(0.022, 0.016, 0.012), old = vec3(0.105, 0.1, 0.097), base = mix(mix(young, old, smoothstep(0.1, 0.9, vA) * (0.35 + 0.65 * sd)), vec3(0.46, 0.44, 0.41), sh);
+    vec3 young = vec3(0.015, 0.013, 0.012), old = vec3(0.105, 0.1, 0.097), base = mix(mix(young, old, smoothstep(0.1, 0.9, vA) * (0.35 + 0.65 * sd)), vec3(0.46, 0.44, 0.41), sh);
     vec3 col = base * (0.3 + 0.45 * sky + 1.25 * dif) * (0.55 + 0.45 * hollow) * uSun;
     col += vec3(1.0, 0.33, 0.06) * (1.0 - sh) * exp(-vAge * 4.0) * (0.5 - 0.5 * N.y) * 1.6;      // the fire under it
+    gl_FragColor = vec4(col, a);
+  }`;
+// flame with a body (fourth critic, Nov 17: "a transparent, uniformly orange sprite ... buildings show through fire"): not light added on top but a solid, billowing
+// puff whose own colour runs by heat: white-yellow in its middle while young, orange, dull red, then soot-black at its edge and all over as it ages, when it is smoke
+const FRAG_FLAME = /* glsl */`
+  varying float vA; varying vec2 vUv; varying float vSeed; varying float vAge;
+  ${NOISE}
+  void main() {
+    float sd = fract(vSeed); vec2 d = vUv - 0.5; float r = length(d) * 2.0;
+    float n = fbm(vUv * 2.8 + sd * 31.0 + vec2(0.0, -vAge * 0.9)), n2 = fbm(vUv * 5.5 + sd * 11.0 + vec2(vAge * 0.4, -vAge * 1.5));
+    float shape = 0.86 - r + (n - 0.5) * 0.8;
+    float a = smoothstep(0.0, 0.16, shape) * (1.0 - smoothstep(0.42, 0.8, vA)) * smoothstep(1.0, 0.8, max(abs(d.x), abs(d.y)) * 2.0);
+    if (a < 0.01) discard;
+    float heat = clamp(shape * 1.5 + (n2 - 0.5) * 0.9, 0.0, 1.0) * clamp(1.2 - vA * 1.7, 0.0, 1.0);
+    vec3 col = vec3(0.018, 0.014, 0.012);
+    col = mix(col, vec3(0.55, 0.045, 0.0), smoothstep(0.05, 0.3, heat));
+    col = mix(col, vec3(3.2, 0.85, 0.08), smoothstep(0.28, 0.6, heat));
+    col = mix(col, vec3(9.0, 6.0, 2.6), smoothstep(0.62, 0.95, heat));
     gl_FragColor = vec4(col, a);
   }`;
 const FRAG_FIRE = /* glsl */`
@@ -66,16 +84,16 @@ const FRAG_FIRE = /* glsl */`
 
 export class Puffs {
   constructor(scene) {
-    this.uSunW = { value: new THREE.Vector3(0.45, 0.75, 0.48).normalize() }; this.src = []; this.scene = scene; this.t = 0; this.heads = [0, 0]; this.sets = []; const uN = { value: cloudTex() };
-    for (let kind = 0; kind < 2; kind++) {
+    this.uSunW = { value: new THREE.Vector3(0.45, 0.75, 0.48).normalize() }; this.src = []; this.scene = scene; this.t = 0; this.heads = [0, 0, 0]; this.sets = []; const uN = { value: cloudTex() };
+    for (let kind = 0; kind < 3; kind++) {
       const g = new THREE.InstancedBufferGeometry(); const q = new THREE.PlaneGeometry(1, 1); g.index = q.index; g.setAttribute('position', q.getAttribute('position')); g.setAttribute('uv', q.getAttribute('uv'));
       const A = { pos: new THREE.InstancedBufferAttribute(new Float32Array(N * 3), 3), vel: new THREE.InstancedBufferAttribute(new Float32Array(N * 3), 3), life: new THREE.InstancedBufferAttribute(new Float32Array(N * 4), 4), seed: new THREE.InstancedBufferAttribute(new Float32Array(N), 1) };
       for (let i = 0; i < N; i++) A.life.array[i * 4] = -1e6;
       for (const a of Object.values(A)) a.setUsage(THREE.DynamicDrawUsage);
       g.setAttribute('aPos', A.pos); g.setAttribute('aVel', A.vel); g.setAttribute('aLife', A.life); g.setAttribute('aSeed', A.seed); g.instanceCount = N;
-      const m = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: kind ? FRAG_FIRE : FRAG_SMOKE, uniforms: { uN, uSunW: this.uSunW, uT: { value: 0 }, uRise: { value: kind ? 0.6 : 1.1 }, uSun: { value: new THREE.Vector3(1, 1, 1) } }, transparent: true, depthWrite: false,
-        blending: kind ? THREE.CustomBlending : THREE.NormalBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor });
-      const mesh = new THREE.Mesh(g, m); mesh.frustumCulled = false; mesh.renderOrder = kind ? 9 : 8; mesh.name = kind ? 'heliFire' : 'heliSmoke'; mesh.visible = false; scene.add(mesh);
+      const m = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: kind === 1 ? FRAG_FIRE : kind === 2 ? FRAG_FLAME : FRAG_SMOKE, uniforms: { uN, uSunW: this.uSunW, uT: { value: 0 }, uRise: { value: kind === 1 ? 0.6 : kind === 2 ? 1.6 : 1.1 }, uSun: { value: new THREE.Vector3(1, 1, 1) } }, transparent: true, depthWrite: false,
+        blending: kind === 1 ? THREE.CustomBlending : THREE.NormalBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor });
+      const mesh = new THREE.Mesh(g, m); mesh.frustumCulled = false; mesh.renderOrder = kind === 1 ? 9 : kind === 2 ? 8.5 : 8; mesh.name = kind === 1 ? 'heliFire' : kind === 2 ? 'heliFlame' : 'heliSmoke'; mesh.visible = false; scene.add(mesh);
       this.sets.push({ A, m, mesh, dirty: false, last: -1e6 });
     }
     this.fl = [];
@@ -98,7 +116,7 @@ export class Puffs {
       this.sc = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({ map: t, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6 }), 24); this.sc.count = 0; this.sc.frustumCulled = false; this.sc.renderOrder = 2; this.sc.name = 'heliScorch'; this.scN = 0; this.scene.add(this.sc); }
     const i = this.scN++ % 24, sz = 9 + Math.random() * 4; this.sc.setMatrixAt(i, new THREE.Matrix4().compose(new THREE.Vector3(x, y + 0.05, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.random() * 6.283), new THREE.Vector3(sz, 1, sz))); this.sc.count = Math.min(24, this.scN); this.sc.instanceMatrix.needsUpdate = true;
   }
-  step(dt) { this.t += dt;
+  step(dt) { this.t += dt; { const L = boomAt.lit; if (L) { L.t += dt; const k = Math.max(0, 1 - L.t / 0.55); L.fx.lightI = L.I * k * k; if (k <= 0) boomAt.lit = null; } }     /* the strike's light dies away over half a second (the game's own rule holds it level, then cuts it) */
     for (let i = this.src.length - 1; i >= 0; i--) { const q = this.src[i]; if (this.t > q.until) { this.src.splice(i, 1); continue; }
       while (q.next <= this.t) { q.next += 0.11; const R = () => Math.random() - 0.5, w = 1 - (q.until - this.t) / 3.2; this.add(q.x + R() * 2.2, q.y + 0.8 + Math.random(), q.z + R() * 2.2, R() * 2.5, 7 + Math.random() * 4, R() * 2.5, 2.4 + Math.random() * 1.2, 5.5 + Math.random() * 2.5, 2.8, 0, Math.max(0, w) * 0.25); } } }
   sync(cam, dt) {
@@ -108,6 +126,8 @@ export class Puffs {
     }
   }
   sun(r, g, b) { this.sets[0].m.uniforms.uSun.value.set(r, g, b); }
+  // how much daylight there is (1 noon, 0.07 deep night): the smoke takes the sky's light, so at night it is dark, and the strike's own light is eased (a dark street needs less)
+  setDay(d) { this.day = d; this.sets[0].m.uniforms.uSun.value.set(d, d, d * (1 + 0.25 * (1 - d))); }
   sunDir(v) { if (v && v.isVector3) this.uSunW.value.copy(v).normalize(); }
 }
 
@@ -134,16 +154,16 @@ function thump(g, gain, delay) {
 const _v = new THREE.Vector3();
 export function boomAt(g, heli, puffs, x, y, z, o = {}) {
   const DBG = g.P && g.P.get('hrkdbg') || '';      // measuring only: nopuff | nogame | noharm
-  const cam = g.world.camera, dist = cam.position.distanceTo(_v.set(x, y, z)), R = () => Math.random() - 0.5;
+  boomAt.day = puffs.day ?? 1; const cam = g.world.camera, dist = cam.position.distanceTo(_v.set(x, y, z)), R = () => Math.random() - 0.5;
   // ---- seen: a flash, a ball of fire that rolls up into smoke, a low ring of dust, sparks thrown out
   if (DBG !== 'nopuff') {
   // (critic, Nov 17: "a few metres across ... no light on the surroundings ... pale, flat smoke ... no aftermath". So: a strike the width of the street.)
   // the flash and its glow on everything near (two frames of white, then a wide soft orange that stands in for light on the walls and the road)
   puffs.add(x, y + 1.5, z, 0, 0, 0, 16, 0.09, 60, 1); puffs.add(x, y + 2, z, 0, 0, 0, 34, 0.32, 20, 1, 0.5); puffs.add(x, y + 0.6, z, 0, 0, 0, 22, 0.6, 6, 1, 1);
-  // the ball: fire seated on the ground that rolls up and out
-  for (let i = 0; i < 12; i++) { const a = Math.random() * 6.283, e = 0.15 + Math.random() * 1.25, sp = 5 + Math.random() * 11; puffs.add(x + R() * 2.5, y + 0.8 + Math.random() * 1.5, z + R() * 2.5, Math.cos(a) * Math.cos(e) * sp, Math.sin(e) * sp + 4, Math.sin(a) * Math.cos(e) * sp, 3.6 + Math.random() * 2.6, 0.7 + Math.random() * 0.6, 5.5, 1);
-    /* and soot behind each tongue of fire (third critic: 'architecture shows straight through the fireball'): the fire is light added on top, so it needs a body under it */
-    puffs.add(x + R() * 2.5, y + 0.8 + Math.random() * 1.5, z + R() * 2.5, Math.cos(a) * Math.cos(e) * sp, Math.sin(e) * sp + 4, Math.sin(a) * Math.cos(e) * sp, 3.2 + Math.random() * 2.0, 1.6 + Math.random() * 1.2, 5.0, 0, 0); }
+  // the ball: flame with a body, seated on the ground, rolling up and out and going to soot as it cools (and a little light added over its heart)
+  for (let i = 0; i < 14; i++) { const a = Math.random() * 6.283, e = 0.15 + Math.random() * 1.25, sp = 5 + Math.random() * 11; puffs.add(x + R() * 2.5, y + 0.8 + Math.random() * 1.5, z + R() * 2.5, Math.cos(a) * Math.cos(e) * sp, Math.sin(e) * sp + 4, Math.sin(a) * Math.cos(e) * sp, 3.8 + Math.random() * 2.6, 1.1 + Math.random() * 0.7, 5.2, 2);
+    if (i % 2 === 0) puffs.add(x + R() * 2.5, y + 1.5 + Math.random() * 2, z + R() * 2.5, Math.cos(a) * Math.cos(e) * sp * 0.8, Math.sin(e) * sp + 5, Math.sin(a) * Math.cos(e) * sp * 0.8, 3.4 + Math.random() * 2, 4 + Math.random() * 2.5, 3.6, 0, 0);     /* lit smoke rolling out with it */ }
+  for (let i = 0; i < 4; i++) puffs.add(x + R() * 2, y + 1.5 + Math.random() * 1.5, z + R() * 2, R() * 6, 5 + Math.random() * 4, R() * 6, 4.5, 0.35 + Math.random() * 0.2, 6, 1, 0.25);
   // the black smoke it turns into, rising in a column past the fourth floor and hanging there
   for (let i = 0; i < 9; i++) { const a = Math.random() * 6.283, e = 0.5 + Math.random() * 0.9, sp = 3 + Math.random() * 6; puffs.add(x + R() * 3, y + 1.2 + Math.random() * 2.5, z + R() * 3, Math.cos(a) * Math.cos(e) * sp, Math.sin(e) * sp + 5 + i * 0.5, Math.sin(a) * Math.cos(e) * sp, 3.6 + Math.random() * 2.6, 4.5 + Math.random() * 3.0, 3.6, 0, 0); }
   puffs.column(x, y, z, 3.2); if (o.ground) puffs.scorch(x, y, z);
@@ -173,7 +193,7 @@ boomAt.whoosh = (g) => { noise(g, { f0: 900, f1: 3800, dur: 0.5, gain: 0.32, typ
 const _p = new THREE.Vector3();
 function harm(g, x, y, z, o) {
   const C = g.combat, PR = g.__props;
-  if (o.dbg !== 'nogame' && C && C.fx && C.fx.explosion) { try { C.fx.explosion(_p.set(x, z + 0.4, -y)); } catch (e) {} }      // the game's own flash, light, debris and scorch ring, under our fire and smoke
+  if (o.dbg !== 'nogame' && C && C.fx && C.fx.explosion) { try { C.fx.explosion(_p.set(x, z + 0.4, -y)); const fx = C.fx; if (fx.light && fx.lightT !== undefined && o.dbg !== 'nolight') { fx.light.position.set(x, z + 5, -y); const I0 = 1200 * (0.1 + 0.9 * (boomAt.day ?? 1)); fx.light.distance = 65; fx.lightI = I0; fx.lightT = 0.55; boomAt.lit = { fx, t: 0, I: I0 }; } } catch (e) {} }      // the game's own flash, light, debris and scorch ring, under our fire and smoke
   if (z > 4.5 || o.dbg === 'noharm') return;
   if (o.dbg !== 'noprop' && PR && PR.blast) { try { PR.blast(_p.set(x, 0.5, -y), 2, 11); } catch (e) {} }
   if (!C) return;
