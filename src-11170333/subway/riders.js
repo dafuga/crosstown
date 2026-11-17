@@ -283,10 +283,20 @@ class Pop {
     const at0 = (lx, lz) => [t.mx + t.ux * lz - t.uy * lx, t.my + t.uy * lz + t.ux * lx], ox = t.side * (tr.width / 2 + 0.5), list = [];
     for (const d of tr.doors) { if (d.side !== t.side) continue; const [x, y] = at0(ox, d.z); list.push({ d, x, y, u: W.u(P.f, x, y), v: W.v(P.f, x, y), out: 0, inn: 0, lastOut: -9 }); }
     D = { list, P, open: false, closing: false }; this.doors.set(t, D); return D; }
+  benchStand(a) {
+    if (this.R.g?.P?.get('seatcam') === '0') return;
+    if (!a.stand) return;
+    const stand = ['Wait', 'IdleShift', 'PhoneStand'].includes(a.stand.name) ? this.R.clip('Idle') : a.stand;
+    if (!stand) return;
+    a.stand = stand;
+    this.setClip(a, stand, 0);
+    a.blendEnd = 0;
+  }
   aboard(t) { let O = this.occ.get(t); if (O) return O; const tr = t.train, r = this.rand, zf = t.T.z + tr.floorY; O = { list: [], act: new Set(), seat: new Array(tr.seats.length).fill(null), stand: new Array(tr.stand.length).fill(null) }; this.occ.set(t, O);
     const k = this.R.scale, dens = []; for (let i = 0; i < (tr.cars || 8); i++) dens.push(0.45 + r() * 0.95);
-    tr.seats.forEach((s, i) => { if (r() > 0.42 * k * dens[s.car]) return; const a = this.person(0, 0, zf, 0); a.car = t; a.carI = s.car; a.lx = s.x; a.lz = s.z; a.lh = s.face > 0 ? 0 : Math.PI; a.mode = 'seat'; a.place = { kind: 'seat', i }; O.seat[i] = a; a.light = this.S.K * 1.05; this.sit(a, 0.43, true); O.list.push(a); });
-    tr.stand.forEach((s, i) => { if (r() > 0.26 * k * dens[s.car]) return; const a = this.person(0, 0, zf, 0); a.car = t; a.carI = s.car; a.lx = s.x; a.lz = s.z; a.lh = (s.x > 0 ? Math.PI : 0) + (r() - 0.5) * 1.6; a.mode = 'stand'; a.place = { kind: 'stand', i }; O.stand[i] = a; a.light = this.S.K * 1.05; O.list.push(a); });
+    const playerSeat = this.S.ride?.t === t ? this.S.sit?.seat : null;
+    tr.seats.forEach((s, i) => { if (r() > 0.42 * k * dens[s.car] || s === playerSeat) return; const a = this.person(0, 0, zf, 0); a.car = t; a.carI = s.car; a.lx = s.x; a.lz = s.z; a.lh = s.face > 0 ? 0 : Math.PI; a.mode = 'seat'; a.place = { kind: 'seat', i }; O.seat[i] = a; a.light = this.S.K * 1.05; this.sit(a, 0.43, true); O.list.push(a); });
+    tr.stand.forEach((s, i) => { if (r() > 0.26 * k * dens[s.car]) return; const a = this.person(0, 0, zf, 0); a.car = t; a.carI = s.car; a.lx = s.x; a.lz = s.z; a.lh = (s.x > 0 ? Math.PI : 0) + (r() - 0.5) * 1.6; a.mode = 'stand'; a.place = { kind: 'stand', i }; O.stand[i] = a; this.benchStand(a); a.light = this.S.K * 1.05; O.list.push(a); });
     return O; }
   isOpen(t, f = 0.8) { return t.state === 'dwell' && t.doors >= f; }
   // the doors open: some step off (those nearest each door), some of those who wait for this track step on
@@ -324,18 +334,43 @@ class Pop {
     a.car = t; a.carI = d.car; a.lx = lx; a.lz = lz; a.lh = t.side > 0 ? Math.PI : 0; a.z = t.T.z + tr.floorY; a.mode = 'on'; a.light = this.S.K * 1.05; O.list.push(a); O.act.add(a);
     // a seat near the door if one is free, else a place to stand, else the aisle beside the door
     let place = null; const want = r() < 0.7 ? ['seat', 'stand'] : ['stand', 'seat'];
-    for (const kind of want) { const L = kind === 'seat' ? tr.seats : tr.stand, who = O[kind]; let bi = -1, bd = 5.2; for (let j = 0; j < L.length; j++) { if (who[j] || L[j].car !== d.car) continue; const dd = Math.abs(L[j].z - d.z) + r() * 1.5; if (dd < bd) { bd = dd; bi = j; } } if (bi >= 0) { place = { kind, i: bi, x: L[bi].x, z: L[bi].z, face: L[bi].face }; who[bi] = a; break; } }
-    if (!place) place = { kind: 'free', x: (r() < 0.5 ? -1 : 1) * (0.2 + r() * 0.4), z: d.z + (r() < 0.5 ? -1 : 1) * (1.0 + r() * 0.9) };
+    const playerSeat = this.S.ride?.t === t ? this.S.sit?.seat : null;
+    for (const kind of want) { const L = kind === 'seat' ? tr.seats : tr.stand, who = O[kind]; let bi = -1, bd = 5.2; for (let j = 0; j < L.length; j++) { if (who[j] || L[j].car !== d.car || L[j] === playerSeat) continue; const dd = Math.abs(L[j].z - d.z) + r() * 1.5; if (dd < bd) { bd = dd; bi = j; } } if (bi >= 0) { place = { kind, i: bi, x: L[bi].x, z: L[bi].z, face: L[bi].face }; who[bi] = a; break; } }
+    if (!place) place = { kind: 'free', x: (r() < 0.5 ? -1 : 1) * (0.2 + r() * (this.R.g?.P?.get('seatcam') === '0' ? 0.4 : Math.min(0.4, Math.max(0, ax - 0.52)))), z: d.z + (r() < 0.5 ? -1 : 1) * (1.0 + r() * 0.9) };
+    const platformX = a.x, platformY = a.y;
     a.place = place; const dz = clamp(lz, d.z - 0.3, d.z + 0.3), xa = -t.side * ax * (r() * 0.5), fail = () => { // the doors shut in his face: back onto the platform
-      if (place.kind !== 'free') O[place.kind][place.i] = null; a.place = null; this.offTrain(a, t, O); a.mode = 'wait'; a.plan = null; this.agents.push(a); dr.inn = Math.max(0, dr.inn - 1); this.settle(a, this.doorsOf(t).P); };
-    a.plan = [{ k: 'lgo', x: t.side * (hw - 0.35), z: dz, sill: true, onFail: fail }, { k: 'do', f: () => { this.count.boarded++; dr.inn = Math.max(0, dr.inn - 1); } }, { k: 'lgo', x: xa, z: dz }, { k: 'lgo', x: clamp(place.x, -ax + 0.12, ax - 0.12), z: place.z },
-      { k: 'do', f: () => { if (place.kind === 'seat') { a.lx = place.x; a.lh = place.face > 0 ? 0 : Math.PI; a.mode = 'seat'; this.sit(a, 0.43); } else { a.lx = place.x; a.mode = 'stand'; a.lh = (place.x > 0 ? Math.PI : 0) + (r() - 0.5) * 1.4; } O.act.delete(a); a.plan = null; } }]; }
+      if (place.kind !== 'free') O[place.kind][place.i] = null; a.place = null; this.offTrain(a, t, O);
+      if (!this.walk.free(a.x, a.y, a.z, RB)) {
+        a.x = platformX; a.y = platformY;
+        if (!this.walk.free(a.x, a.y, a.z, RB) && this.walk.free(dr.x, dr.y, a.z, RB)) {
+          a.x = dr.x; a.y = dr.y;
+        }
+      }
+      a.mode = 'wait'; a.plan = null; this.agents.push(a); dr.inn = Math.max(0, dr.inn - 1); this.settle(a, this.doorsOf(t).P); };
+    a.plan = [{ k: 'lgo', x: t.side * (hw - 0.35), z: dz, sill: true, onFail: fail }, { k: 'do', f: () => { this.count.boarded++; dr.inn = Math.max(0, dr.inn - 1); } }, { k: 'lgo', x: xa, z: dz }, { k: 'lgo', x: clamp(place.x, -ax + 0.12, ax - 0.12), z: place.z, tolerance: place.kind === 'stand' && this.R.g?.P?.get('seatcam') !== '0' ? 0.01 : 0.07 },
+      { k: 'do', f: () => { if (place.kind === 'seat') { a.lx = place.x; a.lh = place.face > 0 ? 0 : Math.PI; a.mode = 'seat'; this.sit(a, 0.43); } else { a.lx = place.x; a.mode = 'stand'; a.lh = (place.x > 0 ? Math.PI : 0) + (r() - 0.5) * 1.4; if (place.kind === 'stand') this.benchStand(a); } O.act.delete(a); a.plan = null; } }]; }
   offTrain(a, t, O) { const i = O.list.indexOf(a); if (i >= 0) O.list.splice(i, 1); O.act.delete(a); const [x, y] = this.S.tMap(t, a.lx, a.lz); a.x = x; a.y = y; a.z = this.meta.zP; a.car = null;
     const dx = Math.cos(a.lh), dz = Math.sin(a.lh); a.h = Math.atan2(t.uy * dz + t.ux * dx, t.ux * dz - t.uy * dx); a.light = this.lightAt(x, y, a.z); }
   stepOff(a, t, dr) { const O = this.occ.get(t); if (!O) return; this.offTrain(a, t, O); dr.out = Math.max(0, dr.out - 1); dr.lastOut = this.R.time; a.leaving = null; this.count.alighted++; a.mode = 'walk'; a.plan = null;
     if (!this.walk.free(a.x, a.y, a.z, RB)) { a.x = dr.x; a.y = dr.y; } this.agents.push(a);
     if (!this.outbound(a)) { const P = this.doorsOf(t).P, [u0, v0] = this.uv(P, a), tu = u0 + (this.rand() < 0.5 ? -1 : 1) * (1.5 + this.rand() * 2); a.plan = [...this.route(P, u0, v0, clamp(tu, -P.hl + 2, P.hl - 2), P.lane[Math.sign(v0) || 1] * 0.5), { k: 'wait', until: () => this.paths.length > 0 }, { k: 'do', f: () => { if (!this.outbound(a)) a.mode = 'wait'; } }]; } }
   onTrain(kind, t) { if (kind === 'arrive') this.aboard(t); else if (kind === 'doors-open') this.exchange(t); else if (kind === 'doors-close') { const D = this.doors.get(t); if (D) { D.closing = true; D.open = false; } }
+    else if (kind === 'leave') {
+      const roster = this.occ.get(t);
+      if (!roster) return;
+      for (const a of roster.act) {
+        const sill = a.plan?.[0];
+        if (a.mode !== 'on' || !sill?.sill) continue;
+        if (Math.abs(a.lx) > t.train.width / 2 + 0.2) {
+          sill.onFail();
+          continue;
+        }
+        // Finish the doorway crossing before this train's boarding counter transfers.
+        a.lx = sill.x; a.lz = sill.z;
+        a.plan.shift();
+        a.plan.shift().f();
+      }
+    }
     else if (kind === 'gone') { if (!(this.S.ride && this.S.ride.t === t)) this.occ.delete(t); } }
 
   // ---------------------------------------------------------------- stepping
@@ -414,13 +449,17 @@ class Pop {
       if (st.fail && st.fail()) { const f = st.onFail; a.plan.shift(); if (f) f(); if (!a.car) return; continue; }
       if (st.k === 'do') { a.plan.shift(); st.f(); if (!a.car || !a.plan) return; continue; }
       if (st.k === 'wait') { if (st.until ? st.until() : (st.t -= dt) <= 0) { a.plan.shift(); continue; } if (a.mode !== 'seat' && a.clip !== a.stand && a.clip.speed > 0) this.setClip(a, a.stand, 0.3); return; }
-      if (st.k === 'lgo') { let dx = st.x - a.lx, dz = st.z - a.lz; const d = Math.hypot(dx, dz); if (d < 0.07) { a.plan.shift(); continue; } dx /= d; dz /= d;
+      if (st.k === 'lgo') { let dx = st.x - a.lx, dz = st.z - a.lz; const d = Math.hypot(dx, dz); if (d < (st.tolerance ?? 0.07)) { a.plan.shift(); continue; } dx /= d; dz /= d;
         // nobody goes through a door that is not open
         if (st.sill && !this.isOpen(t, 0.5) && (Math.abs(st.x) < hw ? Math.abs(a.lx) > hw + 0.2 : Math.abs(a.lx) < hw - 0.3)) { const f = st.onFail; a.plan.shift(); if (f) f(); return; }
         let slow = 1, hold = false; const D = this.doors.get(t), hurry = D && D.closing && Math.abs(a.lx) > hw - 0.5 ? 1.8 : 1;
         // the player: aboard (S.ride) or on the platform by the door
         { let rx, rz, has = false; if (S.ride && S.ride.t === t) { rx = S.ride.lx; rz = S.ride.lz; has = true; } else if (S.own && Math.abs(S.pos.z - this.meta.zP) < 1) { const q = S.tLocal(t, S.pos.x, S.pos.y); if (Math.abs(q[0]) < hw + 2) { rx = q[0]; rz = q[1]; has = true; } }
-          if (has) { const ox = rx - a.lx, oz = rz - a.lz, f = ox * dx + oz * dz, l = Math.abs(-ox * dz + oz * dx), dd = Math.hypot(ox, oz); if (f > 0 && l < 0.6 && dd < 0.95) hold = true; else if (f > 0 && l < 0.65 && dd < 1.7) slow = 0.6; } }
+          if (has) { const ox = rx - a.lx, oz = rz - a.lz, f = ox * dx + oz * dz, l = Math.abs(-ox * dz + oz * dx), dd = Math.hypot(ox, oz); // A seated player stays at the bench. Allow a rider to finish a clear leg beside it.
+            const reach = Math.min(d, Math.max(0, f));
+            const clearSeat = S.sit && S.ride?.t === t && this.R.g?.P?.get('seatcam') !== '0' &&
+              Math.hypot(ox - dx * reach, oz - dz * reach) >= 2 * RB;
+            if (!clearSeat && f > 0 && l < 0.6 && dd < 0.95) hold = true; else if (f > 0 && l < 0.65 && dd < 1.7) slow = 0.6; } }
         a.ghostT -= dt; if (!hold && a.ghostT <= 0) { let blocked = false; for (const b of O.act) { if (b === a || b.mode === 'seat') continue; const ox = b.lx - a.lx, oz = b.lz - a.lz, q = ox * ox + oz * oz; if (q > 0.5) continue; const f = ox * dx + oz * dz; if (f > 0.05 && Math.abs(-ox * dz + oz * dx) < 0.4) { blocked = true; break; } }
           if (blocked) { a.blockT += dt; slow = 0; if (a.blockT > 1.0) { a.ghostT = 0.9; a.blockT = 0; } } else a.blockT = 0; }
         const sp = hold ? 0 : 1.15 * hurry * slow * Math.min(1, 0.4 + d / 0.4), step = Math.min(sp * dt, d); a.lx += dx * step; a.lz += dz * step; a.v = sp;
@@ -438,7 +477,7 @@ class Riders {
     const P = game.P; this.scale = clamp(+(P && P.get('riders')) || 1, 0.1, 3); this.gain = +(P && P.get('ridersgain')) || 1.25;
     if (S.ridersCast) this.setCast(S.ridersCast);
     S.on('enter', (u) => this.ensure(u)); S.on('drop', (u) => this.drop(u)); S.on('leave', () => this.show()); S.on('deep', () => this.show());
-    S.on('hop', (from, to, nt) => { try { this.hop(from, to, nt); } catch (e) { this.fail('hop', e); } });
+    S.on('hop', (from, to, nt, previous) => { try { this.hop(from, to, nt, previous); } catch (e) { this.fail('hop', e); } });
     S.on('train', (kind, t, u) => { const p = this.pops.get(u); if (p && this.cast) p.onTrain(kind, t); });
     S.on('step', (dt, u) => this.step(dt, u)); }
   fail(w, e) { this.fails = (this.fails || 0) + 1; if (this.fails < 6) console.warn('[subway] riders ' + w + ': ' + String((e && e.stack) || e).slice(0, 600)); }
@@ -461,9 +500,73 @@ class Riders {
     if (!p) { p = new Pop(this, u); this.pops.set(u, p); } return p; }
   drop(u) { this.pops.delete(u); if (!this.pops.size && this.draw && !this.S.own) { this.draw.dispose(); this.draw = null; } }
   show(v) { if (v !== undefined) this.on = !!v; if (this.draw) this.draw.group.visible = this.on && this.S.own && !!this.pops.get(this.S.unit); }
-  hop(from, to, nt) { const pf = this.pops.get(from), pt = this.ensure(to); if (!pf || !pt) return; const ot = (this.rode && pf.occ.has(this.rode) ? this.rode : null) || from.trains.find((q) => q !== nt && (q.T.key !== undefined ? q.T.key === nt.T.key : q.T.id === nt.T.id)), O = ot && pf.occ.get(ot); if (!O) return; pf.occ.delete(ot);
+  hop(from, to, nt, previous) { const pf = this.pops.get(from), pt = this.ensure(to); if (!pf || !pt) return; const ot = previous || (this.rode && pf.occ.has(this.rode) ? this.rode : null) || from.trains.find((q) => q !== nt && (q.T.key !== undefined ? q.T.key === nt.T.key : q.T.id === nt.T.id)), O = ot && pf.occ.get(ot); if (!O) return; pf.occ.delete(ot);
     for (const a of [...O.act]) { if (a.leaving || a.mode === 'off') { a.plan = null; a.leaving = null; a.mode = 'stand'; a.place = a.place || { kind: 'free' }; O.act.delete(a); } }
-    for (const a of O.list) a.car = nt; pt.occ.set(nt, O); }
+    const source = ot.train, dest = nt.train;
+    const changed = source.walk.length !== dest.walk.length || source.carLen !== dest.carLen || source.width !== dest.width;
+    if (changed) {
+      // Interior boarding routes and their completion callbacks belong to the old car.
+      for (const a of O.act) {
+        if (a.mode !== 'on' || a.plan?.[0]?.k !== 'lgo' || a.plan[0].sill) continue;
+        const place = a.place;
+        if (place && place.kind !== 'free' && O[place.kind][place.i] === a) O[place.kind][place.i] = null;
+        a.place = { kind: 'free' }; a.plan = null; a.mode = 'stand'; a.v = 0;
+        O.act.delete(a); pt.setClip(a, a.stand, 0.3);
+      }
+      const localZ = (q, tr) => q.z - (q.car - (tr.walk.length - 1) / 2) * tr.carLen;
+      const playerSeat = this.S.ride?.t === nt ? this.S.sit?.seat : null;
+      const seated = O.list.filter(a => a.mode === 'seat' && a.place?.kind === 'seat');
+      for (const a of seated) if (O.seat[a.place.i] === a) O.seat[a.place.i] = null;
+      const standing = O.list.filter(a => a.mode === 'stand' && a.place?.kind === 'stand' && !O.act.has(a));
+      for (const a of standing) if (O.stand[a.place.i] === a) O.stand[a.place.i] = null;
+      for (const a of standing) {
+        const old = source.stand[a.place.i];
+        const i = dest.stand.findIndex((q, j) => !O.stand[j] && q.car === old.car &&
+          Math.abs(q.x - old.x) < 0.01 && Math.abs(localZ(q, dest) - localZ(old, source)) < 0.01);
+        if (i < 0) {
+          a.place = { kind: 'free' };
+          continue;
+        }
+        const q = dest.stand[i];
+        O.stand[i] = a; a.place = { kind: 'stand', i };
+        a.lx = q.x; a.lz = q.z; a.carI = q.car;
+      }
+      // A passenger displaced on an earlier hop is still standing in car-local space.
+      for (const a of O.list) {
+        if (a.mode !== 'stand' || a.place?.kind !== 'free' || O.act.has(a)) continue;
+        const car = Math.min(a.carI, dest.walk.length - 1), w = dest.walk[car];
+        const z = a.lz - (a.carI - (source.walk.length - 1) / 2) * source.carLen;
+        a.lz = clamp(z + (car - (dest.walk.length - 1) / 2) * dest.carLen, w.z0 + 0.3, w.z1 - 0.3);
+        a.lx = clamp(a.lx, w.x0 + 0.24, w.x1 - 0.24);
+        a.carI = car;
+      }
+      const fallback = [];
+      const assign = (a, i) => {
+        const q = dest.seats[i];
+        O.seat[i] = a; a.place = { kind: 'seat', i }; a.carI = q.car;
+        a.lx = q.x; a.lz = q.z; a.lh = q.face > 0 ? 0 : Math.PI;
+      };
+      // Keep all surviving benches before offering spare seats to displaced riders.
+      for (const a of seated) {
+        const old = source.seats[a.place.i];
+        const i = dest.seats.findIndex((q, j) => !O.seat[j] && q !== playerSeat && q.car === old.car &&
+          q.face === old.face && Math.abs(q.x - old.x) < 0.01 && Math.abs(localZ(q, dest) - localZ(old, source)) < 0.01);
+        if (i >= 0) assign(a, i); else fallback.push(a);
+      }
+      for (const a of fallback) {
+        const car = Math.min(source.seats[a.place.i].car, dest.walk.length - 1);
+        const i = dest.seats.findIndex((q, j) => q.car === car && !O.seat[j] && q !== playerSeat);
+        if (i >= 0) { assign(a, i); continue; }
+        const w = dest.walk[car], old = source.seats[a.place.i];
+        const center = (car - (dest.walk.length - 1) / 2) * dest.carLen;
+        a.lx = clamp(old.x * 0.45, w.x0 + 0.24, w.x1 - 0.24);
+        a.lz = clamp(center + localZ(old, source), w.z0 + 0.3, w.z1 - 0.3);
+        a.carI = car; a.place = { kind: 'free' }; a.mode = 'stand';
+        pt.unsit(a); pt.setClip(a, a.stand, 0.3);
+      }
+    }
+    for (const a of O.list) a.car = nt;
+    pt.occ.set(nt, O); }
   step(dt, u) { if (!u) return; const t0 = now(); try { this.time += dt; if (this.S.ride) this.rode = this.S.ride.t; const p = this.ensure(u); if (p) { p.step(dt); if (this.draw) { if (!this.draw.group.parent) this.g.world.scene.add(this.draw.group); this.show(); if (this.draw.group.visible) this.fill(p); } } } catch (e) { this.fail('step', e); }
     this.stats.ms += ((now() - t0) - this.stats.ms) * 0.05; }
   // is this spot in front of the camera and near (so that nobody appears or vanishes there)?

@@ -52,19 +52,45 @@ export class Vehicle {
     const vs0 = vs; vs *= Math.exp(-grip * dt); this.slip = Math.abs(vs);
     let yaw = (vf * Math.tan(this.steer)) / this.def.wheelbase; if (inp.handbrake) yaw *= 1.45;
     this.yawV += (yaw - this.yawV) * Math.min(1, dt * (inp.lock !== undefined ? 20 : 12));
+    const previousX = this.x, previousY = this.y, previousHeading = this.h;
     this.h = wrapPi(this.h + this.yawV * dt);
     this.vx = vf * c + vs * s; this.vy = vf * s - vs * c;
     this.x += this.vx * dt; this.y += this.vy * dt;
     this.vf = vf; this.vs = vs;
     // body against walls, poles and parked cars: three circles down the length
-    const L = this.def.len, r = this.def.wid * 0.5; let hit = 0;
+    const L = this.def.len, r = this.def.wid * 0.5; let hit = 0, parkContact = false;
     for (const o of [L * 0.3, 0, -L * 0.3]) {
       const cx = this.x + Math.cos(this.h) * o, cy = this.y + Math.sin(this.h) * o;
       if (g.statics.resolve(cx, cy, r, _o)) {
+        if (_o.parkContact || _o.tag === "tree") parkContact = true;
         const px = _o.x - cx, py = _o.y - cy; this.x += px; this.y += py;
         const vn = this.vx * _o.nx + this.vy * _o.ny;
         if (vn < 0) { this.vx -= vn * 1.25 * _o.nx; this.vy -= vn * 1.25 * _o.ny; const tx = -_o.ny, ty = _o.nx, vt = this.vx * tx + this.vy * ty; this.vx -= vt * 0.12 * tx; this.vy -= vt * 0.12 * ty;
           this.h = wrapPi(this.h + clamp((Math.cos(this.h) * _o.ny - Math.sin(this.h) * _o.nx) * o * vn * 0.012, -0.08, 0.08)); hit = Math.max(hit, -vn); }
+      }
+    }
+    // Contact can rotate the sedan or move a circle that was already resolved.
+    if (parkContact && g.P?.get('parkcol') !== '0') {
+      let corrected = false;
+      for (const o of [L * 0.3, 0, -L * 0.3]) {
+        const cx = this.x + Math.cos(this.h) * o, cy = this.y + Math.sin(this.h) * o;
+        if (g.statics.resolve(cx, cy, r, _o)) {
+          corrected = true;
+          this.x += _o.x - cx; this.y += _o.y - cy;
+        }
+      }
+      // A rear correction can push the nose back into an opposing obstacle.
+      if (corrected) {
+        const overlaps = (x, y, heading) => {
+          for (const offset of [L * 0.3, 0, -L * 0.3]) {
+            const cx = x + Math.cos(heading) * offset, cy = y + Math.sin(heading) * offset;
+            if (g.statics.resolve(cx, cy, r, _o) && _o.depth > 1e-6) return true;
+          }
+          return false;
+        };
+        if (overlaps(this.x, this.y, this.h) && !overlaps(previousX, previousY, previousHeading)) {
+          this.x = previousX; this.y = previousY; this.h = previousHeading;
+        }
       }
     }
     if (wetMove(g, wgx, wgy, this.x, this.y)) { this.x = wgx; this.y = wgy; this.vx = 0; this.vy = 0; g.wetStops = (g.wetStops || 0) + 1; }     // downtown lane: the shore guard (top of this file)
@@ -175,6 +201,7 @@ export class Game {
     try { (await import('./ram.js')).install(this); } catch (e) { console.log('[game] ram not loaded: ' + (e && e.message)); }     // rammed cars are thrown (breakable ram.js; ?ram=0)
     if (this.P.get('overhead') !== '0') try { (await import('./overhead.js')).install(this); } catch (e) { console.log('[overhead] not loaded: ' + (e && e.message)); }     /* lead/h-jump, Nov 14: game.statics.overhead, the list of what is over the sidewalk with underside heights (built on first use); ?overhead=0 off */
     if (this.P.get('handling') !== '0') try { (await import('./move/handling.js')).install(this, Vehicle); } catch (e) { console.log('[handling] not loaded: ' + (e && (e.stack || e.message))); }     /* gameplay lane, Nov 15 (19 player reports on car handling): the steering and grip of the car the player drives (src/move/handling.js). It must stay ABOVE the cars.js line: it wraps Vehicle.step first, cars.js wraps it. ?handling=0 off (nothing fetched; the car is the live one) */
+    if (this.P.get('drift') !== '0') try { (await import('./move/drift.js')).install(this, Vehicle); } catch (e) { console.log('[drift] not loaded: ' + (e && (e.stack || e.message))); }     /* driving lane, Nov 16 (Matt, #nyc: 'It's hard to drift. Drifting should be satisfying and doable'): handbrake slides for the car the player drives, with smoke, skid marks and a camera swing (src/move/drift.js, driftfx.js). It must stay BELOW the handling.js line and ABOVE the cars.js line: it wraps handling's step, cars.js wraps it. ?drift=0 off (nothing fetched; the car is as before); ?driftfx=0 = no smoke, marks or camera swing */
     if (this.P.get('jump') !== '0') try { (await import('./move/jump.js')).install(this); } catch (e) { console.log('[jump] not loaded: ' + (e && (e.stack || e.message))); }     // gameplay lane: jump on foot, Space / controller A (src/move/jump.js, jumpcore.js); ?jump=0 off (nothing fetched)
     if (this.P.get('grapple') === '1') try { (await import('./move/grapple.js')).install(this); } catch (e) { console.log('[grapple] not loaded: ' + (e && (e.stack || e.message))); }     // gameplay lane: grappling hook, X on foot (src/move/grapple.js); default OFF, ?grapple=1 on (without it nothing is fetched)
     if (this.P.get('entry') !== '0') try { await (await import('./entry/entry.js')).addEntry(this); } catch (e) { console.log('[entry] not loaded: ' + (e && (e.stack || e.message))); }     // gameplay lane: real car entry and exit (door, seat, camera); ?entry=0 off

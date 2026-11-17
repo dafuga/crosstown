@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { clamp, wrapPi, rng, Polyline, TAU } from './geo.js';
 import { PAINTS } from './models.js';
+import { buildingQuery, pedestrianFurniture } from './crowd/nav.js';
 import { plainSlide } from './move/plainfall.js';
 
 // What is on a Manhattan street: yellow cabs first, then black hire cars and SUVs, white vans, and everyone else.
@@ -227,12 +228,101 @@ export class Traffic {
         if (v !== c.pass && gp - room < gap) { gap = gp - room; this._mb = v; }
       }
     }
+    // A bumper can reach across the kerb. Keep the physical gap during jam recovery too.
+    // A quadratic curve lies inside its three control points' bounding box.
+    // Expand by the car's corner reach before testing individual curve samples.
+    const turn = c.junction;
+    let x0, x1, y0, y1;
+    if (turn) {
+      const reach = Math.hypot(half + 0.3, hw + 0.3 + Math.abs(c.lo || 0));
+      x0 = Math.min(turn.p0x, turn.cx, turn.p1x) - reach;
+      x1 = Math.max(turn.p0x, turn.cx, turn.p1x) + reach;
+      y0 = Math.min(turn.p0y, turn.cy, turn.p1y) - reach;
+      y1 = Math.max(turn.p0y, turn.cy, turn.p1y) + reach;
+    }
+    const scanPeople = (people) => {
+      for (const person of people) {
+        if (person.state === 'down') continue;
+        const dx = person.x - c.x, dy = person.y - c.y;
+        let clearance;
+        if (turn) {
+          if (person.x < x0 || person.x > x1 || person.y < y0 || person.y > y1) continue;
+          clearance = Infinity;
+          const end = Math.min(look, Math.max(0, (1-turn.u)*turn.len));
+          for (let ds = 0; ; ds = Math.min(end, ds + 0.5)) {
+            const u = turn.u + ds/turn.len, t = 1-u;
+            const x = t*t*turn.p0x + 2*t*u*turn.cx + u*u*turn.p1x;
+            const y = t*t*turn.p0y + 2*t*u*turn.cy + u*u*turn.p1y;
+            const tx = t*(turn.cx-turn.p0x) + u*(turn.p1x-turn.cx);
+            const ty = t*(turn.cy-turn.p0y) + u*(turn.p1y-turn.cy);
+            const len = Math.hypot(tx,ty), px = person.x-x, py = person.y-y;
+            if (len && Math.abs(px*tx + py*ty) <= (half+0.3)*len &&
+                Math.abs(py*tx - px*ty + (c.lo || 0)*len) <= (hw+0.3)*len) {
+              clearance = Math.max(0, ds-0.5);
+              break;
+            }
+            if (ds >= end) break;
+          }
+        } else {
+          const forward = dx*fx + dy*fy;
+          if (forward <= 0 || forward > half + look + 0.3 ||
+              Math.abs(dy*fx - dx*fy) >= hw + 0.3) continue;
+          clearance = forward - half - 0.3;
+        }
+        this._pg = Math.min(this._pg, clearance);
+        if (clearance < gap) { gap = clearance; this._mb = person; }
+      }
+    };
+    scanPeople(g.peds.list);
+    if (g.crowd?.on) {
+      const sim = g.crowd.sim;
+      if (turn || c.ghost > 0) scanPeople(sim.road);
+      if (turn) {
+        scanPeople(sim.kerbInBounds(x0, y0, x1, y1, 2));
+      } else {
+        const x = c.x + fx*(half+look+0.3), y = c.y + fy*(half+look+0.3);
+        scanPeople(sim.kerbInBounds(Math.min(c.x,x), Math.min(c.y,y),
+          Math.max(c.x,x), Math.max(c.y,y), hw + 1));
+      }
+    }
     return gap;
   }
   // how much further back traffic stops behind one of the player's cars: a car length in all when it stands still, the usual gap when it is driving
   roomFor(v) { return this.g.demo ? 0 : this.room * clamp(1.25 - Math.hypot(v.vx, v.vy) / 4, 0, 1); }
   // A stopped car backs away: from the player's car coming at its nose, from the player's car standing across the street close in front of
   // it (room to turn), or because the car in front of it is backing into it (backT, passed down the queue). Only as far as there is room
+  blocksPedestrianMove(c, a, l, fx, fy, nx, ny) {
+    const g = this.g, j = c.junction;
+    const halfLength = c.def.len / 2 + 0.3, halfWidth = c.def.wid / 2 + 0.3;
+    let turnX = nx, turnY = ny, turnFx = fx, turnFy = fy;
+    if (j) {
+      const u = j.u + a / j.len, t = 1 - u;
+      const tx = t * (j.cx - j.p0x) + u * (j.p1x - j.cx);
+      const ty = t * (j.cy - j.p0y) + u * (j.p1y - j.cy);
+      const heading = Math.atan2(ty, tx);
+      turnFx = Math.cos(heading); turnFy = Math.sin(heading);
+      turnX = t*t*j.p0x + 2*t*u*j.cx + u*u*j.p1x + turnFy*c.lo;
+      turnY = t*t*j.p0y + 2*t*u*j.cy + u*u*j.p1y - turnFx*c.lo;
+    }
+    const blocksMove = person => {
+      const dx = person.x - c.x, dy = person.y - c.y;
+      const along = dx * fx + dy * fy, right = dx * fy - dy * fx;
+      const after = Math.max(Math.abs(along - a) - halfLength, Math.abs(right - l) - halfWidth);
+      const limit = Math.min(0, Math.max(Math.abs(along) - halfLength, Math.abs(right) - halfWidth));
+      if (after < limit) return true;
+      if (!j) return false;
+      const px = person.x - turnX, py = person.y - turnY;
+      return Math.max(Math.abs(px*turnFx + py*turnFy) - halfLength,
+        Math.abs(px*turnFy - py*turnFx) - halfWidth) < limit;
+    };
+    if (g.peds.list.some(blocksMove)) return true;
+    if (g.crowd?.on) {
+      const sim = g.crowd.sim, reach = Math.hypot(halfLength, halfWidth);
+      if (sim.road.some(blocksMove) || sim.kerbInBounds(Math.min(nx, turnX), Math.min(ny, turnY),
+        Math.max(nx, turnX), Math.max(ny, turnY), reach).some(blocksMove)) return true;
+    }
+    return false;
+  }
   // behind. Returns true when it moved back this step.
   backOff(c, dt, pg) {
     const g = this.g, pv = g.demo ? null : g.player.vehicle; let want = 0;
@@ -254,10 +344,31 @@ export class Traffic {
       const rad = o.def.len * 0.42; if (Math.abs(-dx * fy + dy * fx) > 1.25 + rad * 0.6) continue; const gp = -f - half - rad; if (gp < rear) { rear = gp; fol = o; } }
     for (const v of g.vehicles) { if (v === pv) continue; const dx = v.x - c.x, dy = v.y - c.y; if (Math.abs(dx) > 16 || Math.abs(dy) > 16) continue; const f = dx * fx + dy * fy; if (f > -0.5) continue;
       const rad = v.def.len * 0.5; if (Math.abs(-dx * fy + dy * fx) > 1.25 + rad * 0.6) continue; const gp = -f - half - rad; if (gp < rear) { rear = gp; fol = null; } }
+    // A queued driver can reverse even when a pedestrian has nowhere to step aside.
+    const checkPeople = people => {
+      for (const person of people) {
+        const dx = person.x - c.x, dy = person.y - c.y;
+        const behind = -dx * fx - dy * fy;
+        if (behind <= 0 || Math.abs(dy * fx - dx * fy) > c.def.wid / 2 + 0.3) continue;
+        const clearance = behind - half - 0.3;
+        if (clearance < rear) { rear = clearance; fol = null; }
+      }
+    };
+    checkPeople(g.peds.list);
+    if (g.crowd?.on) {
+      const sim = g.crowd.sim;
+      checkPeople(sim.road);
+      const reach = half + REAR + want * dt + 0.31;
+      const x = c.x - fx * reach, y = c.y - fy * reach;
+      checkPeople(sim.kerbInBounds(Math.min(c.x, x), Math.min(c.y, y),
+        Math.max(c.x, x), Math.max(c.y, y), c.def.wid / 2 + 0.3));
+    }
     if (fol && rear < REAR + 0.6 && fol.v < 0.5) { fol.backT = 0.3; fol.backV = want; }     // the car behind is asked to back up too
     if (rear < REAR + 0.01) return false;
     let d = Math.min(want * dt, rear - REAR);
-    if (c.junction) { const j = c.junction; if (j.u <= 0.02) return false; d = Math.min(d, j.u * j.len); j.u -= d / j.len; }
+    if (c.junction) { const j = c.junction; if (j.u <= 0.02) return false; d = Math.min(d, j.u * j.len);
+      if (this.blocksPedestrianMove(c, -d, 0, fx, fy, c.x - fx*d, c.y - fy*d)) return false;
+      j.u -= d / j.len; }
     else { if (c.s - d < 2) return false; c.s -= d; }
     c.x -= fx * d; c.y -= fy * d; c.rev = d / dt; c.backD += d; c.spin -= d / c.def.radius; return true;
   }
@@ -275,6 +386,7 @@ export class Traffic {
     const wall = (x, y) => { let m = 0; for (const a of [1, 0, -1]) { const px = x + fx * ce * a, py = y + fy * ce * a; if (g.statics.resolve(px, py, rad, tmp)) m = Math.max(m, Math.hypot(tmp.x - px, tmp.y - py)); } return m; };
     const free = (a, l) => {
       const nx = c.x + fx * a + fy * l, ny = c.y + fy * a - fx * l;
+      if (this.blocksPedestrianMove(c, a, l, fx, fy, nx, ny)) return false;
       if (wall(nx, ny) > wall(c.x, c.y) + 1e-3) return false;
       for (const v of g.vehicles) { if (v === pv || Math.abs(v.x - c.x) > 12 || Math.abs(v.y - c.y) > 12) continue; const d1 = depthAt(nx, ny, v); if (d1 > 0.02 && d1 > depthAt(c.x, c.y, v) + 1e-3) return false; }
       for (const o of this.cars) { if (o === c || Math.abs(o.x - c.x) > 12 || Math.abs(o.y - c.y) > 12) continue; const d1 = depthAt(nx, ny, o); if (d1 > 0.02 && d1 > depthAt(c.x, c.y, o) + 1e-3) {
@@ -395,7 +507,7 @@ export class Traffic {
 // Parked cars: slots from the city file; the ones near the player are drawn and collide.
 export class Parked {
   constructor(game) {
-    this.g = game; this.slots = []; const r = rng(99); const types = ['sedan', 'sedan', 'suv', 'suv', 'sedan', 'van', 'sedan', 'suv', 'sedan', 'suv', 'sedan', 'taxi', 'sedan', 'suv', 'van', 'sedan', 'sport'];
+    this.g = game; this.slots = []; this.bodyReach = 0; const r = rng(99); const types = ['sedan', 'sedan', 'suv', 'suv', 'sedan', 'van', 'sedan', 'suv', 'sedan', 'suv', 'sedan', 'taxi', 'sedan', 'suv', 'van', 'sedan', 'sport'];
     const R = game.roads; let dropped = 0;
     for (const p of game.city.parked) {
       // a slot that stands in a travel lane (where two roadways run side by side, one road's kerb can lie in the other's lanes) is no
@@ -405,6 +517,7 @@ export class Parked {
       const s = { x: p[0], y: p[1], h: p[2], type: def.type, def, color: type === 'taxi' ? 0xf2b90c : PAINTS[(p[3] * 7) % PAINTS.length], gone: false, circles: [] };
       const fx = Math.cos(s.h), fy = Math.sin(s.h), o = def.len * 0.27;
       s.circles.push(game.statics.addCircle(s.x + fx * o, s.y + fy * o, def.wid * 0.5, s), game.statics.addCircle(s.x - fx * o, s.y - fy * o, def.wid * 0.5, s));
+      this.bodyReach = Math.max(this.bodyReach, Math.hypot(def.len, def.wid) / 2);
       this.slots.push(s);
     }
     this.dropped = dropped;
@@ -419,6 +532,27 @@ export class Parked {
 }
 
 // Pedestrians walking the sidewalk loops near the player.
+const nearbyParked = [];
+function insideVehicle(game, x, y, radius, speedLimit = Infinity) {
+  return overlapsVehicle(game.vehicles, x, y, radius, speedLimit) ||
+    overlapsVehicle(game.traffic?.cars, x, y, radius, Infinity) ||
+    (game.parked?.bodyReach && overlapsVehicle(game.parked.near(x, y,
+      game.parked.bodyReach + radius * Math.SQRT2, nearbyParked), x, y, radius, Infinity));
+}
+
+function overlapsVehicle(cars, x, y, radius, speedLimit) {
+  if (!cars) return false;
+  for (const v of cars) {
+    const dx = x - v.x, dy = y - v.y;
+    if (Math.abs(dx) + Math.abs(dy) > v.def.len + v.def.wid ||
+        (v.vx === undefined ? Math.abs(v.v) : Math.hypot(v.vx, v.vy)) >= speedLimit) continue;
+    const c = Math.cos(v.h), s = Math.sin(v.h);
+    if (Math.abs(dx*c + dy*s) < v.def.len/2 + radius &&
+        Math.abs(dy*c - dx*s) < v.def.wid/2 + radius) return v;
+  }
+  return false;
+}
+
 export class Peds {
   constructor(game) {
     this.g = game; this.list = []; this.rand = rng(777); this.target = 44; this.loops = game.city.ped_loops.map((p) => new Polyline(p.concat([p[0]]))).filter((l) => l.len > 60 && l.len < 1500);
@@ -445,12 +579,25 @@ export class Peds {
     const out = this.loops.filter((l) => { const b = l.box || (l.box = l.p.reduce((a, p) => [Math.min(a[0], p[0]), Math.min(a[1], p[1]), Math.max(a[2], p[0]), Math.max(a[3], p[1])], [1e9, 1e9, -1e9, -1e9])); return px > b[0] - 110 && px < b[2] + 110 && py > b[1] - 110 && py < b[3] + 110; });
     this._nl = out.length ? out : this.loops; this._nx = px; this._ny = py; return this._nl;
   }
+  furnitureGrid() {
+    const g = this.g;
+    if (g.crowd?.nav) return g.crowd.nav;
+    if (g.streets?.parts?.furniture)
+      return this.furniture || (this.furniture = pedestrianFurniture(g));
+  }
   spawn(px, py, anywhere) {
+    const furniture = this.furnitureGrid();
+    const near = this.nearLoops(px, py);
+    if (!near.length) return;
     for (let k = 0; k < 8; k++) {
-      const near = this.nearLoops(px, py), l = near[Math.floor(this.rand() * near.length)], s = this.rand() * l.len; l.at(s, tmp);
+      const l = near[Math.floor(this.rand() * near.length)], s = this.rand() * l.len; l.at(s, tmp);
       const d = Math.hypot(tmp.x - px, tmp.y - py); if (d > 120 || (!anywhere && d < 55)) continue; if (d < 6) continue;
+      this.inBuilding ||= buildingQuery(this.g.city, 2.5);
+      if (this.inBuilding(tmp.x, tmp.y) || insideVehicle(this.g, tmp.x, tmp.y, 0.25) ||
+          furniture?.push(tmp.x, tmp.y, 0.25, tmp2) ||
+          this.g.statics.resolvePedestrian(tmp.x, tmp.y, 0.25, tmp2)) continue;
       const kind = this.kinds[Math.floor(this.rand() * this.kinds.length)];
-      const p = { loop: l, s, dir: this.rand() < 0.5 ? 1 : -1, speed: 1.15 + this.rand() * 0.55, x: tmp.x, y: tmp.y, h: 0, off: (this.rand() - 0.5) * 2.4, state: 'walk', t: 0, vis: this.visual(kind), scale: 0.94 + this.rand() * 0.12, phase: this.rand() * 10, fall: 0, vx: 0, vy: 0, onRoad: false };
+      const p = { loop: l, s, dir: this.rand() < 0.5 ? 1 : -1, speed: 1.15 + this.rand() * 0.55, back: 1, x: tmp.x, y: tmp.y, h: 0, off: (this.rand() - 0.5) * 2.4, state: 'walk', t: 0, vis: this.visual(kind), scale: 0.94 + this.rand() * 0.12, phase: this.rand() * 10, fall: 0, vx: 0, vy: 0, onRoad: false };
       const r1 = this.rand(), r2 = this.rand(), wk = p.vis.walks || []; p.walk = 'walk'; p.walkSpeed = 1.45;
       // a walk whose own pace is near this pedestrian's (so it plays at close to its captured rate), varied among the near ones
       if (wk.length) { const want = p.speed / p.scale, near = wk.filter((w) => Math.abs(Math.log(want / w.speed)) < 0.14), pick = near.length ? near[Math.floor(r1 * near.length)] : wk.reduce((a, b) => (Math.abs(Math.log(want / a.speed)) < Math.abs(Math.log(want / b.speed)) ? a : b)); p.walk = pick.name; p.walkSpeed = pick.speed; }
@@ -465,6 +612,7 @@ export class Peds {
   step(dt) {
     const g = this.g, px = g.focus.x, py = g.focus.y;
     this.spawnT -= dt; if (this.spawnT <= 0 && this.list.length < this.target) { this.spawnT = 0.15; this.spawn(px, py, false); }
+    const furniture = this.list.length ? this.furnitureGrid() : null;
     const car = g.player.vehicle; const cars = g.vehicles;
     for (let i = this.list.length - 1; i >= 0; i--) {
       const p = this.list[i]; const d = Math.hypot(p.x - px, p.y - py);
@@ -476,15 +624,107 @@ export class Peds {
         for (const v of cars) { const sp = Math.hypot(v.vx, v.vy); if (sp < 3) continue; const dx = p.x - v.x, dy = p.y - v.y, dd = Math.hypot(dx, dy); if (dd > 14) continue; const f = (dx * v.vx + dy * v.vy) / sp, side = Math.abs(dx * v.vy - dy * v.vx) / sp; if (f > -1 && f < 5 + sp * 1.1 && side < v.def.wid / 2 + 0.75) { threat = v; break; } }
         if (threat && p.state === 'walk') { p.state = 'flee'; p.t = 0; const dx = p.x - threat.x, dy = p.y - threat.y, sp = Math.hypot(threat.vx, threat.vy) || 1; const side = (dx * -threat.vy + dy * threat.vx) > 0 ? 1 : -1; p.fx = (-threat.vy / sp) * side; p.fy = (threat.vx / sp) * side; this.setAnim(p, 'run'); }
         if (p.state === 'flee') {
-          const sp = 4.6; const o = {}; let nx = p.x + p.fx * sp * dt, ny = p.y + p.fy * sp * dt; g.statics.resolve(nx, ny, 0.3, o, true); p.x = o.x; p.y = o.y; p.h = Math.atan2(p.fy, p.fx);
+          p.rejoinStart = undefined;
+          const nx = p.x + p.fx * 4.6 * dt, ny = p.y + p.fy * 4.6 * dt;
+          const contact = g.statics.resolvePedestrian(nx, ny, 0.3, tmp2);
+          if (contact && g.statics.resolvePedestrian(p.x - p.fx*1e-4, p.y - p.fy*1e-4, 0.3, tmp) &&
+              tmp.nx*tmp2.nx + tmp.ny*tmp2.ny < 0) {
+            // A round obstacle loaded across the stride. Keep the approach-side contact.
+            tmp2.x = tmp.x; tmp2.y = tmp.y;
+          }
+          if (contact && g.statics.raycast(p.x, p.y, tmp2.x, tmp2.y) < 1) {
+            // A newly loaded fence can already touch the runner. Resolve from the approach side.
+            let fromX = p.x, fromY = p.y;
+            if (g.statics.raycast(fromX, fromY, tmp2.x, tmp2.y) === 0) {
+              // Exactly on a streamed wall, recover the side the runner approached from.
+              fromX -= p.fx * 1e-4;
+              fromY -= p.fy * 1e-4;
+            }
+            g.statics.resolvePedestrian(fromX, fromY, 0.3, tmp2);
+            if (g.statics.raycast(fromX, fromY, tmp2.x, tmp2.y) < 1) {
+              tmp2.x = p.x; tmp2.y = p.y;
+            }
+          }
+          if (furniture?.push(tmp2.x, tmp2.y, 0.3, tmp2)) {
+            // A table loaded around the runner can put the next step across its center.
+            if (furniture.push(p.x - p.fx*1e-4, p.y - p.fy*1e-4, 0.3, tmp) &&
+                tmp.nx * tmp2.nx + tmp.ny * tmp2.ny < 0) {
+              tmp2.x = tmp.x; tmp2.y = tmp.y;
+            }
+            // A furniture push beside a wall must still leave the runner on this side.
+            if (g.statics.raycast(p.x, p.y, tmp2.x, tmp2.y) < 1 ||
+                g.statics.resolvePedestrian(tmp2.x, tmp2.y, 0.3, tmp)) { tmp2.x = p.x; tmp2.y = p.y; }
+          }
+          if (!insideVehicle(g, tmp2.x, tmp2.y, 0.3, 2.2)) {
+            p.x = tmp2.x; p.y = tmp2.y;
+          }
+          p.h = Math.atan2(p.fy, p.fx);
           if (p.t > 1.6 && !threat) { p.state = 'walk'; const pr = p.loop.project(p.x, p.y); p.s = pr.s; p.back = 1; this.setAnim(p, p.walk); }
         } else {
+          const oldX = p.x, oldY = p.y, oldS = p.s;
           p.s += p.dir * p.speed * dt; if (p.s > p.loop.len) p.s -= p.loop.len; if (p.s < 0) p.s += p.loop.len;
           p.loop.at(p.s, tmp); const tx = tmp.tx * p.dir, ty = tmp.ty * p.dir; const gx = tmp.x + ty * p.off, gy = tmp.y - tx * p.off;
-          if (p.back) { const dx = gx - p.x, dy = gy - p.y, dd = Math.hypot(dx, dy); if (dd < 0.3) p.back = 0; else { p.x += (dx / dd) * p.speed * 1.3 * dt; p.y += (dy / dd) * p.speed * 1.3 * dt; p.h = Math.atan2(dy, dx); } }
+          const dx = gx - p.x, dy = gy - p.y, stride = p.speed * 1.3 * dt;
+          // The offset lane changes sides of a vertex as its tangent turns.
+          if (!p.back && dx*dx + dy*dy > stride*stride) p.rejoinStart = oldS;
+          if (p.back || dx*dx + dy*dy > stride*stride) {
+            const distance = Math.hypot(dx, dy);
+            if (distance <= stride) { p.x = gx; p.y = gy; p.back = 0; }
+            else { p.back = 1; p.x += dx / distance * stride; p.y += dy / distance * stride; }
+            if (distance > 0) p.h = Math.atan2(dy, dx);
+          }
           else { p.x = gx; p.y = gy; p.h += wrapPi(Math.atan2(ty, tx) - p.h) * Math.min(1, dt * 6); }
           // step around the player on foot
           const pl = g.player; if (!pl.vehicle) { const dx = p.x - pl.x, dy = p.y - pl.y, dd = Math.hypot(dx, dy); if (dd < 0.7 && dd > 1e-3) { p.x += (dx / dd) * (0.7 - dd); p.y += (dy / dd) * (0.7 - dd); } }
+          // A prescribed sidewalk loop can cross a facade or a fence. Turn
+          // back on the same side and ease onto the return lane from here.
+          // Traffic stopped at a light has no parked-car circles.
+          if (insideVehicle(g, p.x, p.y, 0.25, 2.2) || furniture?.push(p.x, p.y, 0.25, tmp2) || g.statics.resolvePedestrian(p.x, p.y, 0.25, tmp2) ||
+              g.statics.raycast(oldX, oldY, p.x, p.y) < 1) {
+            p.x = oldX; p.y = oldY; p.s = p.rejoinStart ?? oldS; p.rejoinStart = undefined;
+            p.dir = -p.dir; p.off = -p.off; p.back = 1;
+            // A streamed obstacle may already overlap the previous position.
+            if (furniture?.push(oldX - tx*1e-4, oldY - ty*1e-4, 0.25, tmp2) ||
+                g.statics.resolvePedestrian(oldX - tx*1e-4, oldY - ty*1e-4, 0.25, tmp2)) {
+              let fromX = oldX, fromY = oldY;
+              // On the fence line the ray hits at zero in either direction. Use the approach side.
+              if (g.statics.raycast(oldX, oldY, tmp2.x, tmp2.y) === 0) {
+                fromX -= tx * 1e-4; fromY -= ty * 1e-4;
+                g.statics.resolvePedestrian(fromX, fromY, 0.25, tmp2);
+              }
+              const x = tmp2.x, y = tmp2.y;
+              if (!furniture?.push(x, y, 0.25 - 1e-6, tmp) &&
+                  g.statics.raycast(fromX, fromY, x, y) >= 1 &&
+                  !g.statics.resolvePedestrian(x, y, 0.25, tmp) &&
+                  !insideVehicle(g, x, y, 0.25)) {
+                p.x = x; p.y = y; p.s = p.loop.project(x, y).s;
+              }
+            }
+          }
+        }
+        if (!p.back) p.rejoinStart = undefined;
+        // Traffic advances before peds. A car may have moved over the old position.
+        const contact = g.traffic?.pushPlayer && overlapsVehicle(g.traffic.cars, p.x, p.y, 0.25, Infinity);
+        if (contact) {
+          const x = p.x, y = p.y;
+          const clear = () => g.statics.raycast(x, y, p.x, p.y) >= 1 &&
+            !g.statics.resolvePedestrian(p.x, p.y, 0.25, tmp2) &&
+            !furniture?.push(p.x, p.y, 0.25, tmp2) &&
+            !insideVehicle(g, p.x, p.y, 0.25);
+          g.traffic.pushPlayer(p);
+          if (!clear()) {
+            p.x = x; p.y = y;
+            // Beside a bumper, a blocked forward push can still leave a short step to the side.
+            const nx = -Math.sin(contact.h), ny = Math.cos(contact.h);
+            const side = (x-contact.x)*nx + (y-contact.y)*ny;
+            const step = contact.def.wid/2 + 0.30 - Math.abs(side);
+            if (step > 0 && step <= 0.35) {
+              p.x += nx * Math.sign(side || 1) * step;
+              p.y += ny * Math.sign(side || 1) * step;
+              if (!clear()) { p.x = x; p.y = y; }
+            }
+          }
+          if (p.state === 'walk' && (p.x !== x || p.y !== y)) p.back = 1;
         }
         p.onRoad = !g.statics.onSidewalk(p.x, p.y);
         // struck by a car

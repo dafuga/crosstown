@@ -17,7 +17,8 @@ const STEP = 2.5, FURN = 1.5, WALL = 0.5, HI_CAP = 12, CROSS_AT = 1.3, CROSS_HAL
 const hash = (a, b = 0) => { const s = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return s - Math.floor(s); };
 
 // [kind, the room the walk leaves round it (as before), its own half width (what a body is held out of)]
-const RAD = [[/^ptable$/, 0.5, 0.42], [/^pchair$/, 0.33, 0.28], [/^planter\d/, 0.75, 0.6], [/^urn\d/, 0.5, 0.4], [/^rack$/, 0.6, 0.25], [/^bike(B)?$/, 0.8, 0.3], [/^bikeShare$/, 0.85, 0.3], [/^dock$/, 0.5, 0.3], [/^dockKiosk$/, 0.45, 0.3], [/^benchP$/, 0.9, 0.32], [/^(pbin|basket|basketFull|newsbox)$/, 0.38, 0.3], [/^(cone|delin)$/, 0.22, 0.16], [/^aframe$/, 0.38, 0.28], [/^block$/, 0.65, 0.5], [/^cart$/, 1.3, 0.7], [/^kiosk$/, 1.1, 0.9], [/^shelter$/, 1.5, 0.55], [/^cab$/, 0.5, 0.4], [/^(busstop|meter|spost|psign|psignP|armsign|umbrella|umbrellaC|umbrellaV1|umbrellaV2|sunsh)$/, 0.14, 0.1]];
+// Scanned cafe table-and-chair sets reserve a 0.95 m radius in street placement.
+const RAD = [[/^cafe$/, 0.95, 0.83], [/^ptable$/, 0.5, 0.42], [/^pchair$/, 0.33, 0.28], [/^planter\d/, 0.75, 0.6], [/^urn\d/, 0.5, 0.4], [/^rack$/, 0.6, 0.25], [/^bike(B)?$/, 0.8, 0.3], [/^bikeShare$/, 0.85, 0.3], [/^dock$/, 0.5, 0.3], [/^dockKiosk$/, 0.45, 0.3], [/^benchP$/, 0.9, 0.32], [/^(pbin|basket|basketFull|newsbox)$/, 0.38, 0.3], [/^(cone|delin)$/, 0.22, 0.16], [/^aframe$/, 0.38, 0.28], [/^block$/, 0.65, 0.5], [/^cart$/, 1.3, 0.7], [/^kiosk$/, 1.1, 0.9], [/^shelter$/, 1.5, 0.55], [/^cab$/, 0.5, 0.4], [/^(busstop|meter|spost|psign|psignP|armsign|umbrella|umbrellaC|umbrellaV1|umbrellaV2|sunsh)$/, 0.14, 0.1]];
 // the street layer's furniture that stands on the ground but is not in the game's collision world (the walk goes round it), and where
 // one can sit: plaza chairs (seat 0.45 m up, the chair faces its own +X) and park benches (two places each). Every area's.
 export function furnitureOf(game) {
@@ -48,6 +49,50 @@ function swIndex(st) {
       if (inside(x, y, b.poly.ext)) { let hole = false; for (const h of b.poly.holes) if (inside(x, y, h)) { hole = true; break; } if (!hole) return true; } }
     return false; };
 }
+function furniturePush(fg, OC, ok_) {
+  return (x, y, r, out) => { out.x = x; out.y = y; let n = 0; const i0 = Math.floor((x - r - 1.6) / OC), i1 = Math.floor((x + r + 1.6) / OC), j0 = Math.floor((y - r - 1.6) / OC), j1 = Math.floor((y + r + 1.6) / OC);
+    for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) { const a = fg.get(ok_(i, j)); if (a) for (const o of a) { let ex = out.x - o.x, ey = out.y - o.y; const d = Math.hypot(ex, ey), R = o.h + r; if (d < R) { if (d < 1e-6) { ex = 1; ey = 0; } else { ex /= d; ey /= d; } out.x += ex * (R - d); out.y += ey * (R - d); out.nx = ex; out.ny = ey; n++; } } }
+    return n; };
+}
+
+// Base pedestrians still use the sidewalk furniture when the GPU crowd is off.
+export function pedestrianFurniture(game) {
+  const cells = new Map(), cell = 6, key = (i, j) => i * 8192 + j;
+  for (const o of furnitureOf(game).extra) {
+    const k = key(Math.floor(o.x / cell), Math.floor(o.y / cell));
+    if (!cells.has(k)) cells.set(k, []);
+    cells.get(k).push(o);
+  }
+  return { push: furniturePush(cells, cell, key) };
+}
+
+// Build the footprint index on the first query. Open courtyards are walkable.
+export function buildingQuery(city, maxBaseHeight) {
+  let cells;
+  return (x, y) => {
+    if (!cells) {
+      cells = new Map();
+      for (const b of city?.buildings || []) {
+        if ((b.minh || 0) >= maxBaseHeight || !b.poly?.length) continue;
+        let left = Infinity, right = -Infinity, bottom = Infinity, top = -Infinity;
+        for (const [px, py] of b.poly) {
+          left = Math.min(left, px); right = Math.max(right, px);
+          bottom = Math.min(bottom, py); top = Math.max(top, py);
+        }
+        for (let i = Math.floor(left/32); i <= Math.floor(right/32); i++)
+          for (let j = Math.floor(bottom/32); j <= Math.floor(top/32); j++) {
+            const key = i*8192+j;
+            if (!cells.has(key)) cells.set(key, []);
+            cells.get(key).push(b);
+          }
+      }
+    }
+    const candidates = cells.get(Math.floor(x/32)*8192 + Math.floor(y/32));
+    return !!candidates?.some(b => pointInPoly(x, y, b.poly) &&
+      !b.holes?.some(hole => pointInPoly(x, y, hole)));
+  };
+}
+
 export function buildNav(game, plazas = [], extraObs = []) {
   const R = game.roads, st = game.statics, city = game.city, nodes = R.nodes, edges = R.edges;
   // (crowd.js hands over the furniture as { x, y, r }: the walking room only. The things' own half widths are read here, so crowd.js stays as it is.)
@@ -65,9 +110,7 @@ export function buildNav(game, plazas = [], extraObs = []) {
   /* and the parks whose box reaches a point come from a 64 m grid of the boxes instead of every park of the city for every point asked (that walk was the cost: 263 ms on nine areas with the slabs alone). Same parks tried, same answer. */
   const PG = PSLAB ? new Map() : null; if (PG) for (const p of parks) for (let i = Math.floor(p.x0 / 64); i <= Math.floor(p.x1 / 64); i++) for (let j = Math.floor(p.y0 / 64); j <= Math.floor(p.y1 / 64); j++) { const k = i * 65536 + j; let a = PG.get(k); if (!a) PG.set(k, (a = [])); a.push(p); }
   const inPark = (x, y) => { const L = PG ? PG.get(Math.floor(x / 64) * 65536 + Math.floor(y / 64)) : parks; if (L) for (const p of L) if (x > p.x0 && x < p.x1 && y > p.y0 && y < p.y1 && pin(x, y, p)) return true; return false; };
-  // is a point inside a building's outline? (asked only where a line stands in the kerb zone)
-  let BG = null; const inBuilding = (x, y) => { if (!BG) { BG = new Map(); for (const b of city.buildings || []) { if ((b.minh || 0) >= 3 || !b.poly) continue; let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9; for (const q of b.poly) { x0 = Math.min(x0, q[0]); y0 = Math.min(y0, q[1]); x1 = Math.max(x1, q[0]); y1 = Math.max(y1, q[1]); } for (let i = Math.floor(x0 / 32); i <= Math.floor(x1 / 32); i++) for (let j = Math.floor(y0 / 32); j <= Math.floor(y1 / 32); j++) { const k = i * 8192 + j; let a = BG.get(k); if (!a) BG.set(k, (a = [])); a.push(b); } } }
-    const a = BG.get(Math.floor(x / 32) * 8192 + Math.floor(y / 32)); if (a) for (const b of a) if (pointInPoly(x, y, b.poly)) return true; return false; };
+  const inBuilding = buildingQuery(city, 3);
   const swQ = game.P && game.P.get && (game.P.get('crowdnav') === '0' || game.P.get('crowdperf') === '0') ? null : swIndex(st), onSw = swQ || ((x, y) => st.onSidewalk(x, y));      /* people/crowd-perf */
   const walkable = (x, y) => Math.abs(x - bcx) < bx && Math.abs(y - bcy) < by && onSw(x, y);
   const pz = plazas.map((p) => { let x = 0, y = 0; for (const q of p.poly) { x += q[0]; y += q[1]; } return { x: x / p.poly.length, y: y / p.poly.length, r: Math.sqrt(p.area / Math.PI) + 30, poly: p.poly, area: p.area }; });
@@ -230,11 +273,19 @@ export function buildNav(game, plazas = [], extraObs = []) {
     for (const o of extra) addObs(o.x, o.y, o.r, true, o.h); };
   readObs(extraObs);
   // a body of radius r out of the furniture the game does not collide (fg): out.x, out.y; returns how many things it touched
-  const push = (x, y, r, out) => { out.x = x; out.y = y; let n = 0; const i0 = Math.floor((x - r - 1.6) / OC), i1 = Math.floor((x + r + 1.6) / OC), j0 = Math.floor((y - r - 1.6) / OC), j1 = Math.floor((y + r + 1.6) / OC);
-    for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) { const a = fg.get(ok_(i, j)); if (a) for (const o of a) { let ex = out.x - o.x, ey = out.y - o.y; const d = Math.hypot(ex, ey), R = o.h + r; if (d < R) { if (d < 1e-6) { ex = 1; ey = 0; } else { ex /= d; ey /= d; } out.x += ex * (R - d); out.y += ey * (R - d); out.nx = ex; out.ny = ey; n++; } } }
-    return n; };
+  const push = furniturePush(fg, OC, ok_);
   // the furniture that reaches into a box, appended to out
   const soft = (x0, y0, x1, y1, out) => { for (let i = Math.floor((x0 - 1.6) / OC); i <= Math.floor((x1 + 1.6) / OC); i++) for (let j = Math.floor((y0 - 1.6) / OC); j <= Math.floor((y1 + 1.6) / OC); j++) { const a = fg.get(ok_(i, j)); if (a) for (const o of a) if (o.x + o.h > x0 && o.x - o.h < x1 && o.y + o.h > y0 && o.y - o.h < y1) out.push(o); } return out; };
+  function obstaclesNear(x, y, radius, out) {
+    for (let i = Math.floor((x-radius)/OC); i <= Math.floor((x+radius)/OC); i++) {
+      for (let j = Math.floor((y-radius)/OC); j <= Math.floor((y+radius)/OC); j++) {
+        const cell = og.get(ok_(i,j));
+        if (cell) for (const obstacle of cell) {
+          if (Math.abs(obstacle.x-x) <= radius && Math.abs(obstacle.y-y) <= radius) out.push(obstacle);
+        }
+      }
+    }
+  }
   // how far the nearest such thing's edge is from (x, y), up to `far`
   const gapTo = (x, y, far) => { let best = far; for (let i = Math.floor((x - far - 1.6) / OC); i <= Math.floor((x + far + 1.6) / OC); i++) for (let j = Math.floor((y - far - 1.6) / OC); j <= Math.floor((y + far + 1.6) / OC); j++) { const a = fg.get(ok_(i, j)); if (a) for (const o of a) { const d = Math.hypot(o.x - x, o.y - y) - o.h; if (d < best) best = d; } } return best; };
   // is a body of radius r at (x, y) in something?
@@ -351,9 +402,10 @@ export function buildNav(game, plazas = [], extraObs = []) {
   // can no longer be walked anywhere keeps its place in the network and gets no people; a plaza place that is now in something is given up.
   function refresh(extra, pred) {
     if (extra) readObs(extra); nav.ver++; const todo = ways.filter((w) => w.kind !== 'cross' && (!pred || pred(w))); let k = 0, done = false; rep.refreshed = (rep.refreshed || 0) + todo.length;
+    for (const w of todo) w.refreshingObstacles = true;
     return function more(ms = 2) {
       if (done) return true; const t0 = typeof performance !== 'undefined' ? performance.now() : 0;
-      while (k < todo.length) { const w = todo[k++], ok = profile(w); carve(w); dense(w); if (w.shut) w.rho = 0; if (!ok) { w.rho = 0; rep.closed = (rep.closed || 0) + 1; } if (t0 && performance.now() - t0 > ms) return false; }
+      while (k < todo.length) { const w = todo[k++], ok = profile(w); carve(w); w.refreshingObstacles = false; dense(w); if (w.shut) w.rho = 0; if (!ok) { w.rho = 0; rep.closed = (rep.closed || 0) + 1; } if (t0 && performance.now() - t0 > ms) return false; }
       for (const s of spots) if (!s.dead && (!pred || pred({ mx: s.x, my: s.y, ax: s.x, ay: s.y })) && (st.resolve(s.x, s.y, 1.0, o) > 0 || blocked(s.x, s.y, 0.75))) { s.dead = true; rep.spotsDead = (rep.spotsDead || 0) + 1; }
       done = true; return true;
     };
@@ -361,7 +413,7 @@ export function buildNav(game, plazas = [], extraObs = []) {
   for (const nd of nodes) { delete nd._arms; delete nd._corners; }
   rep.ways = ways.length; rep.verts = verts.length; rep.km = +(ways.reduce((s, w) => s + (w.kind === 'cross' ? 0 : w.len), 0) / 1000).toFixed(1); rep.spots = spots.length;
   rep.obstacles = allObs.length;
-  const nav = { ways, verts, spots, near, blocked, push, gapTo, soft, refresh, ver: 1, report: rep, STEP, weight: total };
+  const nav = { ways, verts, spots, near, blocked, push, gapTo, soft, obstaclesNear, refresh, ver: 1, report: rep, STEP, weight: total };
   return nav;
 }
 // the band at distance s along a way

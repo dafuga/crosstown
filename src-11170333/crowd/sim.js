@@ -194,11 +194,23 @@ export class CrowdSim {
     let l = laneL(lane * (n > 1 ? 0.6 : 1)); if (n > 1) l = clamp(l, B.lo + 0.4, B.hi - 0.4);
     const x = w.ax + w.ux * s + w.nx * l, y = w.ay + w.uy * s + w.ny * l;
     if (this.crowded(x, y, n > 1 ? 1.2 : 0.8) || Math.hypot(x - this.cx, y - this.cy) < 2.2 || this.inFront(x, y, this.keepOut + 2.5)) return null;
-    const a = this.make(w, s, door ? B.hi + 0.25 : l, d); a.lt = l; a.lane = lane; if (door) { a.door = 1; a.h = Math.atan2(-w.ny + w.uy * d, -w.nx + w.ux * d); }
+    const spawnL = door ? B.hi + 0.25 : l;
+    if (door) {
+      const doorX = x + w.nx * (spawnL - l), doorY = y + w.ny * (spawnL - l);
+      if (this.crowded(doorX, doorY, n > 1 ? 1.2 : 0.8) || this.g.statics.raycast(doorX, doorY, x, y) < 1 ||
+          this.crossesFurniture(doorX, doorY, x, y) || this.vehicleAt(x, y, doorX, doorY)) return null;
+    }
+    const a = this.make(w, s, spawnL, d); a.lt = l; a.lane = lane; if (door) { a.door = 1; a.h = Math.atan2(-w.ny + w.uy * d, -w.nx + w.ux * d); }
     if (warm) a.v = a.v0;
     if (n > 1) {
-      a.fol = []; this.pace(a, kid ? 1.05 : a.v0 * 0.9);
-      for (let k = 1; k < n; k++) { const f = this.make(w, s, l, d, kid && k === 1); f.lead = a; if (kid && k === 1) f.kid = true; f.off = (k === 1 ? 1 : -1) * (0.7 + r() * 0.14) * (n === 2 && r() < 0.5 ? -1 : 1); f.back = 0.05 + r() * 0.3; f.x = a.x + Math.sin(a.h) * f.off; f.y = a.y - Math.cos(a.h) * f.off;
+      for (let k = 1; k < n; k++) {
+        const off = (k === 1 ? 1 : -1) * (0.7 + r() * 0.14) * (n === 2 && r() < 0.5 ? -1 : 1);
+        const x = a.x + Math.sin(a.h) * off, y = a.y - Math.cos(a.h) * off;
+        if (this.crowded(x, y, 0.35) || this.g.statics.raycast(a.x, a.y, x, y) < 1) continue;
+        if (!a.fol) { a.fol = []; this.pace(a, kid ? 1.05 : a.v0 * 0.9); }
+        const f = this.make(w, s, l, d, kid && k === 1); f.lead = a;
+        if (kid && k === 1) f.kid = true;
+        f.off = off; f.back = 0.05 + r() * 0.3; f.x = x; f.y = y;
         if (f.char === a.char && this.adults.length > 1 && !kid) { do { f.char = this.adults[Math.floor(r() * this.adults.length) % this.adults.length]; } while (f.char === a.char); const ch = this.chars[f.char]; f.female = !!ch.female; f.tall = ((ch.height || 1.75) * f.scale) / 1.78; const pk = (p) => (p && p.length ? srgb(p[Math.floor(r() * p.length) % p.length]) : NO_TINT); f.tint = [pk(ch.top), pk(ch.bottom), pk(ch.hair)]; }
         this.hold(f, null); this.pace(f, a.v0);
         if (f.walkClip === a.walkClip) { const alt = this.walks.filter((c) => c !== a.walkClip && Math.abs(Math.log(a.v0 / (c.speed * f.tall))) < 0.2); if (alt.length) { f.walkClip = alt[Math.floor(r() * alt.length)]; f.clip = f.walkClip.i; } }
@@ -210,7 +222,68 @@ export class CrowdSim {
   crowded(x, y, r) {
     for (const q of this.agents) if (Math.abs(q.x - x) < r && Math.abs(q.y - y) < r) return true;
     for (const q of this.still) { const dx = x - q.x, dy = y - q.y; if (Math.abs(dx * q.c + dy * q.s) < q.hl + 0.3 && Math.abs(-dx * q.s + dy * q.c) < q.hw + 0.3) return true; }
-    return this.g.statics.resolve(x, y, 0.3, _o) > 0 || this.nav.blocked(x, y, 0.35);
+    return this.vehicleAt(x, y) || this.g.statics.resolvePedestrian(x, y, 0.3, _o) > 0 || this.nav.blocked(x, y, 0.35);
+  }
+
+  approachBlocked(person, x, y, fromX = person.x, fromY = person.y, vehicles, allowExit = false) {
+    return this.staticApproachBlocked(fromX, fromY, x, y, allowExit ? person : undefined) ||
+      this.vehicleAt(x, y, fromX, fromY, vehicles, allowExit, person);
+  }
+  staticApproachBlocked(fromX, fromY, x, y, person) {
+    return this.g.statics.raycast(fromX, fromY, x, y) < 1 ||
+      this.parkBlocksRejoin(fromX, fromY, x, y, true, person) ||
+      this.crossesFurniture(fromX, fromY, x, y, person);
+  }
+  crossesFurniture(px, py, tx, ty, person) {
+    if (!this.nav.soft) return false;
+    const radius = 0.25, dx = tx - px, dy = ty - py, length2 = dx*dx + dy*dy;
+    if (!length2) return false;
+    const nearby = this._pathFurniture || (this._pathFurniture = []);
+    nearby.length = 0;
+    this.nav.soft(Math.min(px, tx) - radius, Math.min(py, ty) - radius,
+      Math.max(px, tx) + radius, Math.max(py, ty) + radius, nearby);
+    for (const o of nearby) {
+      const u = clamp(((o.x - px)*dx + (o.y - py)*dy) / length2, 0, 1);
+      if (person && u === 0 && Math.hypot(px-o.x, py-o.y) < o.h + radius) person.retreatingFromObstacle = true;
+      if (u > 0 && Math.hypot(px + u*dx - o.x, py + u*dy - o.y) < o.h + radius) return true;
+    }
+    return false;
+  }
+  vehicleAt(x, y, fromX = x, fromY = y, vehicles, allowExit = false, person) {
+    const hx = (x - fromX) / 2, hy = (y - fromY) / 2;
+    const cx = fromX + hx, cy = fromY + hy;
+    const hits = car => {
+      if (!car.def) return false;
+      const dx = cx - car.x, dy = cy - car.y;
+      if (Math.abs(dx) + Math.abs(dy) > car.def.len + car.def.wid + 1 + Math.abs(hx) + Math.abs(hy)) return false;
+      if (!hx && !hy) return this.outBox(car, x, y, 0.3, 0);
+      // Segment against the pedestrian-expanded box, projected on both car axes and the segment normal.
+      const c = Math.cos(car.h), s = Math.sin(car.h);
+      const u = dx*c + dy*s, v = dy*c - dx*s, du = hx*c + hy*s, dv = hy*c - hx*s;
+      const length = car.def.len/2 + 0.3, width = car.def.wid/2 + 0.3;
+      if (allowExit) {
+        const startU = u-du, startV = v-dv;
+        const gapU = length-Math.abs(startU), gapV = width-Math.abs(startV);
+        if (gapU >= 0 && gapV >= 0) {
+          // Permit retreat through the nearest face, never across the vehicle.
+          // Include contact at the face within world-coordinate roundoff.
+          const epsilon = 8 * Number.EPSILON * Math.max(1, Math.abs(x), Math.abs(y), Math.abs(car.x), Math.abs(car.y));
+          if (person) person.retreatingFromObstacle = true;
+          if (gapU <= gapV + epsilon && (Math.abs(startU) <= epsilon ? Math.abs(u+du) : Math.sign(startU)*(u+du)) >= length-epsilon) return false;
+          if (gapV <= gapU + epsilon && (Math.abs(startV) <= epsilon ? Math.abs(v+dv) : Math.sign(startV)*(v+dv)) >= width-epsilon) return false;
+        }
+      }
+      return Math.abs(u) < length + Math.abs(du) && Math.abs(v) < width + Math.abs(dv) &&
+        Math.abs(u*dv - v*du) < length*Math.abs(dv) + width*Math.abs(du);
+    };
+    if (vehicles ? vehicles.some(hits) : this.g.vehicles?.some(hits) || this.g.traffic?.cars?.some(hits)) return true;
+    const parked = this.g.parked;
+    if (parked?.bodyReach) {
+      const nearby = this._spawnParked || (this._spawnParked = []);
+      const reach = parked.bodyReach + 0.3 * Math.SQRT2 + Math.hypot(hx, hy);
+      return parked.near(cx, cy, reach, nearby).some(hits);
+    }
+    return false;
   }
   populate(dt, warm) {
     const near = this.nav.near(this.cx, this.cy, RP + 20, this.waysNear), r = this.rand; let budget = warm ? 1e9 : 24; this.lastWant = this.sumWant || 1e9; this.sumWant = 0; this.homed = 0; for (const a of this.agents) if (a.home) this.homed++;
@@ -260,8 +333,10 @@ export class CrowdSim {
   plazaStander(s) {
     const r = this.rand, w = this.nav.ways[0], a = this.make(w, 0, 0, 1, false, s); w.agents.pop(); a.w = null; w.pop--; a.home = null;
     a.x = s.x; a.y = s.y; a.z = s.z; a.h = s.h; a.state = 'stand'; this.nStand++; a.standT = 60 + r() * 240; a.tx = s.x; a.ty = s.y; a.th = s.h; a.spot = s; s.who = a; a.v = 0; { const q = r(); this.hold(a, q < 0.4 ? 'phone' : q < 0.6 ? 'coffee' : null); } this.setClip(a, a.idle, true); a.ph = r();
-    if (r() < 0.45 && !this.crowded(s.x + Math.cos(s.h) * 1.0, s.y + Math.sin(s.h) * 1.0, 0.5)) {    // someone to talk to
-      const b = this.make(w, 0, 0, 1, false, s); w.agents.pop(); b.w = null; w.pop--; b.home = null; b.z = s.z; b.state = 'stand'; this.nStand++; b.standT = 1e9; b.lead = a; a.fol = [b]; b.v = 0; this.talkPlace(a, b, s.x, s.y, s.h); a.x = a.tx; a.y = a.ty; a.h = a.th; b.x = b.tx; b.y = b.ty; b.h = b.th; this.setClip(a, a.talk, true); this.setClip(b, b.talk, true); b.ph = a.ph;
+    if (r() < 0.45) {    // someone to talk to
+      const target = this.talkPartner(s.x, s.y, s.h);
+      if (this.crowded(target.x, target.y, 0.5) || this.g.statics.raycast(s.x, s.y, target.x, target.y) < 1) return;
+      const b = this.make(w, 0, 0, 1, false, target); w.agents.pop(); b.w = null; w.pop--; b.home = null; b.z = s.z; b.state = 'stand'; this.nStand++; b.standT = 1e9; b.lead = a; a.fol = [b]; b.v = 0; this.talkPlace(a, b, s.x, s.y, s.h, target); a.x = a.tx; a.y = a.ty; a.h = a.th; b.x = b.tx; b.y = b.ty; b.h = b.th; this.setClip(a, a.talk, true); this.setClip(b, b.talk, true); b.ph = a.ph;
     }
   }
   seated(q, x, y, h, clip) {
@@ -287,19 +362,35 @@ export class CrowdSim {
     for (const q of w.agents) if (q !== a && q.lead !== a && q.lead !== a.lead && q.state === 'stand' && Math.hypot(q.tx - x, q.ty - y) < 3.4 + (q.id % 5)) return false;
     const face = Math.atan2(w.ny, w.nx) + (wall ? Math.PI : 0) + (r() - 0.5) * 1.2;   // by the wall: back to it, looking out; at the kerb: looking in
     for (const q of this.agents) if (q.state === 'wait' && q.wq && Math.abs(q.tx - x) < 1.6 && Math.abs(q.ty - y) < 1.6 && q !== a) return false;      /* people/crowd-kerb: not in a kerb bunch */
+    const follower = a.fol?.[0], heading = Math.atan2(w.uy, w.ux);
+    const leadX = follower ? x - w.ux * 0.5 : x, leadY = follower ? y - w.uy * 0.5 : y;
+    const blocked = (person, tx, ty) => this.approachBlocked(person, tx, ty) ||
+      this.g.statics.resolvePedestrian(tx, ty, 0.25, _o) || this.nav.blocked(tx, ty, 0.4);
+    if (blocked(a, leadX, leadY)) return false;
+    const partner = follower && this.talkPartner(leadX, leadY, heading);
+    if (partner && blocked(follower, partner.x, partner.y)) return false;
+    let third;
+    if (a.fol?.[1]) {
+      const mx = (leadX + partner.x) / 2, my = (leadY + partner.y) / 2, sd = r() < 0.5 ? 1 : -1, ox = -w.uy * sd, oy = w.ux * sd, dd = 0.85 + r() * 0.3, jx = (r() - 0.5) * 0.4; const gx = mx + ox * dd + w.ux * jx; const gy = my + oy * dd + w.uy * jx; const gh = Math.atan2(my - gy, mx - gx) + (r() - 0.5) * 0.5;
+      if (blocked(a.fol[1], gx, gy)) return false;
+      third = {x: gx, y: gy, h: gh};
+    }
     a.state = 'stand'; this.nStand++; a.t = 0; a.standT = secs; a.tx = x; a.ty = y; a.th = face; a.path = null;
-    if (a.fol && a.fol.length) { const f = a.fol[0]; this.talkPlace(a, f, x - w.ux * 0.5, y - w.uy * 0.5, Math.atan2(w.uy, w.ux)); f.state = 'stand'; this.nStand++; f.standT = 1e9; f.t = 0; if (now) { f.x = f.tx; f.y = f.ty; f.h = f.th; f.v = 0; this.setClip(f, f.talk, true); }
-      const g = a.fol[1]; if (g) { const mx = (a.tx + f.tx) / 2, my = (a.ty + f.ty) / 2, sd = r() < 0.5 ? 1 : -1, ox = -w.uy * sd, oy = w.ux * sd, dd = 0.85 + r() * 0.3, jx = (r() - 0.5) * 0.4; g.tx = mx + ox * dd + w.ux * jx; g.ty = my + oy * dd + w.uy * jx; g.th = Math.atan2(my - g.ty, mx - g.tx) + (r() - 0.5) * 0.5; g.state = 'stand'; this.nStand++; g.standT = 1e9; g.t = 0; g.talk = null; if (now) { g.x = g.tx; g.y = g.ty; g.h = g.th; g.v = 0; this.setClip(g, g.idle, true); } } }
+    if (a.fol && a.fol.length) { const f = a.fol[0]; this.talkPlace(a, f, leadX, leadY, heading, partner); f.state = 'stand'; this.nStand++; f.standT = 1e9; f.t = 0; if (now) { f.x = f.tx; f.y = f.ty; f.h = f.th; f.v = 0; this.setClip(f, f.talk, true); }
+      const g = a.fol[1]; if (g) { g.tx = third.x; g.ty = third.y; g.th = third.h; g.state = 'stand'; this.nStand++; g.standT = 1e9; g.t = 0; g.talk = null; if (now) { g.x = g.tx; g.y = g.ty; g.h = g.th; g.v = 0; this.setClip(g, g.idle, true); } } }
     if (!a.fol) { const q = r(); this.hold(a, q < 0.4 ? 'phone' : q < 0.6 ? 'coffee' : null); }
     if (now) { a.x = a.tx; a.y = a.ty; a.h = a.th; a.v = 0; this.setClip(a, a.fol ? a.talk : a.idle, true); if (a.fol) a.fol[0].ph = a.ph; }
     return true;
   }
 
   // two people talking: the pair of clips was captured together, so the second stands where the capture had them and both run on one clock
-  talkPlace(a, b, x, y, h) {
-    const A = this.talkA, Bc = this.talkB, at = (A && A.partner_at) || [0.95, 0, 180], c = Math.cos(h), sn = Math.sin(h);
-    a.tx = x; a.ty = y; a.th = h; b.tx = x + c * at[0] - sn * at[1]; b.ty = y + sn * at[0] + c * at[1]; b.th = h + at[2] * Math.PI / 180;
-    a.talk = A || a.idle; b.talk = Bc || b.idle;
+  talkPartner(x, y, h) {
+    const at = this.talkA?.partner_at || [0.95, 0, 180], c = Math.cos(h), sn = Math.sin(h);
+    return {x: x + c * at[0] - sn * at[1], y: y + sn * at[0] + c * at[1], h: h + at[2] * Math.PI / 180};
+  }
+  talkPlace(a, b, x, y, h, target = this.talkPartner(x, y, h)) {
+    a.tx = x; a.ty = y; a.th = h; b.tx = target.x; b.ty = target.y; b.th = target.h;
+    a.talk = this.talkA || a.idle; b.talk = this.talkB || b.idle;
   }
   // ------------------------------------------------------------------ people/crowd-walls: the body rule
   addSeats(L) {
@@ -317,7 +408,12 @@ export class CrowdSim {
     const x0 = i * 4 - 1.3, x1 = i * 4 + 5.3, y0 = j * 4 - 1.3, y1 = j * 4 + 5.3, C = st.cell;
     for (let a = Math.floor(x0 / C); a <= Math.floor(x1 / C); a++) for (let b = Math.floor(y0 / C); b <= Math.floor(y1 / C); b++) { const kk = st.key(a, b), S = st.segs.get(kk), Q = st.circ.get(kk);
       if (S) for (const s of S) { if (Math.max(s[0], s[2]) < x0 || Math.min(s[0], s[2]) > x1 || Math.max(s[1], s[3]) < y0 || Math.min(s[1], s[3]) > y1) continue; if (!c.segs.includes(s)) c.segs.push(s); }
-      if (Q) for (const o of Q) { const tg = o.tag, car = tg && typeof tg === 'object' && tg.def && typeof tg.h === 'number', r = car ? tg.def.len / 2 + 0.4 : o.r; if (o.x + r < x0 || o.x - r > x1 || o.y + r < y0 || o.y - r > y1) continue; if (car) { if (!c.cars.includes(tg)) c.cars.push(tg); } else c.circ.push(o); } }
+      if (Q) for (const o of Q) { const tg = o.tag, car = tg && typeof tg === 'object' && tg.def && typeof tg.h === 'number', r = car ? tg.def.len / 2 + 0.4 : o.r; if (o.x + r < x0 || o.x - r > x1 || o.y + r < y0 || o.y - r > y1) continue; if (car) { if (!c.cars.includes(tg)) c.cars.push(tg); } else if (!o.parkSolid || !c.circ.includes(o)) c.circ.push(o); }
+      const edges = st.parkEdges?.get(kk);
+      if (edges) for (const o of edges) {
+        if (o.x + o.r >= x0 && o.x - o.r <= x1 && o.y + o.r >= y0 && o.y - o.r <= y1 && !c.circ.includes(o)) c.circ.push(o);
+      }
+    }
     if (this.nav.soft) this.nav.soft(x0, y0, x1, y1, c.soft); return c;
   }
   // does the move a -> b cross one of the lines S? (this._ks: the line)
@@ -327,10 +423,25 @@ export class CrowdSim {
     return false;
   }
   // (x, y) out of car e's box grown by m: _o.x, _o.y; false when it is not inside. A car that moves puts people off to its side.
-  outBox(e, x, y, m, sp) {
+  outBox(e, x, y, m, sp, ox = x, oy = y) {
     const dx = x - e.x, dy = y - e.y, c = Math.cos(e.h), s = Math.sin(e.h), f = dx * c + dy * s, g = -dx * s + dy * c, pf = e.def.len / 2 + m - Math.abs(f), ps = e.def.wid / 2 + m - Math.abs(g); if (pf <= 0 || ps <= 0) return false;
-    if (sp > 0.6) { const k = Math.min(ps, 0.075) * (g >= 0 ? 1 : -1), fw = f > 0 ? Math.min(pf, sp * 0.02) : 0; _o.x = x - s * k + c * fw; _o.y = y + c * k + s * fw; }
-    else if (ps <= pf) { const k = ps * (g >= 0 ? 1 : -1); _o.x = x - s * k; _o.y = y + c * k; } else { const k = pf * (f >= 0 ? 1 : -1); _o.x = x + c * k; _o.y = y + s * k; }
+    if (sp > 0.6) {
+      const prior = -(ox - e.x) * s + (oy - e.y) * c;
+      const sign = Math.sign(prior) || -Math.sign(g) || 1;
+      const k = sign * Math.min(0.075, e.def.wid / 2 + m - sign * g);
+      const fw = f > 0 ? Math.min(pf, sp * 0.02) : 0;
+      _o.x = x - s * k + c * fw; _o.y = y + c * k + s * fw;
+    }
+    else {
+      // A parked car can load around a stride. Choose the exit face from the approach side.
+      const side = ps <= pf;
+      const axisX = side ? -s : c, axisY = side ? c : s;
+      const prior = (ox - e.x) * axisX + (oy - e.y) * axisY;
+      const current = side ? g : f;
+      const sign = Math.sign(prior) || -Math.sign(current) || 1;
+      const shift = sign * ((side ? e.def.wid : e.def.len) / 2 + m) - current;
+      _o.x = x + axisX * shift; _o.y = y + axisY * shift;
+    }
     return true;
   }
   // THE BODY RULE: a was at (ox, oy), which was a good place, and is now at (a.x, a.y)
@@ -338,6 +449,11 @@ export class CrowdSim {
     const R = 0.25, N = this.kn; let x = a.x, y = a.y, hit = false; const mx = x - ox, my = y - oy, m2 = mx * mx + my * my, far = m2 >= 2.25;
     if (far) { ox = x; oy = y; a.kc = 0; }      /* put somewhere else (a place at a kerb, a seat left): that place is the start */
     // nothing that stands still was within reach a moment ago and the body has not gone that far since: only what moves is looked at
+    // Streaming can put a solid into the space this walker last measured as clear.
+    const staticVersion = this.g.statics.__crowdV;
+    if (a.clearanceVersion !== staticVersion || a.furnitureVersion !== this.nav.ver) {
+      a.kc = 0; a.clearanceVersion = staticVersion; a.furnitureVersion = this.nav.ver;
+    }
     let still = true; if (a.kc > 0) { a.kc -= Math.sqrt(m2); if (a.kc > 0) still = false; }
     let S = null, c = null, near = 9;
     if (still) {
@@ -345,6 +461,11 @@ export class CrowdSim {
       if (S.length) {
         if (!far && m2 > 1e-12 && this.crosses(S, ox, oy, x, y)) {      // not through a line: along it, or not at all
           const s = this._ks, sx = s[2] - s[0], sy = s[3] - s[1], L2 = sx * sx + sy * sy || 1e-9, al = (mx * sx + my * sy) / L2, L = Math.sqrt(L2); let nx = -sy / L, ny = sx / L; if ((ox - s[0]) * nx + (oy - s[1]) * ny < 0) { nx = -nx; ny = -ny; }
+          // A streamed fence may pass exactly through the old center. Recover on the approach side.
+          if (Math.abs((ox - s[0]) * nx + (oy - s[1]) * ny) < 1e-9) {
+            if (mx * nx + my * ny > 0) { nx = -nx; ny = -ny; }
+            ox += nx * 1e-4; oy += ny * 1e-4;
+          }
           x = ox + sx * al; y = oy + sy * al; if (this.crosses(S, ox, oy, x, y)) { x = ox; y = oy; } else N.slide++; a.wnx = nx; a.wny = ny; hit = true; N.wall++; }
         const px = x, py = y; let n = 0;
         for (let it = 0; it < 2; it++) for (const s of S) { const dx = s[2] - s[0], dy = s[3] - s[1], L2 = dx * dx + dy * dy || 1e-9, t = clamp(((x - s[0]) * dx + (y - s[1]) * dy) / L2, 0, 1); let ex = x - (s[0] + dx * t), ey = y - (s[1] + dy * t); const d = Math.hypot(ex, ey); if (d < near) near = d; if (d < R && d > 1e-6) { ex /= d; ey /= d; x += ex * (R - d); y += ey * (R - d); a.wnx = ex; a.wny = ey; n++; } }
@@ -354,16 +475,92 @@ export class CrowdSim {
     // round things, people on the ground and cars: out of them, no faster than a body can be moved (so nobody jumps), never over a line
     const qx = x, qy = y; let cars = false;
     if (still) {
-      for (const o of c.circ) { if (!o.on) continue; const ex = x - o.x, ey = y - o.y, RR = o.r + 0.2, d2 = ex * ex + ey * ey; if (d2 < RR * RR) { const d = Math.sqrt(d2); if (d < 1e-6) { x += RR; } else { x += (ex / d) * (RR - d); y += (ey / d) * (RR - d); } N.round++; near = 0; } else if (d2 < 4) near = Math.min(near, Math.sqrt(d2) - RR + 0.25); }
-      for (const o of c.soft) { const ex = x - o.x, ey = y - o.y, RR = o.h + 0.12, d2 = ex * ex + ey * ey; if (d2 < RR * RR) { const d = Math.sqrt(d2); if (d < 1e-6) { x += RR; } else { x += (ex / d) * (RR - d); y += (ey / d) * (RR - d); } N.soft++; near = 0; } else if (d2 < 4) near = Math.min(near, Math.sqrt(d2) - RR + 0.25); }
+      for (const o of c.circ) { if (!o.on) continue; const ex = x - o.x, ey = y - o.y, RR = o.r + 0.2, d2 = ex * ex + ey * ey; if (d2 < RR * RR) { const d = Math.sqrt(d2);
+          let nx = d ? ex/d : 1, ny = d ? ey/d : 0;
+          const oldX = ox-o.x, oldY = oy-o.y;
+          if (!far && m2 > 0 && oldX*ex + oldY*ey <= 0) {
+            const prior = Math.hypot(oldX,oldY);
+            nx = prior ? oldX/prior : -mx/Math.sqrt(m2);
+            ny = prior ? oldY/prior : -my/Math.sqrt(m2);
+          }
+          // The scallops between bench circles trap broad-side approaches. Slide along
+          // their common outer tangent until the normal round-end response takes over.
+          if (o.benchDX !== undefined && a.state === 'walk' && !far && m2 > 0) {
+            const ux = o.benchDX, uy = o.benchDY;
+            const across = -mx * uy + my * ux, normal = -ex * uy + ey * ux;
+            if (normal * across < 0 && Math.abs(across) > 0.8 * Math.sqrt(m2) &&
+                Math.abs(ex * ux + ey * uy) < RR * 0.6 && Math.abs(normal - across) >= RR - 2 * Math.sqrt(m2)) {
+              // Prefer the nearer end. Break a centered approach by walker ID.
+              const offset = o.benchAlong + ex * ux + ey * uy;
+              const direction = Math.abs(offset) > 0.05 ? Math.sign(offset) : Math.sign(across) * (a.id & 1 ? 1 : -1);
+              // Count attempted travel while contact stays in a small neighborhood.
+              // Keep the retry direction across the four circles of this bench.
+              let slide = a.benchSlide;
+              if (!slide || slide.owner !== o.benchOwner || this.g.t - slide.last > 1) {
+                slide = a.benchSlide = { owner:o.benchOwner, x:ox, y:oy, effort:0, retry:0 };
+              }
+              slide.last = this.g.t;
+              if (Math.hypot(ox - slide.x, oy - slide.y) > 0.25) {
+                slide.x = ox; slide.y = oy; slide.effort = 0;
+              }
+              slide.effort += Math.sqrt(m2);
+              if (slide.effort > 0.8) {
+                slide.retry = -(slide.retry || direction);
+                slide.effort = 0;
+              }
+              const stride = Math.sqrt(m2) * (slide.retry || direction);
+              const along = (ox - o.x) * ux + (oy - o.y) * uy + stride;
+              const out = Math.sign(normal) * RR;
+              x = o.x + ux * along - uy * out;
+              y = o.y + uy * along + ux * out;
+              N.round++; near = 0; continue;
+            }
+          }
+          // A centered stride into a round obstacle has no tangent, so repeated pushes pin the walker.
+          if (a.state === 'walk' && !far && m2 > 0 &&
+              mx * nx + my * ny < 0 && Math.abs(mx * ny - my * nx) < 0.02 * Math.sqrt(m2)) {
+            const turn = (a.id & 1 ? 1 : -1) * Math.min(0.04, Math.sqrt(m2) / RR);
+            const scale = 1 / Math.hypot(1, turn);
+            const tx = (nx - turn * ny) * scale;
+            ny = (ny + turn * nx) * scale;
+            nx = tx;
+          }
+          x = o.x + nx * RR; y = o.y + ny * RR;
+        N.round++; near = 0; } else if (d2 < 4 || (o.parkSolid && d2 < (RR + 1.3) ** 2)) near = Math.min(near, Math.sqrt(d2) - RR + 0.25); }
+      for (const o of c.soft) { const ex = x - o.x, ey = y - o.y, RR = o.h + 0.12, d2 = ex * ex + ey * ey; if (d2 < RR * RR) {
+          let dx = ex, dy = ey, distance = Math.sqrt(d2);
+          const oldX = ox - o.x, oldY = oy - o.y;
+          // A newly loaded table may straddle this stride. Recover on the approach side.
+          if (ex * oldX + ey * oldY <= 0) {
+            dx = oldX; dy = oldY; distance = Math.hypot(dx, dy);
+            if (!distance && m2 > 0) { dx = -mx; dy = -my; distance = Math.sqrt(m2); }
+          }
+          x = o.x + (distance ? dx / distance : 1) * RR;
+          y = o.y + (distance ? dy / distance : 0) * RR;
+          N.soft++; near = 0; } else if (d2 < 4 || (o.parkSolid && d2 < (RR + 1.3) ** 2)) near = Math.min(near, Math.sqrt(d2) - RR + 0.25); }
     }
     for (const b of this.lying) { if (b.p === a) continue; const ex = x - b.x, ey = y - b.y, d2 = ex * ex + ey * ey; if (d2 < 0.3025) { const d = Math.sqrt(d2); if (d > 1e-6) { x += (ex / d) * (0.55 - d); y += (ey / d) * (0.55 - d); N.body++; } } }
     if (x !== qx || y !== qy) { const lim = Math.max(0.05, Math.sqrt(m2) * 1.6), dl = Math.hypot(x - qx, y - qy); if (dl > lim) { x = qx + (x - qx) * lim / dl; y = qy + (y - qy) * lim / dl; } }
-    if (still) for (const e of c.cars) { if (e.gone) continue; if (this.outBox(e, x, y, 0.2, 0)) { x = _o.x; y = _o.y; cars = true; near = 0; } else near = Math.min(near, Math.hypot(x - e.x, y - e.y) - e.def.len / 2 - 0.2); }
-    for (const e of this.tcars) {      /* traffic, wherever it is (a car shoved onto the walk too) */ const dx = x - e.x, dy = y - e.y, rr = e.def.len / 2 + 1; if (dx > rr || dx < -rr || dy > rr || dy < -rr) continue; if (this.outBox(e, x, y, 0.2, Math.abs(e.v || 0))) { x = _o.x; y = _o.y; cars = true; } }
+    if (still) for (const e of c.cars) { if (e.gone) continue; if (this.outBox(e, x, y, 0.2, 0, ox, oy)) { x = _o.x; y = _o.y; cars = true; near = 0; } else near = Math.min(near, Math.hypot(x - e.x, y - e.y) - e.def.len / 2 - 0.2); }
+    for (const e of this.tcars) {      /* traffic, wherever it is (a car shoved onto the walk too) */ const dx = x - e.x, dy = y - e.y, rr = e.def.len / 2 + 1; if (dx > rr || dx < -rr || dy > rr || dy < -rr) continue; if (this.outBox(e, x, y, 0.2, Math.abs(e.v || 0), ox, oy)) { x = _o.x; y = _o.y; cars = true; } }
     if (cars) N.car++;
     if (x !== qx || y !== qy) { hit = true; if (!S) S = this.cellAt(qx, qy).segs; if (S.length && this.crosses(S, qx, qy, x, y)) { x = qx; y = qy; } a.kc = 0; }
     else if (still && near > 0.5) a.kc = Math.min(near - 0.4, 0.85);      /* (a cell reaches 1.3 m past its edge) */
+    // Resolving a neighboring obstacle can push a walker back inside a park prop.
+    if (hit && !far && a.state === 'walk' && c?.circ.some(o => o.on && o.parkSolid)) {
+      const overlaps = (px, py) => {
+        for (const o of c.circ) {
+          if (o.on && Math.hypot(px - o.x, py - o.y) < o.r + 0.2 - 1e-8) return true;
+        }
+        for (const [ax, ay, bx, by] of c.segs) {
+          const dx = bx - ax, dy = by - ay;
+          const u = clamp(((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy || 1), 0, 1);
+          if (Math.hypot(px - ax - u * dx, py - ay - u * dy) < R - 1e-8) return true;
+        }
+        return false;
+      };
+      if (overlaps(x, y) && !overlaps(ox, oy)) { x = ox; y = oy; a.kc = 0; }
+    }
     a.x = x; a.y = y; if (hit) a.kh = (a.kh || 0) + 1;
   }
   // the cars that stand or creep near the camera, each as a box in a way's own axes (s along, l across), once a frame per way that asks
@@ -408,8 +605,19 @@ export class CrowdSim {
   // taken away unseen. The count starts again after 25 s without trouble.
   unstick(a) {
     const t = this.g.t; if (!(t - a.ku < 25 && t >= a.ku)) a.kun = 0; a.ku = t; a.kun++; this.kn.unstuck++;
-    if (a.kun === 1 && a.w) { bandAt(a.w, clamp(a.s, 0, a.w.len), B); if (a.l > B.lo - 0.3 && a.l < B.hi + 0.3) { this.turnBack(a, B); return; } a.kun = 2; }
-    if (a.kun <= 3 && this.wayOut(a)) return;
+    // Try a local detour before abandoning the route at a streamed park prop.
+    let searched = false;
+    if (a.kun === 1 && a.w) {
+      const nearProp = this.cellAt(a.x, a.y).circ.some(o => o.on && o.parkSolid && Math.hypot(a.x - o.x, a.y - o.y) < o.r + 0.3);
+      if (nearProp) {
+        if (this.wayOut(a)) return;
+        searched = true;
+      }
+      bandAt(a.w, clamp(a.s, 0, a.w.len), B);
+      if (a.l > B.lo - 0.3 && a.l < B.hi + 0.3) { this.turnBack(a, B); return; }
+      a.kun = 2;
+    }
+    if (a.kun <= 3 && !searched && this.wayOut(a)) return;
     if (a.kun <= 4) { a.kun = 4; this.rejoin(a); a.fbBack = 0; return; }
     this.leaveGroup(a); this.strand(a);
   }
@@ -460,6 +668,7 @@ export class CrowdSim {
     const H = this.head; H.fill(-1); this.gx0 = this.cx - GN * CELL / 2; this.gy0 = this.cy - GN * CELL / 2; const C = this.cells; C.length = 0;
     const put = (q) => { const i = Math.floor((q.x - this.gx0) / CELL), j = Math.floor((q.y - this.gy0) / CELL); if (i < 0 || j < 0 || i >= GN || j >= GN || C.length >= 4096) return; const k = j * GN + i; this.nxt[C.length] = H[k]; H[k] = C.length; C.push(q); };
     for (const a of this.agents) put(a);
+    this.gridAgentCount = C.length;
     // the game's own pedestrians and the player on foot are in the way too
     const g = this.g; if (g.peds) for (const p of g.peds.list) { if (p.state === 'down') continue; p.v = p.speed || 1.3; put(p); }
     // nobody walks through the camera either (a free or a fixed camera at eye height stands in the street like a person)
@@ -467,8 +676,25 @@ export class CrowdSim {
     const pl = g.player; if (pl && !pl.vehicle) { this._pl = this._pl || { ext: true }; Object.assign(this._pl, { x: pl.x, y: pl.y, h: pl.h, v: pl.speed || 0 }); put(this._pl); }
   }
 
+  kerbInBounds(x0, y0, x1, y1, margin) {
+    const out = this._kerbCandidates || (this._kerbCandidates = []);
+    out.length = 0;
+    if (!this.gridAgentCount) return out;
+    const left = Math.max(0, Math.floor((x0-margin-this.gx0)/CELL));
+    const right = Math.min(GN-1, Math.floor((x1+margin-this.gx0)/CELL));
+    const bottom = Math.max(0, Math.floor((y0-margin-this.gy0)/CELL));
+    const top = Math.min(GN-1, Math.floor((y1+margin-this.gy0)/CELL));
+    for (let j=bottom; j<=top; j++) for (let i=left; i<=right; i++) {
+      for (let k=this.head[j*GN+i]; k>=0; k=this.nxt[k]) {
+        const a=this.cells[k];
+        if (k<this.gridAgentCount && !a.onRoad && !a.gone && a.state!=='sit' && a.state!=='down') out.push(a);
+      }
+    }
+    return out;
+  }
+
   // ------------------------------------------------------------------ steering round people and things
-  avoid(a, w, band) {
+  avoid(a, w, band, formationSlot) {
     const hx = Math.cos(a.h), hy = Math.sin(a.h), C = this.cells, H = this.head; let sR = 0, sL = 0, cap = 9;
     const see = (qx, qy, qf, need, soft) => {
       const dx = qx - a.x, dy = qy - a.y, f = dx * hx + dy * hy; if (f < -0.35 || f > 3.6) return; const gg = -dx * hy + dy * hx, ag = Math.abs(gg); if (ag > need + 0.25) return;
@@ -491,16 +717,60 @@ export class CrowdSim {
       const dx = this.zx - a.x, dy = this.zy - a.y, f = dx * hx + dy * hy, gg = -dx * hy + dy * hx, R = 3.6;
       if (f > -R && f < R + 7 && Math.abs(gg) < R) { const urg = (1 - Math.abs(gg) / R) * 1.6 + 0.3; if (gg >= 0) sR = Math.max(sR, urg); else sL = Math.max(sL, urg); }
     }
-    if (w) for (const o of w.obs) { if (Math.abs(o.x - a.x) > 4 || Math.abs(o.y - a.y) > 4) continue; see(o.x, o.y, 0, o.r + 0.45, false); }
+    let obstacles = w?.obs;
+    // Crossings have no carved obstacle list.
+    if (w?.kind === 'cross' || w?.refreshingObstacles) {
+      obstacles = this._refreshObstacles || (this._refreshObstacles = []);
+      obstacles.length = 0;
+      this.nav.obstaclesNear(a.x, a.y, 4, obstacles);
+    }
+    if (obstacles?.length) {
+      const st = this.g.statics;
+      const cell = st.cell;
+      const wallI = Math.floor(a.x/cell), wallJ = Math.floor(a.y/cell);
+      let clearCell;
+      for (const o of obstacles) {
+        if (Math.abs(o.x - a.x) > 4 || Math.abs(o.y - a.y) > 4) continue;
+        const dx = o.x-a.x, dy = o.y-a.y;
+        const forward = dx*hx + dy*hy, lateral = -dx*hy + dy*hx;
+        if (forward < -0.35 || forward > 3.6 || Math.abs(lateral) > o.r+0.70) continue;
+        // The segment stays in its starting cell when both endpoints lie in it.
+        const sameCell = Math.floor(o.x/cell) === wallI && Math.floor(o.y/cell) === wallJ;
+        if (sameCell && clearCell === undefined) {
+          const walls = st.segs.get(st.key(wallI,wallJ));
+          // Every center ray below lies inside the walker's four-metre search box.
+          clearCell = !walls?.some(([ax,ay,bx,by]) =>
+            Math.max(ax,bx) >= a.x-4 && Math.min(ax,bx) <= a.x+4 &&
+            Math.max(ay,by) >= a.y-4 && Math.min(ay,by) <= a.y+4);
+        }
+        const centerHit = sameCell && clearCell ? 1 : st.raycast(a.x, a.y, o.x, o.y);
+        if (centerHit < 1) {
+          // A wall can hide the center while the rim still reaches the walking line.
+          const towardPath = clamp(lateral, -o.h, o.h);
+          const rimX = o.x + hy*towardPath, rimY = o.y - hx*towardPath;
+          if ((rimX === o.x && rimY === o.y) || st.raycast(a.x, a.y, rimX, rimY) < 1) {
+            // A transverse fence can leave the face nearest the walker exposed.
+            const distance = Math.hypot(dx, dy);
+            // The near face lies on the center ray, one radius before its end.
+            if ((1 - centerHit) * distance > o.h) continue;
+          }
+        }
+        see(o.x, o.y, 0, o.r + 0.45, false);
+      }
+    }
     for (const b of this.lying) { const dx = b.x - a.x, dy = b.y - a.y; if (dx > 5 || dx < -5 || dy > 5 || dy < -5 || b.p === a) continue; see(b.x, b.y, 0, 1.0, false); }      /* people/crowd-walls: nobody walks over someone on the ground */
     // the player's standing cars: three circles along the body, passed like street furniture
     for (const q of this.still) { const dx = q.x - a.x, dy = q.y - a.y; if (dx > 8 || dx < -8 || dy > 8 || dy < -8) continue; const e = q.hl - q.hw, n = q.hw + 0.3; see(q.x, q.y, 0, n, false); if (e > 0.3) { see(q.x + q.c * e, q.y + q.s * e, 0, n, false); see(q.x - q.c * e, q.y - q.s * e, 0, n, false); } }
     if (w && band) {
       const rn = hy * w.nx - hx * w.ny, room = band.hi - band.lo; let sh = (sR - sL) * 0.55;
       if (sR > 0 && sL > 0) cap = Math.min(cap, a._blk);     // someone on either side: fall in behind
-      let la = a.la + sh * rn; const tgt = a.lt + la, cl = clamp(tgt, band.lo, band.hi);
-      if (cl !== tgt) { la = cl - a.lt; if (sh !== 0 && room < 1.6) cap = Math.min(cap, a._blk); }
-      if (sh === 0) la *= 0.93; a.la = clamp(la, -3, 3);
+      const inFormation = formationSlot !== undefined;
+      const laneTarget = inFormation ? formationSlot : a.lt;
+      let la = (inFormation ? (a.formationOffset || 0) : a.la) + sh * rn; const tgt = laneTarget + la, cl = clamp(tgt, band.lo, band.hi);
+      if (cl !== tgt) { la = cl - laneTarget; if (sh !== 0 && room < 1.6) cap = Math.min(cap, a._blk); }
+      if (sh === 0) la *= 0.93;
+      if (inFormation) a.formationOffset = clamp(la, -3, 3);
+      else a.la = clamp(la, -3, 3);
     }
     // held up for a while (a narrow walk, someone standing in it): shuffle past rather than queue for ever
     if (cap < 0.3 && a.state === 'walk') { a.stuck = (a.stuck || 0) + 0.05; if (a.stuck > 2.2) cap = 0.7; if (a.stuck > 4.5) a.stuck = 0; } else if (a.stuck > 0) a.stuck = Math.max(0, a.stuck - 0.02);
@@ -573,12 +843,15 @@ export class CrowdSim {
       if (Math.hypot(x - x0, y - y0) > 0.8 || !st.onSidewalk(x, y) || this.nav.blocked(x, y, 0.3)) continue;
       let dm = 9, ok = true;
       for (let m = F ? F.length : 0; m >= 0 && ok; m--) { let mx = x, my = y; if (m > 0) { const f = F[m - 1]; mx = x + hy * f.off - hx * f.back; my = y - hx * f.off - hy * f.back; if (!st.onSidewalk(mx, my) || this.nav.blocked(mx, my, 0.25)) ok = false; }
+        const person = m ? F[m - 1] : a;
+        if (this.approachBlocked(person, mx, my) || st.resolvePedestrian(mx, my, 0.25, _o)) { ok = false; break; }
         for (let i = 0; i < N.length; i += 2) { const ex = N[i] - mx, ey = N[i + 1] - my; if (ex > 1.3 || ex < -1.3 || ey > 1.3 || ey < -1.3) continue; const e = Math.hypot(ex, ey); if (e < dm) dm = e; } }
       if (!ok) continue;
       const sc = (dm < 0.75 ? dm * 4 - 6 : Math.min(dm, 1.15)) - 0.16 * back - 0.05 * Math.abs(lat) + r() * 0.06;
       if (sc > best) { best = sc; bX = x; bY = y; bB = back; bD = dm; any = true; }
     }
-    if (!any) { const l1 = clamp((r() - 0.5) * 2.4, -1.2, 1.2); bX = kx - bx * 0.7 + w.nx * l1; bY = ky - by * 0.7 + w.ny * l1; }      /* no place found on the walk at all: at the kerb, as before */
+    if (!any) { bX = a.x; bY = a.y; }
+    a.wq.holdPosition = !any;
     a.tx = bX; a.ty = bY; a.th = th; a.wq.bk = bB; a.wq.clip = null;
     if (!F && !a.lead) { const u = r();
       if (u < 0.24) a.th = base + (r() < 0.5 ? -1 : 1) * (0.45 + r() * 0.8);      /* looking up the street, at the traffic, at who is beside them */
@@ -590,17 +863,87 @@ export class CrowdSim {
     const g = this.g, R = g.roads, nd = R.nodes[w.node];
     if (nd.sig) { if (R.signal(w.node, w.e, g.t) !== 'r') return false; const left = R.toGreen(w.node, w.e, g.t); if (left < w.len / ((a ? a.v0 : 1.3) * (a && a.fol ? 0.95 : 1.1)) + margin + 1.5) return false; }
     if (w.clearT !== this.frame) {
-      w.clearT = this.frame; w.clear = true; const mx = w.ax + w.ux * w.len / 2, my = w.ay + w.uy * w.len / 2;
-      const test = (x, y, vx, vy) => { const sp = Math.hypot(vx, vy); if (sp < 1.2 || Math.abs(x - mx) > 34 || Math.abs(y - my) > 34) return; for (let t = 0; t <= 3.6; t += 0.4) { const px = x + vx * t - w.ax, py = y + vy * t - w.ay, s = px * w.ux + py * w.uy, l = px * w.nx + py * w.ny; if (s > -1 && s < w.len + 1 && Math.abs(l) < 3.4) { w.clear = false; return; } } };
-      for (const c of g.traffic.cars) { if (!w.clear) break; test(c.x, c.y, Math.cos(c.h) * c.v, Math.sin(c.h) * c.v); }
-      for (const c of g.vehicles) { if (!w.clear) break; test(c.x, c.y, c.vx, c.vy); }
+      w.clearT = this.frame; w.clear = true;
+      const test = (x, y, vx, vy) => {
+        const along = (x-w.ax)*w.ux + (y-w.ay)*w.uy;
+        const across = (x-w.ax)*w.nx + (y-w.ay)*w.ny;
+        const ds = vx*w.ux + vy*w.uy, dl = vx*w.nx + vy*w.ny;
+        // Intersect the times spent inside each axis of the crossing.
+        let enter = 0, leave = 3.6;
+        if (Math.abs(ds) < 1e-9) {
+          if (along <= -1 || along >= w.len+1) return;
+        } else {
+          const a = (-1-along)/ds, b = (w.len+1-along)/ds;
+          enter = Math.max(enter, Math.min(a,b)); leave = Math.min(leave, Math.max(a,b));
+        }
+        if (Math.abs(dl) < 1e-9) {
+          if (Math.abs(across) >= 3.4) return;
+        } else {
+          const a = (-3.4-across)/dl, b = (3.4-across)/dl;
+          enter = Math.max(enter, Math.min(a,b)); leave = Math.min(leave, Math.max(a,b));
+        }
+        if (enter < leave) w.clear = false;
+      };
+      const testVehicle = (car, vx, vy) => {
+        if (!vx && !vy) return;
+        test(car.x, car.y, vx, vy);
+        if (!w.clear || !car.def) return;
+        const half = car.def.len / 2;
+        const dx = Math.cos(car.h)*half, dy = Math.sin(car.h)*half;
+        test(car.x + dx, car.y + dy, vx, vy);
+        if (w.clear) test(car.x - dx, car.y - dy, vx, vy);
+      };
+      for (const c of g.traffic.cars) {
+        if (!w.clear) break;
+        const speed = c.rev > 0 ? -c.rev : c.v;
+        testVehicle(c, Math.cos(c.h)*speed, Math.sin(c.h)*speed);
+      }
+      for (const c of g.vehicles) { if (!w.clear) break; testVehicle(c, c.vx, c.vy); }
+    }
+    // The signal and traffic gap are shared, but each waiting group has its own approach.
+    if (w.clear && a?.wq?.w === w) {
+      const end = a.wq.end ? w.len : 0;
+      const mx = w.ax + end*w.ux, my = w.ay + end*w.uy;
+      const leaderLane = clamp((a.x - mx)*w.nx + (a.y - my)*w.ny, -1.8, 1.8);
+      const right = (a.wq.end ? -1 : 1) * (w.uy*w.nx - w.ux*w.ny);
+      // Bound both kerbs and every approach before testing individual paths.
+      const fx = w.ax + w.len*w.ux, fy = w.ay + w.len*w.uy;
+      let left = Math.min(w.ax, fx, a.x), rightX = Math.max(w.ax, fx, a.x);
+      let bottom = Math.min(w.ay, fy, a.y), top = Math.max(w.ay, fy, a.y);
+      let spread = Math.abs(leaderLane);
+      for (const f of a.fol || []) {
+        left = Math.min(left, f.x); rightX = Math.max(rightX, f.x);
+        bottom = Math.min(bottom, f.y); top = Math.max(top, f.y);
+        spread = Math.max(spread, Math.abs(leaderLane + f.off*right));
+      }
+      const vehicles = this._crossVehicles || (this._crossVehicles = []);
+      vehicles.length = 0;
+      const collect = car => {
+        if (!car.def) return;
+        const pad = spread + (car.def.len + car.def.wid)/2 + 0.6;
+        if (car.x >= left-pad && car.x <= rightX+pad && car.y >= bottom-pad && car.y <= top+pad) vehicles.push(car);
+      };
+      g.vehicles.forEach(collect);
+      g.traffic.cars.forEach(collect);
+      const blocked = person => {
+        const lateral = leaderLane + (person === a ? 0 : person.off * right);
+        const x = mx + lateral*w.nx, y = my + lateral*w.ny;
+        const distance = a.wq.end ? -w.len : w.len;
+        return this.approachBlocked(person, x, y, person.x, person.y, vehicles) ||
+          this.approachBlocked(person, x + distance*w.ux, y + distance*w.uy, x, y, vehicles);
+      };
+      if (blocked(a) || a.fol?.some(blocked)) return false;
     }
     return w.clear;
   }
 
   // ------------------------------------------------------------------ one agent, one step
-  steer(a, tx, ty, dt, want) {
+  steer(a, tx, ty, dt, want, turnInPlace = false) {
     const dh = wrapPi(Math.atan2(ty - a.y, tx - a.x) - a.h), ad = Math.abs(dh); a.h += clamp(dh, -TURN * dt, TURN * dt);
+    if (turnInPlace && ad > TURN * dt && (ad - TURN * dt >= Math.PI/2 || a.retreatingFromObstacle)) {
+      a.v = 0;
+      return;
+    }
     let tgt = Math.min(want, a.vcap) * (ad > 1.3 ? 0.45 : ad > 0.7 ? 0.75 : 1); if (this.fbKeep && tgt > 0) { if (a.fear && a.fear.run && want > 0.9) { if (tgt < 0.9) tgt = 0.9; }      /* someone getting away is not held to a shuffle behind others (combat/scare.js turns anyone round who makes under 0.3 m in half a second, again and again) */ else if (tgt < 0.54 * a.tall) tgt = tgt < 0.3 ? 0 : 0.54 * a.tall; }      /* nobody creeps: under the slowest walk's pace one waits a moment, then steps */
     a.v += clamp(tgt - a.v, -3.2 * dt, 1.6 * dt); if (a.v < 0.02 && tgt <= 0) a.v = 0;
     a.x += Math.cos(a.h) * a.v * dt; a.y += Math.sin(a.h) * a.v * dt;
@@ -628,6 +971,7 @@ export class CrowdSim {
     if (a.escT > 0) { a.escT -= dt; const ed = Math.hypot(a.ex - a.x, a.ey - a.y); if (ed < 0.35) a.escT = 0; else { a.vcap = Math.max(a.vcap, 0.8); this.steer(a, a.ex, a.ey, dt, Math.min(a.v0, 1.3)); a.onRoad = false; this.gait(a, dt); return; } }
     if (a.carT > 0) { a.carT -= dt; lt = a.carL; if (!cross && !this.g.statics.onSidewalk(a.x, a.y)) a.carRoad = true; else a.carRoad = false; } else if (a.carRoad) a.carRoad = false;
     if (a.fbBack > 0 && a.s > 0.2 && a.s < w.len - 0.2 && a.l > B.lo - 0.2 && a.l < B.hi + 0.2) a.fbBack = 0;      /* back on the walk itself (not merely level with it past its end) */
+    if (cross && a.crossYield === w) a.vcap = 0;
     let hurry = cross ? 1.1 : 1;
     if (cross && a.onRoad) { const nd = this.g.roads.nodes[w.node]; if (nd.sig) { const left = this.g.roads.signal(w.node, w.e, this.g.t) === 'r' ? this.g.roads.toGreen(w.node, w.e, this.g.t) : 0; if (left < remain / a.v0 + 1.5) hurry = 1.5; } }     // the light is about to change: step out
     this.steer(a, w.ax + w.ux * s2 + w.nx * lt, w.ay + w.uy * s2 + w.ny * lt, dt, a.v0 * hurry);
@@ -639,20 +983,60 @@ export class CrowdSim {
     const L = a.lead;
     if (L.state === 'wait' && L.wq && L.wq.bk !== undefined) {      /* people/crowd-kerb: at the kerb each of the company stands on the place kept beside the leader (kerbPlace), turned a little towards them */
       const c = Math.cos(L.th), sn = Math.sin(L.th), px = L.tx + sn * a.off - c * a.back, py = L.ty - c * a.off - sn * a.back, d = Math.hypot(px - a.x, py - a.y);
-      if (d > 0.2 && L.t < 14) { a.vcap = 9; this.steer(a, px, py, dt, Math.min(a.v0 * 1.1, 0.5 + d * 1.2)); } else { a.v = Math.max(0, a.v - 4 * dt); a.h += clamp(wrapPi(L.th + (a.off > 0 ? 0.3 : -0.3) - a.h), -2.2 * dt, 2.2 * dt); }
+      const approaching = !L.wq.holdPosition && d > 0.2 && L.t < 14;
+      if (approaching && this.standingPathClear(a, L.wq, px, py, think)) { a.vcap = 9; this.steer(a, px, py, dt, Math.min(a.v0 * 1.1, 0.5 + d * 1.2), true); } else { a.v = Math.max(0, a.v - 4 * dt); a.h += clamp(wrapPi(L.th + (a.off > 0 ? 0.3 : -0.3) - a.h), -2.2 * dt, 2.2 * dt); }
       a.onRoad = false; a.z += (0.15 - a.z) * Math.min(1, dt * 12); a.s = L.s; a.l = L.l; this.gait(a, dt); return; }
     const hx = Math.cos(L.h), hy = Math.sin(L.h); let off = a.off, back = a.back; const w = L.w;
     if (w && w.kind !== 'cross') { bandAt(w, clamp(L.s, 0, w.len), B); const rn = hy * w.nx - hx * w.ny, l = L.l + off * rn; if (l < B.lo - 0.1 || l > B.hi + 0.25) { off *= 0.25; back += 0.85; } }
     const sx = L.x + hy * off - hx * back, sy = L.y - hx * off - hy * back, ex = sx - a.x, ey = sy - a.y, fe = ex * hx + ey * hy;
-    if (think) { this.avoid(a, null, null); }
+    // The offset is measured along this route's normal.
+    if (a.formationWay !== w) {
+      a.formationWay = w;
+      a.formationOffset = 0;
+    }
+    let shift = 0;
+    if (w) {
+      if (w.kind === 'cross') {
+        // A crossing has a constant walking band from curb to curb.
+        B.lo = w.lo[0]; B.hi = w.hi[0];
+      } else if (w.np > 1) {
+        const along = (sx-w.ax)*w.ux + (sy-w.ay)*w.uy;
+        bandAt(w, clamp(along, 0, w.len), B);
+      }
+      const slot = (sx-w.ax)*w.nx + (sy-w.ay)*w.ny;
+      if (think) this.avoid(a, w, B, slot);
+      shift = clamp(slot + (a.formationOffset || 0), B.lo, Math.max(B.lo, B.hi)) - slot;
+      if (w.kind !== 'cross' && w.np > 1) {
+        const tx = sx + hx*1.4 - w.ax, ty = sy + hy*1.4 - w.ay;
+        bandAt(w, clamp(tx*w.ux + ty*w.uy, 0, w.len), B);
+      }
+      const lateral = slot + 1.4*(hx*w.nx + hy*w.ny);
+      shift = clamp(lateral + shift, B.lo, Math.max(B.lo, B.hi)) - lateral;
+    } else if (think) this.avoid(a, null, null);
+    if (L.state === 'cross' && L.crossYield === w && fe > 0) a.vcap = 0;
     if (L.v < 0.08 && Math.hypot(ex, ey) < 0.35) { a.v = Math.max(0, a.v - 3 * dt); a.h += clamp(wrapPi(L.h - a.h), -TURN * dt, TURN * dt); }
-    else this.steer(a, sx + hx * 1.4, sy + hy * 1.4, dt, clamp(L.v + fe * 1.6, 0, a.v0 * 1.25));
+    else this.steer(a, sx + hx * 1.4 + (w ? w.nx * shift : 0), sy + hy * 1.4 + (w ? w.ny * shift : 0), dt, clamp(L.v + fe * 1.6, 0, a.v0 * 1.25));
     a.onRoad = L.onRoad; a.z += ((a.onRoad ? 0 : 0.15) - a.z) * Math.min(1, dt * 12); a.s = L.s; a.l = L.l;
     this.gait(a, dt);
   }
-  standStill(a, dt, clip) {
+  standingPathClear(a, reservation, x, y, think) {
+    const staticVersion = this.g.statics.__crowdV;
+    if (think || a.approachStaticVersion !== staticVersion || a.approachNavVersion !== this.nav.ver ||
+        a.approachReservation !== reservation || a.approachX !== x || a.approachY !== y) {
+      a.approachX = x; a.approachY = y;
+      a.approachReservation = reservation;
+      a.approachNavVersion = this.nav.ver;
+      a.approachStaticVersion = staticVersion;
+      a.retreatingFromObstacle = false;
+      a.standingPathBlocked = this.staticApproachBlocked(a.x, a.y, x, y, a);
+      a.retreatingFromStatic = a.retreatingFromObstacle;
+    }
+    a.retreatingFromObstacle = a.retreatingFromStatic;
+    return !a.standingPathBlocked && !this.vehicleAt(x, y, a.x, a.y, undefined, true, a);
+  }
+  standStill(a, dt, clip, think) {
     const dx = a.tx - a.x, dy = a.ty - a.y, d = Math.hypot(dx, dy);
-    if (d > 0.22 && a.t < 12) { a.vcap = 9; this.steer(a, a.tx, a.ty, dt, Math.min(a.v0, 0.5 + d * 1.2)); this.gait(a, dt, clip); return false; }
+    if (d > 0.22 && a.t < 12 && this.standingPathClear(a, a.wq, a.tx, a.ty, think)) { a.vcap = 9; this.steer(a, a.tx, a.ty, dt, Math.min(a.v0, 0.5 + d * 1.2), true); this.gait(a, dt, clip); return false; }
     a.v = Math.max(0, a.v - 4 * dt); a.h += clamp(wrapPi(a.th - a.h), -2.2 * dt, 2.2 * dt); a.slowT += dt; if (a.v < 0.1) this.setClip(a, clip); return true;
   }
   // the player's cars: run from one bearing down, go down if struck (as the game's own pedestrians do)
@@ -708,11 +1092,53 @@ export class CrowdSim {
     if (this.unseen(a.x, a.y)) { this.remove(a); return; } if (a.wq) { a.wq.w.wait[a.wq.end][a.wq.n] = 0; a.wq = null; }
     if (a.state !== 'stand') this.nStand++; a.state = 'stand'; a.t = 0; a.standT = 1e9; a.tx = a.x; a.ty = a.y; a.th = a.h; a.v = 0; a.lost = true; a.talk = null; a.fbBack = 0; this.fb.lost++;
   }
+  parkBlocksRejoin(x, y, px, py, allObstacles = false, person) {
+    const st = this.g.statics, dx = px - x, dy = py - y, length2 = dx * dx + dy * dy;
+    const gap2 = (qx, qy, ax, ay, vx, vy, len2) => {
+      const u = clamp(((qx - ax) * vx + (qy - ay) * vy) / (len2 || 1), 0, 1);
+      return (qx - ax - u * vx) ** 2 + (qy - ay - u * vy) ** 2;
+    };
+    // Trunks are center-indexed (radius <= 0.5 m). Larger park props span their grid cells.
+    const pad = allObstacles ? Math.max(0.7, st.maxCircleRadius + 0.25) : 0.7, size = st.cell;
+    for (let i = Math.floor((Math.min(x, px) - pad) / size); i <= Math.floor((Math.max(x, px) + pad) / size); i++) {
+      for (let j = Math.floor((Math.min(y, py) - pad) / size); j <= Math.floor((Math.max(y, py) + pad) / size); j++) {
+        const key = st.key(i, j);
+        const edges = st.segs.get(key);
+        if (edges) for (const edge of edges) {
+          if (!allObstacles && edge.kind !== 'rock') continue;
+          const [ax, ay, bx, by] = edge, vx = bx - ax, vy = by - ay, edge2 = vx * vx + vy * vy;
+          // The raycast handles crossings. For disjoint segments the minimum
+          // separation occurs at an endpoint. Allow existing contact to recede.
+          const startGap2 = gap2(x, y, ax, ay, vx, vy, edge2);
+          if (person && startGap2 < 0.25 ** 2) person.retreatingFromObstacle = true;
+          const limit = Math.min(0.25 ** 2, startGap2) - 1e-10;
+          if (gap2(px, py, ax, ay, vx, vy, edge2) < limit ||
+              gap2(ax, ay, x, y, dx, dy, length2) < limit ||
+              gap2(bx, by, x, y, dx, dy, length2) < limit) return true;
+        }
+        for (const index of [st.circ, st.parkEdges]) {
+          const circles = index?.get(key);
+          if (!circles) continue;
+          for (const o of circles) {
+            if (!o.on || !(allObstacles || o.parkSolid || o.set?.startsWith('park:trunks:'))) continue;
+            const u = ((o.x - x) * dx + (o.y - y) * dy) / length2;
+            if (u <= 0) {
+              if (person && Math.hypot(x-o.x, y-o.y) < o.r + 0.25) person.retreatingFromObstacle = true;
+              continue;
+            }
+            const t = Math.min(1, u);
+            if (Math.hypot(x + t * dx - o.x, y + t * dy - o.y) < o.r + (allObstacles ? 0.25 : 0.2) - 1e-8) return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
   // back onto the network after running or being let go: the nearest way (with ?crowdwalls on: the nearest that can be walked to without
   // a wall between; with none in reach they stay where they are, standing, and are taken away once the camera cannot see them)
   rejoin(a) {
     const W = this.fbWalls, st = this.g.statics;
-    let best = null, bd = 1e9; for (const w of this.nav.near(a.x, a.y, 30, [])) { if (w.kind === 'cross') continue; const dx = a.x - w.ax, dy = a.y - w.ay, s = clamp(dx * w.ux + dy * w.uy, 0, w.len), l = dx * w.nx + dy * w.ny; bandAt(w, s, B); if (B.hi <= 0) continue; const px = w.ax + w.ux * s + w.nx * clamp(l, B.lo, B.hi), py = w.ay + w.uy * s + w.ny * clamp(l, B.lo, B.hi), d = Math.hypot(a.x - px, a.y - py); if (d < bd) { if (W && d > 0.5 && st.raycast(a.x, a.y, px, py) < 1) continue; bd = d; best = w; } }
+    let best = null, bd = 1e9; for (const w of this.nav.near(a.x, a.y, 30, [])) { if (w.kind === 'cross') continue; const dx = a.x - w.ax, dy = a.y - w.ay, s = clamp(dx * w.ux + dy * w.uy, 0, w.len), l = dx * w.nx + dy * w.ny; bandAt(w, s, B); if (B.hi <= 0) continue; const px = w.ax + w.ux * s + w.nx * clamp(l, B.lo, B.hi), py = w.ay + w.uy * s + w.ny * clamp(l, B.lo, B.hi), d = Math.hypot(a.x - px, a.y - py); if (d < bd) { if (W && d > 0 && (st.raycast(a.x, a.y, px, py) < 1 || this.parkBlocksRejoin(a.x, a.y, px, py))) continue; bd = d; best = w; } }
     if (!best && W) { this.strand(a); return; }
     if (!best) { this.remove(a); return; }
     if (W) { a.lost = false; a.fbBack = 40; a.fbT = 0; a.fbN = 0; a.fbx = a.x; a.fby = a.y; }
@@ -755,7 +1181,7 @@ export class CrowdSim {
           break;
         case 'wait': {
           const w = a.w, q = a.wq; if (a.lead) { this.follow(a, dt, think); a.state = a.lead.state === 'wait' ? 'wait' : a.lead.state === 'cross' ? 'cross' : 'walk'; break; }
-          this.standStill(a, dt, (a.hand && a.hand.stand ? a.idle : q.clip) || this.waitClip || a.idle);
+          this.standStill(a, dt, (a.hand && a.hand.stand ? a.idle : q.clip) || this.waitClip || a.idle, think);
           if (q.go < 0) { if (think && this.canWalk(w, a)) q.go = a.t + 0.15 + this.rand() * 1.1 + (q.bk === undefined ? q.n * 0.12 : Math.min(3, (q.bk - 0.6) * 0.62) + Math.min(0.5, q.n * 0.03)); else if (a.t > 75 && think) { /* stuck at a crossing that never clears: give it up */ w.wait[q.end][q.n] = 0; a.wq = null; a.d = -a.d; this.rejoin(a); } }
           else if (a.t >= q.go) { if (this.canWalk(w, a, 0)) { w.wait[q.end][q.n] = 0; a.wq = null; a.state = 'cross'; a.lt = clamp((a.x - w.ax) * w.nx + (a.y - w.ay) * w.ny, -1.8, 1.8); a.la = 0; if (a.fol) for (const f of a.fol) f.state = 'cross'; } else q.go = -1; }
           break; }
@@ -764,14 +1190,52 @@ export class CrowdSim {
           const w = a.w; this.walkOn(a, dt, think); if (a.gone) break;
           if (a.w !== w || a.w.kind !== 'cross') { if (a.state === 'cross') a.state = 'walk'; if (a.fol) for (const f of a.fol) if (f.state === 'cross') f.state = 'walk'; }
           else if (think) {     // traffic that is moving on the crossing: do not step in front of it, get clear of it
-            if (w.carsT !== this.frame) { w.carsT = this.frame; const L = w.cars || (w.cars = []); L.length = 0; const mx = w.ax + w.ux * w.len / 2, my = w.ay + w.uy * w.len / 2; for (const c of g.traffic.cars) if (Math.abs(c.x - mx) < 24 && Math.abs(c.y - my) < 24) L.push(c); }
-            for (const c of w.cars) { const dx = a.x - c.x, dy = a.y - c.y; if (Math.abs(dx) > 9 || Math.abs(dy) > 9) continue; const fx = Math.cos(c.h), fy = Math.sin(c.h), f = dx * fx + dy * fy, s = -dx * fy + dy * fx, hw = c.def.wid / 2;
-              if (Math.abs(f) < c.def.len / 2 + 0.4 && Math.abs(s) < hw + 0.4) { const push = hw + 0.4 - Math.abs(s), sg = Math.sign(s || 1); a.x += -fy * sg * push * 0.5; a.y += fx * sg * push * 0.5; a.vcap = Math.min(a.vcap, 0.6); }
-              else if (c.v > 1.5 && f > 0 && f < c.def.len / 2 + 1.5 + c.v * 1.3) { const ns = s + (-Math.cos(a.h) * fy + Math.sin(a.h) * fx) * a.v0 * 1.2; if (Math.abs(s) > hw + 0.5 && Math.abs(ns) < hw + 0.6) a.vcap = 0; } }
+            a.crossYield = null;
+            if (w.carsT !== this.frame) {
+              w.carsT = this.frame;
+              const cars = w.cars || (w.cars = []);
+              cars.length = 0;
+              const mx = w.ax + w.ux*w.len/2, my = w.ay + w.uy*w.len/2;
+              const collect = (c, speed, reachSpeed = Math.abs(speed)) => {
+                const reach = w.len/2 + 3.4 + (c.def.len+c.def.wid)/2 + 1.5 + reachSpeed*1.3;
+                if (Math.abs(c.x-mx) <= reach && Math.abs(c.y-my) <= reach) cars.push(c, speed);
+              };
+              for (const c of g.traffic.cars) collect(c, c.rev > 0 ? -c.rev : c.v);
+              w.trafficEnd = cars.length;
+              for (const c of g.vehicles) {
+                const speed = c.vx*Math.cos(c.h) + c.vy*Math.sin(c.h);
+                if (c.vx || c.vy) collect(c, speed, Math.hypot(c.vx,c.vy));
+              }
+            }
+            for (let i = 0; i < w.cars.length; i += 2) {
+              const c = w.cars[i], longitudinal = w.cars[i+1];
+              const dx = a.x-c.x, dy = a.y-c.y, fx = Math.cos(c.h), fy = Math.sin(c.h);
+              const f = dx*fx + dy*fy, s = -dx*fy + dy*fx, hw = c.def.wid/2;
+              if (i < w.trafficEnd && Math.abs(f) < c.def.len / 2 + 0.4 && Math.abs(s) < hw + 0.4) { const push = hw + 0.4 - Math.abs(s), sg = Math.sign(s || 1); a.x += -fy * sg * push * 0.5; a.y += fx * sg * push * 0.5; a.vcap = Math.min(a.vcap, 0.6); }
+              else {
+                if (i >= w.trafficEnd) {
+                  const lateral = -c.vx*fy + c.vy*fx;
+                  const distance = s*Math.sign(lateral);
+                  if (distance > 0 && distance < hw + 1.5 + Math.abs(lateral)*1.3) {
+                    const next = f + (Math.cos(a.h)*fx + Math.sin(a.h)*fy)*a.v0*1.2;
+                    const half = c.def.len/2;
+                    if (Math.abs(f) > half + 0.5 && Math.abs(next) < half + 0.6) {
+                      a.crossYield = w; a.vcap = 0;
+                    }
+                  }
+                }
+                const reversing = longitudinal < 0, speed = Math.abs(longitudinal);
+                const ahead = reversing ? -f : f;
+                if (speed > 0 && ahead > 0 && ahead < c.def.len / 2 + 1.5 + speed * 1.3) {
+                  const ns = s + (-Math.cos(a.h) * fy + Math.sin(a.h) * fx) * a.v0 * 1.2;
+                  if (Math.abs(s) > hw + 0.5 && Math.abs(ns) < hw + 0.6) { a.crossYield = w; a.vcap = 0; }
+                }
+              }
+            }
           }
           break; }
         case 'stand': {
-          this.standStill(a, dt, a.talk && (a.fol || a.lead) ? a.talk : a.idle); a.onRoad = false; if (a.lead && a.talk && a.clip === a.talk.i && a.lead.clip === a.lead.talk.i) a.ph = a.lead.ph;
+          this.standStill(a, dt, a.talk && (a.fol || a.lead) ? a.talk : a.idle, think); a.onRoad = false; if (a.lead && a.talk && a.clip === a.talk.i && a.lead.clip === a.lead.talk.i) a.ph = a.lead.ph;
           if (a.t > a.standT && !a.lead && a.w) { a.state = 'walk'; this.nStand--; a.path = null; bandAt(a.w, clamp(a.s, 0, a.w.len), B); a.lt = clamp((B.lo + B.hi) / 2 + (this.rand() - 0.5), B.lo, B.hi); a.la = 0; if (a.fol) for (const f of a.fol) { f.state = 'walk'; this.nStand--; f.talk = null; } a.talk = null; }
           break; }
         case 'flee': {
