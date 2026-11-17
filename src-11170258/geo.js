@@ -44,10 +44,10 @@ export function pointInPoly(x, y, poly) {
 
 // Static collision: wall segments and round obstacles in a uniform grid.
 export class StaticWorld {
-  constructor(cell = 16) { this.cell = cell; this.segs = new Map(); this.circ = new Map(); this.blocks = new Map(); this.owner = null; }
+  constructor(cell = 16) { this.cell = cell; this.segs = new Map(); this.circ = new Map(); this.blocks = new Map(); this.parkEdges = new Map(); this.maxCircleRadius = 0; this.owner = null; }
   // tiles lane (map areas that come and go): while this.owner names a tile set, every wall, circle and sidewalk block added carries that name
   // (no caller changes); removeSet(name) takes them all out again. Things added with no owner set stay for good, as before.
-  removeSet(name) { let n = 0; for (const m of [this.segs, this.circ, this.blocks]) for (const [k, a] of m) { const b = a.filter((o) => o.set !== name); if (b.length !== a.length) { n += a.length - b.length; if (b.length) m.set(k, b); else m.delete(k); } } return n; }
+  removeSet(name) { let n = 0; for (const m of [this.segs, this.circ, this.blocks, this.parkEdges]) for (const [k, a] of m) { const b = a.filter((o) => o.set !== name); if (b.length !== a.length) { n += a.length - b.length; if (b.length) m.set(k, b); else m.delete(k); } } return n; }
   key(i, j) { return i * 100003 + j; }
   // TAGS (lead/h-jump, Nov 14; lanes/lead/h-jump/handover/TAGS.md): low = metres from the wall's own ground to its top, given only for a wall with a known
   // height (tree guard, lawn fence, park fence panel); a segment without it is a wall at every height. kind = what made it ('building', 'edge',
@@ -59,7 +59,24 @@ export class StaticWorld {
     return s;
   }
   addPoly(poly, low, kind) { for (let i = 0; i < poly.length; i++) { const a = poly[i], b = poly[(i + 1) % poly.length]; this.addSeg(a[0], a[1], b[0], b[1], low, kind); } }
-  addCircle(x, y, r, tag) { const k = this.key(Math.floor(x / this.cell), Math.floor(y / this.cell)); let a = this.circ.get(k); if (!a) this.circ.set(k, (a = [])); const o = { x, y, r, tag, on: true }; if (this.owner) o.set = this.owner; a.push(o); return o; }
+  addCircle(x, y, r, tag) { this.maxCircleRadius = Math.max(this.maxCircleRadius, r); const k = this.key(Math.floor(x / this.cell), Math.floor(y / this.cell)); let a = this.circ.get(k); if (!a) this.circ.set(k, (a = [])); const o = { x, y, r, tag, on: true }; if (this.owner) o.set = this.owner; a.push(o); return o; }
+  // Keep one canonical circle for crowd navigation and prop lookups. A park
+  // obstacle that straddles a cell also needs to answer contact queries there.
+  addParkCircle(x, y, r, tag) {
+    const circle = this.addCircle(x, y, r, tag), c = this.cell;
+    circle.parkSolid = true;
+    const home = this.key(Math.floor(x / c), Math.floor(y / c));
+    for (let i = Math.floor((x-r)/c); i <= Math.floor((x+r)/c); i++) {
+      for (let j = Math.floor((y-r)/c); j <= Math.floor((y+r)/c); j++) {
+        const key = this.key(i,j);
+        if (key === home) continue;
+        let edges = this.parkEdges.get(key);
+        if (!edges) this.parkEdges.set(key, edges = []);
+        edges.push(circle);
+      }
+    }
+    return circle;
+  }
   addBlock(poly) {   // sidewalk polygons, for "am I on the kerb"
     let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9; for (const p of poly.ext) { x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1]); }
     const c = 64, b = { poly, x0, y0, x1, y1 }; if (this.owner) b.set = this.owner;
@@ -103,8 +120,8 @@ export class StaticWorld {
     return false;
   }
   // Push a circle out of everything it overlaps. Returns the number of contacts; out gets the summed push and the last contact normal.
-  resolve(x, y, r, out, skipCircles = false) {
-    const c = this.cell; let n = 0; out.x = x; out.y = y; out.nx = 0; out.ny = 0; out.depth = 0; out.tag = null;
+  resolve(x, y, r, out, skipCircles = false, pedestrian = false) {
+    const c = this.cell; let n = 0; out.x = x; out.y = y; out.nx = 0; out.ny = 0; out.depth = 0; out.tag = null; out.parkContact = false;
     const i0 = Math.floor((x - r) / c), i1 = Math.floor((x + r) / c), j0 = Math.floor((y - r) / c), j1 = Math.floor((y + r) / c);
     for (let it = 0; it < 2; it++) {
       for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) {
@@ -112,16 +129,36 @@ export class StaticWorld {
         if (a) for (const s of a) {
           const dx = s[2] - s[0], dy = s[3] - s[1], L2 = dx * dx + dy * dy || 1e-9, t = clamp(((out.x - s[0]) * dx + (out.y - s[1]) * dy) / L2, 0, 1);
           const px = s[0] + dx * t, py = s[1] + dy * t; let ex = out.x - px, ey = out.y - py; const d = Math.hypot(ex, ey);
-          if (d < r && d > 1e-6) { ex /= d; ey /= d; out.x += ex * (r - d); out.y += ey * (r - d); out.nx = ex; out.ny = ey; out.depth = Math.max(out.depth, r - d); n++; }
+          if (d < r && (d > 1e-6 || pedestrian)) {
+            if (d > 1e-6) { ex /= d; ey /= d; }
+            else { const length = Math.hypot(dx, dy); ex = length ? -dy / length : 1; ey = length ? dx / length : 0; } out.x += ex * (r - d); out.y += ey * (r - d); out.nx = ex; out.ny = ey; out.depth = Math.max(out.depth, r - d); n++;
+            if (s.kind === 'rock') out.parkContact = true;
+          }
         }
-        const b = skipCircles ? null : this.circ.get(k);
-        if (b) for (const o of b) {
-          if (!o.on) continue; let ex = out.x - o.x, ey = out.y - o.y; const d = Math.hypot(ex, ey), R = r + o.r;
-          if (d < R && d > 1e-6) { ex /= d; ey /= d; out.x += ex * (R - d); out.y += ey * (R - d); out.nx = ex; out.ny = ey; out.depth = Math.max(out.depth, R - d); out.tag = o.tag; n++; }
+        if (!skipCircles) {
+          n += pushCircles(this.circ.get(k), r, out, pedestrian);
+          if (this.parkEdges.size) n += pushCircles(this.parkEdges.get(k), r, out, pedestrian);
         }
       }
     }
     return n;
+  }
+  resolvePedestrian(x, y, r, out) {
+    const contacts = this.resolve(x, y, r, out, false, true);
+    const c = this.cell, reach = r + this.maxCircleRadius;
+    const left = Math.floor((x-r)/c), right = Math.floor((x+r)/c);
+    const bottom = Math.floor((y-r)/c), top = Math.floor((y+r)/c);
+    let extra = 0;
+    // resolve already checked the cells under the body. A circle centered
+    // outside those cells can still extend into the pedestrian's path.
+    for (let i = Math.floor((x-reach)/c); i <= Math.floor((x+reach)/c); i++) {
+      for (let j = Math.floor((y-reach)/c); j <= Math.floor((y+reach)/c); j++) {
+        if (i < left || i > right || j < bottom || j > top)
+          extra += pushCircles(this.circ.get(this.key(i,j)), r, out, true);
+      }
+    }
+    if (extra) this.resolve(out.x, out.y, r, out, false, true);
+    return contacts + extra;
   }
   // first hit of a segment against the walls: returns t in [0,1] or 1
   raycast(ax, ay, bx, by) {
@@ -258,3 +295,21 @@ export class Roads {
 }
 
 try { Roads.noGrid = typeof location !== 'undefined' && new URLSearchParams(location.search).get('lanegrid') === '0'; } catch (e) {}     /* perf lane */
+
+function pushCircles(circles, radius, out, pedestrian = false) {
+  let hits = 0;
+  if (circles) for (const circle of circles) {
+    if (!circle.on) continue;
+    let dx = out.x - circle.x, dy = out.y - circle.y;
+    const distance = Math.hypot(dx, dy), depth = radius + circle.r - distance;
+    if (depth <= 0) continue;
+    if (distance > 1e-6) { dx /= distance; dy /= distance; }
+    else if (circle.parkSolid || pedestrian) { dx = 1; dy = 0; }
+    else continue;
+    out.x += dx * depth; out.y += dy * depth;
+    out.nx = dx; out.ny = dy; out.depth = Math.max(out.depth, depth);
+    if (circle.parkSolid) out.parkContact = true;
+    out.tag = circle.tag; hits++;
+  }
+  return hits;
+}

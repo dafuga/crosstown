@@ -25,7 +25,12 @@ function kit(game, S) {
     body: `vec3 an = abs(bakeN); vec3 rk = an.y > 0.6 ? texture2D(tRock, vWPos.xz / 2.6).rgb : (an.x > an.z ? texture2D(tRock, vWPos.zy / 2.6).rgb : texture2D(tRock, vWPos.xy / 2.6).rgb);
            rk = mix(vec3(dot(rk, vec3(0.333))), rk, 0.4); diffuseColor.rgb *= rk * vec3(0.38, 0.37, 0.35) * (0.7 + 0.6 * vnoise(vWPos.xz * 1.7)) * mix(0.42, 1.0, smoothstep(-0.35, 0.05, vLoc.y));
            diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.6, 0.72, 0.4), smoothstep(0.55, 0.8, vnoise(vWPos.xz * 0.9 + 3.0)) * step(0.5, bakeN.y) * 0.6);` });
-  return (KIT = { reedGeo, reedMat, sg, stoneMat });
+  const vertices = new Map();
+  for (let i = 0; i < p.count; i++) {
+    const xyz = [p.getX(i), p.getY(i), p.getZ(i)];
+    vertices.set(xyz.join(','), xyz);
+  }
+  return (KIT = { reedGeo, reedMat, sg, stoneMat, stoneVertices: new Float32Array([...vertices.values()].flat()) });
 }
 
 // build(game, S, area, level, inCorridor(x, y)) -> group
@@ -43,7 +48,23 @@ export function build(game, S, a, level, skip) {
   const yAt = (x, y, o) => BASE + (o > 0 ? level : Math.max(level, T.ground(x, y)));
   if (reeds.length) { const im = new THREE.InstancedMesh(K.reedGeo, K.reedMat, reeds.length); im.name = 'park_reeds'; reeds.forEach((t, k) => { const hgt = 0.5 + t[3] * 0.55, wd = 0.6 + t[4] * 0.5; e.set(0, t[3] * 6.283, 0); q4.setFromEuler(e); v.set(t[0], yAt(t[0], t[1], t[2]) - 0.12, -t[1]); sc.set(wd, hgt, wd); im.setMatrixAt(k, m4.compose(v, q4, sc)); const g = 0.20 + 0.12 * t[4]; im.setColorAt(k, c.setRGB(g, g * (0.80 + 0.08 * t[3]), g * 0.62));      /* dull tan-brown: dry November sedge, knee to waist high */ });
     im.instanceMatrix.needsUpdate = true; im.instanceColor.needsUpdate = true; im.computeBoundingSphere(); im.castShadow = true; group.add(im); }
-  if (stones.length) { const im = new THREE.InstancedMesh(K.sg, K.stoneMat, stones.length); im.name = 'park_shore_stones'; stones.forEach((t, k) => { const s = 0.25 + t[3] * t[3] * 0.95; e.set((t[4] - 0.5) * 0.5, t[3] * 6.283, (t[3] - 0.5) * 0.5); q4.setFromEuler(e); v.set(t[0], yAt(t[0], t[1], t[2]) + s * 0.08, -t[1]); sc.set(s * (1.1 + t[4] * 0.7), s * (0.45 + t[3] * 0.35), s * (0.9 + t[4] * 0.4)); im.setMatrixAt(k, m4.compose(v, q4, sc)); });
+  const colliders = game.P.get('parkcol') !== '0' ? (group.userData.stones = []) : null;
+  if (stones.length) { const im = new THREE.InstancedMesh(K.sg, K.stoneMat, stones.length); im.name = 'park_shore_stones'; stones.forEach((t, k) => { const s = 0.25 + t[3] * t[3] * 0.95; e.set((t[4] - 0.5) * 0.5, t[3] * 6.283, (t[3] - 0.5) * 0.5); q4.setFromEuler(e); v.set(t[0], yAt(t[0], t[1], t[2]) + s * 0.08, -t[1]); sc.set(s * (1.1 + t[4] * 0.7), s * (0.45 + t[3] * 0.35), s * (0.9 + t[4] * 0.4)); im.setMatrixAt(k, m4.compose(v, q4, sc));
+      if (colliders) {
+        // Project the tilted, nonuniformly scaled mesh onto the ground once at load.
+        const a = m4.elements;
+        let maxSquared = 0;
+        const vertices = K.stoneVertices;
+        for (let i = 0; i < vertices.length; i += 3) {
+          const x = vertices[i], y = vertices[i + 1], z = vertices[i + 2];
+          const dx = a[0]*x + a[4]*y + a[8]*z, dz = a[2]*x + a[6]*y + a[10]*z;
+          maxSquared = Math.max(maxSquared, dx*dx + dz*dz);
+        }
+        const radius = Math.sqrt(maxSquared);
+        game.statics.addParkCircle(t[0], t[1], radius, 'rock');
+        colliders.push([t[0], t[1], radius]);
+      }
+    });
     im.instanceMatrix.needsUpdate = true; im.computeBoundingSphere(); im.castShadow = true; im.receiveShadow = true; group.add(im); }
   group.userData.counts = { reeds: reeds.length, stones: stones.length };
   return group;

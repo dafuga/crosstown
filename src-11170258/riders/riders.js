@@ -26,11 +26,11 @@ const _m = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _l = new THREE.Matrix
 export async function install(g) {
   const P = g.P, sel = P && P.get('riders'); if (sel === '0' || sel === 'none') return null;
   const R = g.roads, TR = g.traffic, st = g.statics, pl = g.player, rand = rng(60606), scene = g.world.scene;
-  const TARGET0 = Math.max(0, Math.min(80, sel ? +sel || 32 : 32)), WALKERS = Math.round(TARGET0 * 0.12), CLUMPS = !(P && P.get('riderclumps') === '0');
+  const TARGET0 = Math.max(0, Math.min(80, sel ? +sel || 14 : 14)), WALKERS = Math.round(TARGET0 * 0.12), CLUMPS = !(P && P.get('riderclumps') === '0'), FORE = !(P && P.get('riderfore') === '0'), FARCUT = !(P && P.get('riderfar') === '0'); let frameN = 0;
   const out = { on: true, list: [], clumps: [], stats: { spawned: 0, hits: 0, shoved: 0, touch: 0, furn: 0, pushed: 0, ms: 0, drawn: 0 }, target: TARGET0 }; g.riders = out;
   const CYC = !(P && P.get('cychit') === '0'), HARD = 4; if (CYC) { out.stats.thrown = 0; out.stats.clatter = 0; }
   // lunch and dinner bring more of them out, the small hours fewer (the game's clock, when it has one)
-  let TARGET = TARGET0; const hours = () => { let h = 12; try { if (g.night && isFinite(g.night.tod)) h = g.night.tod; } catch (e) {} const k = (h >= 11.5 && h < 14.5) || (h >= 17.5 && h < 21.5) ? 1.3 : h >= 1 && h < 6 ? 0.5 : 1; TARGET = Math.round(TARGET0 * k); out.target = TARGET; };
+  let TARGET = TARGET0; const hours = () => { let h = 12; try { if (g.night && isFinite(g.night.tod)) h = g.night.tod; } catch (e) {} const k = (h >= 11.5 && h < 14.5) || (h >= 17.5 && h < 21.5) ? 1.5 : h >= 1 && h < 6 ? 0.5 : 1; TARGET = Math.round(TARGET0 * k); out.target = TARGET; };
   const pick = (a) => a[Math.floor(rand() * a.length) % a.length], kerbZ = (x, y) => (st.onSidewalk(x, y) ? 0.15 : 0);
 
   // ------------------------------------------------------------------ drawing: instances
@@ -72,13 +72,13 @@ export async function install(g) {
   function spawnRoad(px, py, anywhere) {
     const N = nearEdges(px, py); if (!N.length) return null;
     for (let k = 0; k < 10; k++) {
-      let e = pick(N); if (!e.ave && rand() < 0.55) e = pick(N); const salmon = rand() < 0.2, dir = e.oneway ? (salmon ? -1 : 1) : rand() < 0.5 ? 1 : -1, sl = slots(e, dir), s = 8 + rand() * (e.len - 20);
+      let e = pick(N); if (!e.ave && rand() < 0.7) e = pick(N); if (!e.ave && rand() < 0.4) e = pick(N); const salmon = rand() < 0.2, dir = e.oneway ? (salmon ? -1 : 1) : rand() < 0.5 ? 1 : -1, sl = slots(e, dir), s = 8 + rand() * (e.len - 20);
       const lo = rand() < 0.68 ? (rand() < 0.5 ? sl[0] : sl[sl.length - 1]) : pick(sl); posOn(e, dir, s, lo, o1); const d = Math.hypot(o1.x - px, o1.y - py);
       if (d > 240 || d < (anywhere ? 14 : 90) || !g.bounds.in(o1.x, o1.y, -5)) continue;
       if (!anywhere && ((px - o1.x) * Math.cos(o1.h) + (py - o1.y) * Math.sin(o1.h)) < 0.3 * d && rand() < 0.8) continue;
       if (!anywhere && d < 210 && st.raycast(px, py, o1.x, o1.y) >= 1) continue;
-      let ok = true; for (const q of out.list) if (Math.abs(q.x - o1.x) < 5 && Math.abs(q.y - o1.y) < 5) { ok = false; break; } if (ok) for (const c of TR.cars) if (Math.abs(c.x - o1.x) < 4 && Math.abs(c.y - o1.y) < 4) { ok = false; break; } if (!ok) continue;
-      const r = looks({ mode: 'road', e, dir, s, lo, tlo: lo, x: o1.x, y: o1.y, h: o1.h, hv: o1.h, v: 5, v0: (e.oneway && dir < 0 ? 5 : 6.6) + rand() * 2.4, salmon, runner: rand() < 0.65, lean: 0, state: 'ride', t: 0, cool: rand() * 3, j: null, stopT: 0, z: 0, id: out.stats.spawned });
+      let ok = true; for (const q of out.list) if (Math.abs(q.x - o1.x) < 5 && Math.abs(q.y - o1.y) < 5) { ok = false; break; } if (ok) for (const c of TR.cars) { const dx = o1.x - c.x, dy = o1.y - c.y; if (dx > 30 || dx < -30 || dy > 30 || dy < -30) continue; const f = dx * Math.cos(c.h) + dy * Math.sin(c.h), l = Math.abs(-dx * Math.sin(c.h) + dy * Math.cos(c.h)), hl = (c.def ? c.def.len / 2 : 2.4) + 1.6; if (l < 2 && f > -hl && f < hl + 6 + c.v * 2) { ok = false; break; } } if (!ok) continue;
+      const r = looks({ mode: 'road', e, dir, s, lo, tlo: lo, x: o1.x, y: o1.y, h: o1.h, hv: o1.h, v: 5, v0: (e.oneway && dir < 0 ? 5 : 6.6) + rand() * 2.4, salmon, runner: rand() < 0.65, lean: 0, state: 'ride', t: 0, cool: rand() * 3, j: null, stopT: 0, z: 0, id: out.stats.spawned, t0: g.t });
       out.list.push(r); out.stats.spawned++; return r;
     }
     return null;
@@ -193,11 +193,45 @@ export async function install(g) {
     for (const k of nd.e) { const e2 = R.edges[k]; if (e2 === r.e || !e2.line) continue; const d2 = e2.a === node ? 1 : e2.b === node ? -1 : 0; if (!d2) continue; const legal = !e2.oneway || d2 > 0; if (!legal && !r.salmon) continue;
       posOn(e2, d2, 0, 0, o2); const turn = Math.abs(wrapPi(o2.h - hin)); let w = turn < 0.5 ? 8 : turn < 2.2 ? 1.6 : 0.02; if (!legal) w *= 0.6; if (!usable(e2)) w *= 0.05; C.push([e2, d2, w]); tot += w; }
     if (!C.length) return null; let q = rand() * tot; for (const c of C) { q -= c[2]; if (q <= 0) return c; } return C[0]; }
+  // ---- the junction: where he and each car will be over the next seconds (a car's own planned way across), so he waits for a car turning over his way
+  const CP = new Float32Array(14 * 4), RP = new Float32Array(11 * 4);
+  function arcAt(J, u, A, i) { if (u >= 1) { const ex = J.p1x - J.cx, ey = J.p1y - J.cy, n = Math.hypot(ex, ey) || 1, ov = (u - 1) * J.len; A[i] = J.p1x + ex / n * ov; A[i + 1] = J.p1y + ey / n * ov; A[i + 2] = ex / n; A[i + 3] = ey / n; return; }
+    const a = (1 - u) * (1 - u), b = 2 * u * (1 - u), d = u * u, tx = 2 * (1 - u) * (J.cx - J.p0x) + 2 * u * (J.p1x - J.cx), ty = 2 * (1 - u) * (J.cy - J.p0y) + 2 * u * (J.p1y - J.cy), n = Math.hypot(tx, ty) || 1; A[i] = a * J.p0x + b * J.cx + d * J.p1x; A[i + 1] = a * J.p0y + b * J.cy + d * J.p1y; A[i + 2] = tx / n; A[i + 3] = ty / n; }
+  function carPath(o) { const c = o.who, tr = c.junction !== undefined, J = tr ? c.junction || c.plan || null : null, v = tr ? (c.junction && !(g.t - (c._rbL || -9) < 0.4) ? Math.max(c.v, 1) : c.v) : 0;
+    for (let k = 0; k < 14; k++) { const tau = k * 0.25, i = k * 4;
+      if (!J) { const vx = tr ? o.c * v : o.vx, vy = tr ? o.s * v : o.vy; CP[i] = o.x + vx * tau; CP[i + 1] = o.y + vy * tau; CP[i + 2] = o.c; CP[i + 3] = o.s; continue; }
+      const dist = v * tau, u = c.junction ? J.u + dist / J.len : (dist - (J.sEnt - c.s)) / J.len;
+      if (u <= 0) { CP[i] = o.x + o.c * dist; CP[i + 1] = o.y + o.s * dist; CP[i + 2] = o.c; CP[i + 3] = o.s; } else arcAt(J, u, CP, i); } }
+  // metres along his way to the first place a car will be on it when he is (1e9: none). dE: metres still to go to the start of the arc J (minus what is done of it)
+  function foresee(r, J, dE, cx, cy) { const vr = Math.max(r.v, 3); let best = 1e9;
+    for (let k = 0; k < 11; k++) { const dist = vr * (k + 1) * 0.25, u = (dist - dE) / J.len, i = k * 4; if (u <= 0) { RP[i] = r.x + cx * dist; RP[i + 1] = r.y + cy * dist; RP[i + 2] = cx; RP[i + 3] = cy; } else arcAt(J, u, RP, i); }
+    for (let n = 0; n < obsN; n++) { const o = obs[n], c = o.who; if (!c || !c.def || c === r) continue; const dx = o.x - r.x, dy = o.y - r.y; if (dx > 32 || dx < -32 || dy > 32 || dy < -32) continue;
+      carPath(o); const hl = o.hl + 0.9, hw = o.hw + 0.3;
+      for (let k = 0; k < 11; k++) { const d = vr * (k + 1) * 0.25; if (d >= best) break; const i = k * 4, px = RP[i], py = RP[i + 1]; let hit = false;
+        for (let q = k; q <= k + 4 && q < 14 && !hit; q++) { const m = q * 4, al = CP[m + 2] * RP[i + 2] + CP[m + 3] * RP[i + 3]; if (q !== k + 1 && (al > 0.8 || al < -0.8)) continue;      // going his way or head on: only where both are at the same moment
+          const ex = px - CP[m], ey = py - CP[m + 1], f = ex * CP[m + 2] + ey * CP[m + 3], l = -ex * CP[m + 3] + ey * CP[m + 2]; if (f < hl && f > -hl && l < hw && l > -hw) hit = true; }
+        if (hit) { best = d; break; } } }
+    return best; }
+  function mkArc(r, e, L, rEnd, nx, node) { const e2 = nx[0], d2 = nx[1], n2 = R.nodes[R.startNode(e2, d2)], s1 = Math.min(e2.len * 0.5, n2.e.length >= 3 ? n2.r : 0.5); slots(e2, d2, sl); const fr = half(e) ? r.lo / half(e) : 0; let lo2 = sl[0], bd = 1e9; for (const s2 of sl) { const dd = Math.abs(s2 - fr * half(e2)); if (dd < bd) { bd = dd; lo2 = s2; } }
+    posOn(e, r.dir, L - rEnd, r.lo, o1); posOn(e2, d2, s1, lo2, o2); const d0x = Math.cos(o1.h), d0y = Math.sin(o1.h), d1x = Math.cos(o2.h), d1y = Math.sin(o2.h), den = d0x * d1y - d0y * d1x; let mx = (o1.x + o2.x) / 2, my = (o1.y + o2.y) / 2;
+    if (Math.abs(den) > 0.2) { const tt = ((o2.x - o1.x) * d1y - (o2.y - o1.y) * d1x) / den; if (tt > 0 && tt < 60) { mx = o1.x + d0x * tt; my = o1.y + d0y * tt; } }
+    return { e: e2, dir: d2, lo: lo2, s1, p0x: o1.x, p0y: o1.y, cx: mx, cy: my, p1x: o2.x, p1y: o2.y, len: Math.max(1, Math.hypot(mx - o1.x, my - o1.y) + Math.hypot(o2.x - mx, o2.y - my)) * 0.95, u: 0, vmax: Math.abs(den) > 0.2 ? 4.6 : 9, big: R.nodes[node].e.length >= 3 }; }
+  // never inside a car's body: out through the nearer side (or the end), as fast as the car moves and a little more
+  function unstick(r, dt) { for (let n = 0; n < obsN; n++) { const o = obs[n], c = o.who; if (!c || !c.def) continue; const dx = r.x - o.x, dy = r.y - o.y; if (dx > 9 || dx < -9 || dy > 9 || dy < -9) continue;
+      const f = dx * o.c + dy * o.s, l = -dx * o.s + dy * o.c, sp = Math.hypot(o.vx, o.vy), cl = sp - r.v * (Math.cos(r.h) * o.c + Math.sin(r.h) * o.s), ps = o.hw + 0.32 - Math.abs(l); let pf = o.hl + 0.25 - Math.abs(f); if (ps <= 0) continue;
+      if (pf > 0 && g.t - (r.t0 || 0) < 1.5) { r.gone = true; return; }      // made a moment ago where a car now is: away with him
+      if (pf <= 0) { if (!(cl > 3.5 && f > 0 && f < o.hl + 0.25 + cl * 0.3 && c !== pl.vehicle)) continue; pf = 9; }      // a car coming up fast behind him: aside before it is there
+      if (c === pl.vehicle && sp > 2.5) { down(r, o.vx, o.vy, l); return; }
+      const mx = (sp + 5) * dt; let mvx, mvy; if (pf < ps * 0.5) { const k = (f >= 0 ? 1 : -1) * Math.min(pf, mx); mvx = o.c * k; mvy = o.s * k; } else { const k = (l >= 0 ? 1 : -1) * Math.min(ps, mx); mvx = -o.s * k; mvy = o.c * k; }
+      if (!r.j && st.resolve(r.x + mvx, r.y + mvy, 0.2, o2, true) > 0) continue;
+      r.x += mvx; r.y += mvy; out.stats.unstuck = (out.stats.unstuck || 0) + 1; if (!(r.sq > 0)) { r.sq = 0.6; r.sqv = sp; }
+      if (r.j) { r.jx = (r.jx || 0) + mvx; r.jy = (r.jy || 0) + mvy; } else { const ch = Math.cos(r.h), sh = Math.sin(r.h), W2 = half(r.e) + 0.35; r.lo = clamp(r.lo + mvx * sh - mvy * ch, -W2 - 0.3, W2 + 0.3); r.tlo = clamp(r.lo, -W2, W2); r.s += mvx * ch + mvy * sh; } } }
   function roadStep(r, dt, t) {
     const e = r.e, L = e.len, node = R.endNode(e, r.dir), nd = R.nodes[node], big = nd.e.length >= 3, rEnd = big ? nd.r : 0.5; let cx = Math.cos(r.h), cy = Math.sin(r.h), limit = r.v0;
     look(r, cx, cy, 5 + r.v * 1.3, dt); if (r.state !== 'ride') return;
-    let gap = r._gap; r.cool -= dt;
+    let gap = r._gap, fore = 1e9; r.cool -= dt;
     if (!r.j) {
+      if (big && L - rEnd - r.s < 14) { if (!r.pn || r.pnE !== e) { r.pn = nextEdge(r, node); r.pnE = e; } if (r.pn && FORE && !(r.fg > 0)) { if ((frameN + r.id) & 1) fore = r.fo = Math.max(0, (r.fo || 1e9) - r.v * dt); else fore = r.fo = foresee(r, mkArc(r, e, L, rEnd, r.pn, node), L - rEnd - r.s, cx, cy); } }
       // the light: most roll up to it and go when nothing is crossing; the rest wait for green
       const stopS = L - rEnd - 2.2, d = stopS - r.s;
       if (big && d > -1 && d < 40 && R.signal(node, e, t) !== 'g') { if (r.runner && !(d < 12 && crossBusy(nd, e, node))) limit = Math.min(limit, 3.4 + Math.max(0, d - 4) * 0.5); else gap = Math.min(gap, Math.max(0, d) + 0.5); }
@@ -206,25 +240,23 @@ export async function install(g) {
       const blocked = gap < 4 + r.v * 0.9;
       if (r.cool <= 0 && (blocked || (rand() < dt * 0.1 && e.lanes > 1))) { slots(e, r.dir, sl); let best = null, bd = 1e9; for (const s2 of sl) { const dd = Math.abs(s2 - r.tlo); if (dd < 0.2 || dd > (blocked ? 3.6 : 7) || !slotFree(r, s2)) continue; const sc = blocked ? dd : Math.abs(dd - 3.3) + rand(); if (sc < bd) { bd = sc; best = s2; } }
         if (best !== null) { r.tlo = best; r.cool = 1.6 + rand() * 2; } else r.cool = 0.5; }
-    } else limit = Math.min(limit, r.j.vmax);
+    } else { limit = Math.min(limit, r.j.vmax); if (r.j.big && FORE && !(r.fg > 0)) { if ((frameN + r.id) & 1) fore = r.fo = Math.max(0, (r.fo || 1e9) - r.v * dt); else fore = r.fo = foresee(r, r.j, -r.j.u * r.j.len, cx, cy); } }
+    let ovv = r._ov; if (r.fg > 0) r.fg -= dt; if (fore < 1e8) { out.stats.fore = (out.stats.fore || 0) + 1; if (fore - 1.6 < gap) { gap = fore - 1.6; ovv = 0; } if (!r.j && big) { const dS = L - rEnd - 2.2 - r.s; if (dS > -0.5 && fore > dS && dS + 0.4 < gap) { gap = dS + 0.4; ovv = 0; } } /* he waits behind the crossing, not on it */ if (r.v < 0.5) { r.fh = (r.fh || 0) + dt; if (r.fh > (out.stats.foreHold || 0)) out.stats.foreHold = r.fh; if (r.fh > 6) { r.fg = 4; r.fh = 0; if (!r.j) r.pn = null; out.stats.foreGo = (out.stats.foreGo || 0) + 1; } } } else r.fh = 0;
     if (r.sq > 0) { r.sq -= dt; limit = Math.min(limit, Math.max(1.2, r.sqv - 2.5)); }      // a car is against him: he lets it go by
     // speed: what can still stop in the gap behind something going r._ov his way
-    const want = Math.min(limit, Math.max(0, r._ov) + Math.sqrt(Math.max(0, 2 * 4 * (gap - 0.4)))); r.v += clamp(want - r.v, -8 * dt, 2.4 * dt); if (r.v < 0.03) r.v = 0;
+    const want = Math.min(limit, Math.max(0, ovv) + Math.sqrt(Math.max(0, 2 * 4 * (gap - 0.4)))); r.v += clamp(want - r.v, -8 * dt, 2.4 * dt); if (r.v < 0.03) r.v = 0;
     r.stopT = r.v < 0.4 ? r.stopT + dt : 0; if (r.stopT > 8 && !r.j && gap < 2 && r._gap < 2) { r.tlo = pick(slots(e, r.dir, sl)); r.stopT = 4; }      // never stands for good behind something
     const ds = r.v * dt, ph = r.hv; r.odo = (r.odo || 0) + ds;
     if (r.j) { const j = r.j; j.u += ds / j.len;
-      if (j.u >= 1) { r.e = j.e; r.dir = j.dir; r.s = j.s1 + (j.u - 1) * j.len; r.lo = r.tlo = j.lo; r.j = null; r.jx = r.jy = 0; r.v0 = (r.e.oneway && r.dir < 0 ? 5 : 6.6) + rand() * 2.4; posOn(r.e, r.dir, r.s, r.lo, r); r.hv = r.h; }
+      if (j.u >= 1) { r.e = j.e; r.dir = j.dir; r.s = j.s1 + (j.u - 1) * j.len; r.lo = r.tlo = j.lo; r.j = null; r.v0 = (r.e.oneway && r.dir < 0 ? 5 : 6.6) + rand() * 2.4; posOn(r.e, r.dir, r.s, r.lo, r); if (r.jx || r.jy) { const W2 = half(r.e) + 0.35; r.lo = clamp(j.lo + r.jx * Math.sin(r.h) - r.jy * Math.cos(r.h), -W2, W2); posOn(r.e, r.dir, r.s, r.lo, r); } r.jx = r.jy = 0; r.hv = r.h; }
       else { const u = j.u, a = (1 - u) * (1 - u), b = 2 * u * (1 - u), d = u * u; { const kk = Math.exp(-1.2 * dt); r.jx = (r.jx || 0) * kk; r.jy = (r.jy || 0) * kk; } r.x = a * j.p0x + b * j.cx + d * j.p1x + r.jx; r.y = a * j.p0y + b * j.cy + d * j.p1y + r.jy; r.h = r.hv = Math.atan2(2 * (1 - u) * (j.cy - j.p0y) + 2 * u * (j.p1y - j.cy), 2 * (1 - u) * (j.cx - j.p0x) + 2 * u * (j.p1x - j.cx)); }
     } else {
       r.s += ds; const dl = clamp(r.tlo - r.lo, -1, 1) * Math.min(1.7, 0.25 * r.v) * dt, mv = Math.abs(r.tlo - r.lo) < Math.abs(dl) ? r.tlo - r.lo : dl; r.lo += mv;
-      if (r.s >= L - rEnd) { const nx = nextEdge(r, node); if (!nx) { r.gone = true; return; }
-        const e2 = nx[0], d2 = nx[1], n2 = R.nodes[R.startNode(e2, d2)], s1 = Math.min(e2.len * 0.5, n2.e.length >= 3 ? n2.r : 0.5); slots(e2, d2, sl); const fr = half(e) ? r.lo / half(e) : 0; let lo2 = sl[0], bd = 1e9; for (const s2 of sl) { const dd = Math.abs(s2 - fr * half(e2)); if (dd < bd) { bd = dd; lo2 = s2; } }
-        posOn(e, r.dir, L - rEnd, r.lo, o1); posOn(e2, d2, s1, lo2, o2); const d0x = Math.cos(o1.h), d0y = Math.sin(o1.h), d1x = Math.cos(o2.h), d1y = Math.sin(o2.h), den = d0x * d1y - d0y * d1x; let mx = (o1.x + o2.x) / 2, my = (o1.y + o2.y) / 2;
-        if (Math.abs(den) > 0.2) { const tt = ((o2.x - o1.x) * d1y - (o2.y - o1.y) * d1x) / den; if (tt > 0 && tt < 60) { mx = o1.x + d0x * tt; my = o1.y + d0y * tt; } }
-        r.j = { e: e2, dir: d2, lo: lo2, s1, p0x: o1.x, p0y: o1.y, cx: mx, cy: my, p1x: o2.x, p1y: o2.y, len: Math.max(1, Math.hypot(mx - o1.x, my - o1.y) + Math.hypot(o2.x - mx, o2.y - my)) * 0.95, u: 0, vmax: Math.abs(den) > 0.2 ? 4.6 : 9 }; r.x = o1.x; r.y = o1.y; }
+      if (r.s >= L - rEnd) { const nx = r.pn && r.pnE === e ? r.pn : nextEdge(r, node); r.pn = null; if (!nx) { r.gone = true; return; }
+        r.j = mkArc(r, e, L, rEnd, nx, node); r.x = r.j.p0x; r.y = r.j.p0y; }
       else { posOn(e, r.dir, r.s, r.lo, r); r.hv = r.h - Math.atan2(mv / Math.max(dt, 1e-4), Math.max(r.v, 1.5)); }
     }
-    const yaw = wrapPi(r.hv - ph) / Math.max(dt, 1e-4), wl = r.v < 0.5 ? -0.09 : clamp(-Math.atan(r.v * yaw / 9.81), -0.45, 0.45); r.lean += (wl - r.lean) * Math.min(1, dt * 6); r.z = 0;
+    const yaw = wrapPi(r.hv - ph) / Math.max(dt, 1e-4), wl = r.v < 0.5 ? -0.09 : clamp(-Math.atan(r.v * yaw / 9.81), -0.45, 0.45); r.lean += (wl - r.lean) * Math.min(1, dt * 6); r.z = 0; if (FORE) unstick(r, dt);
   }
   // ------------------------------------------------------------------ a rider on the sidewalk
   let walkers = null, walkT = 0;
@@ -302,11 +334,12 @@ export async function install(g) {
     const t0 = performance.now(), fx = g.focus.x, fy = g.focus.y, t = g.t;
     if (CLUMPS && --clT <= 0) { clT = 240; buildClumps(); if (!PP) people(); hours(); }
     gather(fx, fy); if (--walkT <= 0) { walkT = 6; const S = g.crowd && g.crowd.on && g.crowd.sim; walkers = []; if (S && S.agents) for (const a of S.agents) if (a && !a.gone && Math.abs(a.x - fx) < 230 && Math.abs(a.y - fy) < 230) walkers.push(a); if (g.peds) for (const p of g.peds.list) walkers.push(p); if (!pl.vehicle) walkers.push(pl); }
-    let nr = 0, nw = 0;
+    let nr = 0, nw = 0; frameN++;
     for (let i = out.list.length - 1; i >= 0; i--) { const r = out.list[i], d = Math.hypot(r.x - fx, r.y - fy);
       if (r.mode === 'road' && r.state === 'ride' && d > 150 && (fx - r.x) * Math.cos(r.h) + (fy - r.y) * Math.sin(r.h) < -0.4 * d) { if ((r.far = (r.far || 0) + dt) > 2.5) r.gone = true; } else r.far = 0;
       if (r.gone || d > 290 || (r.state === 'down' && r.t > 9)) { out.list.splice(i, 1); continue; }
-      if (r.sh > 0) r.sh -= dt; if (r.state === 'down') { if (r.kn) flyStep(r, dt); else downStep(r, dt); } else if (r.mode === 'road') { roadStep(r, dt, t); nr++; } else if (r.mode === 'walk') { walkStep(r, dt); nw++; } }
+      let dr = dt; if (FARCUT && d > 100 && r.state === 'ride') { if (r.mode === 'road') nr++; else nw++; if ((frameN + r.id) & 1) continue; dr = dt * 2; }      // far off: every other step, twice as long
+      if (r.sh > 0) r.sh -= dr; if (r.state === 'down') { if (r.kn) flyStep(r, dr); else downStep(r, dr); } else if (r.mode === 'road') { roadStep(r, dr, t); if (dr === dt) nr++; } else if (r.mode === 'walk') { walkStep(r, dr); if (dr === dt) nw++; } }
     if (nr < TARGET) spawnRoad(fx, fy, false); if (nw < WALKERS && rand() < 0.1) spawnWalk(fx, fy, false);
     if (CLUMPS) { clumpHits(); clumpPush(dt, fx, fy); for (const C of out.clumps) for (const q of C.men) if (q.fall) { const F = q.fall; F.t += dt; const k = Math.exp(-3 * dt); F.vx *= k; F.vy *= k; q.x += F.vx * dt; q.y += F.vy * dt; } }
     { const d = performance.now() - t0; out.stats.ms += (d - out.stats.ms) * 0.05; if (d > (out.stats.stepMax || 0)) out.stats.stepMax = d; out.stats.stepSum = (out.stats.stepSum || 0) + d; }
@@ -327,7 +360,13 @@ export async function install(g) {
   const sv0 = g.syncVisuals.bind(g); g.syncVisuals = function (dt) { sv0(dt); try { if (out.on) sync(); else for (const b of batches) b.im.visible = false; } catch (e) { out.on = false; console.log('[riders] stopped: ' + (e && (e.stack || e.message))); } };
   // cars brake for a rider in their way (one alongside, on his own line at the lane's edge, is not in the way)
   const gap0 = TR.gapAhead.bind(TR); TR.gapAhead = function (c, lk) { let gap = gap0(c, lk); if (!out.on) return gap; const cx = Math.cos(c.h), cy = Math.sin(c.h), hf = c.def.len / 2, hw = c.def.wid / 2 + 0.3;
-    for (const r of out.list) { const dx = r.x - c.x, dy = r.y - c.y; if (dx > 40 || dx < -40 || dy > 40 || dy < -40) continue; const f = dx * cx + dy * cy; if (f < 0.5 || f > lk + 0.9 + hf) continue; if (Math.abs(-dx * cy + dy * cx) > hw) continue; const gp = f - hf - 0.9; if (gp < gap) { gap = gp; TR._blk = r; } } return gap; };
+    for (const r of out.list) { const dx = r.x - c.x, dy = r.y - c.y; if (dx > 40 || dx < -40 || dy > 40 || dy < -40) continue; const f = dx * cx + dy * cy; if (f < 0.5 || f > lk + 0.9 + hf) continue; if (Math.abs(-dx * cy + dy * cx) > hw) continue; const gp = f - hf - 0.9; if (gp < gap) { gap = gp; TR._blk = r; if (gp < 3) c._rbL = g.t; } }
+    // on (or about to start) its way across a junction the nose points away from where the car goes: look along that way for a rider
+    const J = FORE ? c.junction || (c.plan && c.plan.sEnt - c.s < 7 ? c.plan : null) : null;
+    if (J) { const u0 = c.junction ? J.u : (c.s - J.sEnt) / J.len, wd = c.def.wid / 2; for (const r of out.list) { if (r.state !== 'ride') continue; const dx = r.x - c.x, dy = r.y - c.y; if (dx > 18 || dx < -18 || dy > 18 || dy < -18) continue;
+      for (let k = 1; k <= 6; k++) { const u = u0 + (k * 2) / J.len; if (u < 0) continue; if (u > 1.2) break; const a = (1 - u) * (1 - u), b = 2 * u * (1 - u), d = u * u, qx = a * J.p0x + b * J.cx + d * J.p1x, qy = a * J.p0y + b * J.cy + d * J.p1y;
+        if (Math.hypot(qx - r.x, qy - r.y) < wd + (k * 2 <= hf + 0.5 ? 0.15 : 0.42)) { const gp = Math.max(0, k * 2 - hf - 0.8); if (gp < gap) { gap = gp; TR._blk = r; c._rbL = g.t; if (c.v < 0.3) { if (!(g.t - (c._rbT || -9) < 0.5)) c._rb0 = g.t; c._rbT = g.t; if (g.t - c._rb0 > (out.stats.carHeld || 0)) out.stats.carHeld = g.t - c._rb0; } } break; } } } }
+    return gap; };
   const pop0 = TR.populate.bind(TR); TR.populate = function (px, py) { const q = pop0(px, py); try { out.list = out.list.filter((r) => r.state !== 'ride' ? true : false); out.populate(px, py); } catch (e) {} return q; };
   out._t = { furnHit, toBike };
   if (CLUMPS) buildClumps(); else furn(); people(); hours(); out.populate(g.focus.x, g.focus.y);

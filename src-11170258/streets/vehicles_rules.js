@@ -164,7 +164,12 @@ export function buildSlots(game, opts = {}) {
       while (s < end) {
         if (oneLane && run >= ONE_LANE_RUN) { s += ONE_LANE_GAP; run = 0; continue; }      // the pocket
         if (r() < 0.035) { s += 8 + r() * 7; run = 0; continue; }                       // driveway, loading zone, bus stop
-        const tall = placed === tallAt, type0 = tall ? (r() < 0.7 ? 'van' : 'stepvan') : weighted(table, r()), type = game._vehOx ? realCast(game, type0, ei * 64 + placed, true) : type0, def = cars[type];     // an openx model is placed by its own length if (!def) { s += 1; continue; }
+        const tall = placed === tallAt, type0 = tall ? (r() < 0.7 ? 'van' : 'stepvan') : weighted(table, r()), type = game._vehOx ? realCast(game, type0, ei * 64 + placed, true) : type0, def = cars[type];     // an openx model is placed by its own length
+        if (!def) {
+          // An unavailable tall vehicle must not reserve this slot for the rest of the row.
+          if (tall) tallAt = -1;
+          s += 1; continue;
+        }
         if (s + def.len > end) { if (def.len > 5) { s += 0.5; continue; } break; }
         if (r() > occ) { s += 5.2 + r(); if (!oneLane) run = 0; continue; }                           // a free space
         const sc = s + def.len / 2; e.line.at(sc, t);
@@ -223,8 +228,10 @@ export function buildSlots(game, opts = {}) {
     }
   };
   const finish = () => { const all = append ? P.slots.filter((s) => !keep.includes(s) && !s.gone).concat(slots) : slots;     /* append: slots the game made meanwhile are kept */
-    P.slots = all; P.grid = new Map();
-    for (const s of all) { if (s.vseed === undefined) s.vseed = Math.floor(hash(Math.round(s.x * 31 + s.y * 17)) * 1e9); const k = Math.floor(s.x / 80) + ',' + Math.floor(s.y / 80); if (!P.grid.has(k)) P.grid.set(k, []); P.grid.get(k).push(s); }
+    P.slots = all; P.grid = new Map(); P.bodyReach = 0;
+    for (const s of all) {
+      P.bodyReach = Math.max(P.bodyReach, Math.hypot(s.def.len, s.def.wid) / 2);
+      if (s.vseed === undefined) s.vseed = Math.floor(hash(Math.round(s.x * 31 + s.y * 17)) * 1e9); const k = Math.floor(s.x / 80) + ',' + Math.floor(s.y / 80); if (!P.grid.has(k)) P.grid.set(k, []); P.grid.get(k).push(s); }
     return { slots: n, skippedLane, offKerb, plaza, shared, atTree, onCross, overlapSkip }; };
   // tiles lane: opts.slice = milliseconds of work between two turns of the page (for a pass that runs while the game is being played); the result is then a promise.
   // The edges are taken in the same order either way, so the slots are the same.

@@ -21,7 +21,7 @@
 // into the GTAO normal/depth target with its own material). The game's own 44 pedestrians are left as they are.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { buildNav } from './crowd/nav.js';
+import { buildNav, furnitureOf } from './crowd/nav.js';
 import { CrowdSim } from './crowd/sim.js';
 import { bakeData } from './crowd/bake.js';
 
@@ -115,16 +115,10 @@ export async function addCrowd(game, opts = {}) {
   try {
     const count = Math.max(10, Math.min(3000, +sel || DEFAULT_COUNT));
     let plazas = []; try { const r = await fetch('assets/streets/ground/plazas.json'); if (r.ok) plazas = await r.json(); } catch (e) {}
-    // the street layer's furniture that stands on the ground but is not in the game's collision world: the walk goes round it
-    const extra = []; try { const K = game.streets && game.streets.parts && game.streets.parts.furniture && game.streets.parts.furniture.kinds;
-      const RAD = [[/^ptable$/, 0.5], [/^pchair$/, 0.33], [/^planter\d/, 0.75], [/^urn\d/, 0.5], [/^rack$/, 0.6], [/^bike(B)?$/, 0.8], [/^bikeShare$/, 0.85], [/^dock$/, 0.5], [/^dockKiosk$/, 0.45], [/^benchP$/, 0.9], [/^(pbin|basket|basketFull|newsbox)$/, 0.38], [/^(cone|delin)$/, 0.22], [/^aframe$/, 0.38], [/^block$/, 0.65], [/^cart$/, 1.3], [/^kiosk$/, 1.1], [/^shelter$/, 1.5], [/^cab$/, 0.5], [/^(busstop|meter|spost|psign|psignP|armsign|umbrella|umbrellaC|umbrellaV1|umbrellaV2|sunsh)$/, 0.14]];
-      if (K) for (const name in K) { const m = RAD.find((q) => q[0].test(name)); if (!m) continue; for (const it of K[name].list) { if (it[2] > 1) continue; const sc = it[4] && typeof it[4].s === 'number' ? it[4].s : 1, r = m[1] * sc; extra.push({ x: it[0], y: it[1], r });
-        if (/^(bike|bikeB|bikeShare|benchP|shelter|cart)$/.test(name)) { const c = Math.cos(it[3]), sn = Math.sin(it[3]), L = /shelter/.test(name) ? 1.4 : 0.55; extra.push({ x: it[0] + c * L, y: it[1] + sn * L, r }, { x: it[0] - c * L, y: it[1] - sn * L, r }); } } } } catch (e) { console.log('[crowd] furniture not read: ' + e.message); }
-    // where one can sit: the street layer's plaza chairs (seat 0.45 m up, the chair faces its own +X) and park benches (two places each)
-    const seats = []; try { const K = game.streets && game.streets.parts && game.streets.parts.furniture && game.streets.parts.furniture.kinds;
-      if (K && K.pchair) for (const it of K.pchair.list) { const o = it[4]; if (o && o.tilt && (Math.abs(o.tilt[0]) > 0.3 || Math.abs(o.tilt[1]) > 0.3)) continue; seats.push({ x: it[0], y: it[1], z: it[2], h: it[3], seat: 0.452 * (o && typeof o.s === 'number' ? o.s : 1) }); }
-      if (K && K.benchP) for (const it of K.benchP.list) seats.push({ x: it[0], y: it[1], z: it[2], h: it[3] - Math.PI / 2, seat: 0.465, bench: true });
-    } catch (e) {}
+    let furniture;
+    try { furniture = furnitureOf(game); }
+    catch (e) { console.log('[crowd] furniture not read: ' + e.message); furniture = { extra: [], seats: [] }; }
+    const { extra, seats } = furniture;
     const tN = performance.now(), nav = buildNav(game, plazas, extra); out.report.furniture = extra.length; out.report.seats = seats.length; out.report.nav_ms = Math.round(performance.now() - tN); Object.assign(out.report, { ways: nav.report.ways, km: nav.report.km, crossings: nav.report.crossings });
     let cast = null; const tC = performance.now(), perf = (k) => !(P && (P.get(k) === '0' || P.get('crowdperf') === '0'));
     const { CrowdRender, smoothOf } = await import('./crowd/render.js');
@@ -137,6 +131,20 @@ export async function addCrowd(game, opts = {}) {
     const render = new CrowdRender(game, sim, cast, opts); Object.assign(out.report, render.report);
     for (const c of cast.chars) if (c.keepParent) c.keepParent.add(c.root);      // the kit's own figures go back where they were
     Object.assign(out, { on: true, nav, sim, render, count, group: render.group });
+    const furnitureJobs = [];
+    out.refreshFurniture = (region) => {
+      const { extra, seats } = furnitureOf(game);
+      // Walking bands sample up to 13 m from each route. Include seam neighbors.
+      const nearby = region && (w => {
+        const end = w.b || { x: w.ax, y: w.ay };
+        return Math.max(w.ax, end.x) >= region[0] - 16 && Math.min(w.ax, end.x) <= region[2] + 16 &&
+               Math.max(w.ay, end.y) >= region[1] - 16 && Math.min(w.ay, end.y) <= region[3] + 16;
+      });
+      furnitureJobs.push(nav.refresh(extra, nearby));
+      sim.addSeats(seats);
+      out.report.furniture = extra.length;
+      out.report.seats = sim.seats.length;
+    };
     // --- the hooks
     // people/crowd-perf: the frame loop takes up to four world steps a frame when the frame rate is low, and the sim ran in each: the slower the
     // machine, the more of its frame the crowd took. Now once a drawn frame, with the time that passed (two halves if that is over 1/20 s).
@@ -157,6 +165,7 @@ export async function addCrowd(game, opts = {}) {
     out.settle = (secs = 10) => { sim.cx = 1e9; for (let i = 0; i < secs * 60; i++) sim.step(1 / 60); };
     const render0 = world.render.bind(world);
     world.render = function (...a) {
+      if (furnitureJobs.length && furnitureJobs[0](2)) furnitureJobs.shift();
       stepOnce();
       if (out.on && render.group.visible) {
         cam.getWorldDirection(dir); { const hl = Math.hypot(dir.x, dir.z); if (hl > 1e-4) { dir.x /= hl; dir.z /= hl; } else { dir.x = last.fx; dir.z = last.fz; } }      /* (gameplay/people, Nov 12, public report 075004-16a733: the HEADING is compared, not the 3D direction: looking down steeper than 57 degrees made x*x + z*z < 0.3, so every frame counted as a camera cut and ran settle(10) = 600 crowd steps a frame: 65 -> 2 fps standing over anything) */
@@ -169,7 +178,7 @@ export async function addCrowd(game, opts = {}) {
     };
     const gap0 = game.traffic.gapAhead.bind(game.traffic), tr = game.traffic;
     tr.gapAhead = function (c, look) {
-      let gap = gap0(c, look); const R = sim.road; if (!out.on || !R.length) return gap;
+      let gap = gap0(c, look); const R = sim.road; if (!out.on || c.junction || !R.length) return gap;
       const fx = Math.cos(c.h), fy = Math.sin(c.h), half = c.def.len / 2;
       for (const q of R) { const dx = q.x - c.x, dy = q.y - c.y, f = dx * fx + dy * fy; if (f < 0.5 || f > look + 0.4 + half) continue; if (Math.abs(-dx * fy + dy * fx) > 1.25 + 0.24) continue; const gp = f - half - 0.4; if (gp < gap) { gap = gp; tr._blk = q; } }
       return gap;

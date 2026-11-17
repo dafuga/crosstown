@@ -25,11 +25,19 @@ function kit(game) {
   for (const x of [-0.86, 0, 0.86]) { box(0.035, 0.43, 0.035, x, 0.215, 0.20, 0, IRON); box(0.035, 0.85, 0.035, x, 0.42, -0.24, -0.1, IRON); box(0.035, 0.035, 0.46, x, 0.40, -0.01, 0, IRON);
     if (x !== 0) parts.push([new THREE.TorusGeometry(0.19, 0.016, 5, 14), IRON, M(x, 0.62, 0.0, 0, Math.PI / 2, 0)]); }
   const bench = merged(parts);
+  // Cover each quarter of the slats, including the rear corners, in plan view.
+  bench.computeBoundingBox();
+  const bounds = bench.boundingBox;
+  const step = (bounds.max.x - bounds.min.x) / 4;
+  const midZ = (bounds.min.z + bounds.max.z) / 2;
+  const benchRadius = Math.hypot(step / 2, (bounds.max.z - bounds.min.z) / 2);
+  const benchCenters = Array.from({ length: 4 }, (_, i) =>
+    new THREE.Vector3(bounds.min.x + (i + 0.5) * step, 0, midZ));
   const bp = [[new THREE.CylinderGeometry(0.30, 0.25, 0.04, 12), GREEN, M(0, 0.02, 0)], [new THREE.CylinderGeometry(0.31, 0.31, 0.04, 12), GREEN, M(0, 0.86, 0)]]; for (let k = 0; k < 14; k++) { const a = k / 14 * Math.PI * 2; bp.push([new THREE.BoxGeometry(0.07, 0.84, 0.012), GREEN, M(Math.cos(a) * 0.285, 0.44, Math.sin(a) * 0.285, 0, -a + Math.PI / 2, 0)]); }
   const bin = merged(bp);
   for (const g of [lamp, bench, bin]) g.userData.shared = true;
   const mat = lit(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.15 }), game.world.shared, { key: 'prop' });
-  KIT = { geo: { lamp, bench, bin }, mat, r: { lamp: 0.2, bench: 0.55, bin: 0.32 } };
+  KIT = { benchCenters, benchRadius, geo: { lamp, bench, bin }, mat, r: { lamp: 0.2, bench: 0.55, bin: 0.32 } };
   return KIT;
 }
 
@@ -37,9 +45,18 @@ function kit(game) {
 export function build(game, props) {
   const K = kit(game), T = game.terrain, group = new THREE.Group(); group.name = 'park_props';
   const by = {}; for (const p of props || []) if (K.geo[p.kind]) (by[p.kind] = by[p.kind] || []).push(p);
-  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), s = new THREE.Vector3(1, 1, 1);
+  const center = new THREE.Vector3(), m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), s = new THREE.Vector3(1, 1, 1);
   for (const kind in by) { const L = by[kind], im = new THREE.InstancedMesh(K.geo[kind], K.mat, L.length); im.name = 'park_' + kind; im.castShadow = kind !== 'bin'; im.receiveShadow = true;
-    L.forEach((p, k) => { e.set(0, (p.h || 0) + (kind === 'bench' ? Math.PI / 2 : 0), 0); q.setFromEuler(e); v.set(p.x, BASE + T.h(p.x, p.y), -p.y); m4.compose(v, q, s); im.setMatrixAt(k, m4); game.statics.addCircle(p.x, p.y, K.r[kind], 'furniture'); });
+    L.forEach((p, k) => { e.set(0, (p.h || 0) + (kind === 'bench' ? Math.PI / 2 : 0), 0); q.setFromEuler(e); v.set(p.x, BASE + T.h(p.x, p.y), -p.y); m4.compose(v, q, s); im.setMatrixAt(k, m4); if (kind === 'bench' && game.P.get('parkcol') !== '0') {
+        for (const local of K.benchCenters) {
+          center.copy(local).applyMatrix4(m4);
+          const circle = game.statics.addParkCircle(center.x, -center.z, K.benchRadius, 'bench');
+          circle.benchOwner = p;
+          circle.benchAlong = (center.x - p.x) * m4.elements[0] + (center.z + p.y) * m4.elements[2];
+          circle.benchDX = m4.elements[0]; circle.benchDY = -m4.elements[2];
+        }
+      } else if (kind === 'lamp' && game.P.get('parkcol') !== '0') game.statics.addParkCircle(p.x, p.y, K.r[kind], 'furniture');
+      else game.statics.addCircle(p.x, p.y, K.r[kind], 'furniture'); });
     im.instanceMatrix.needsUpdate = true; im.computeBoundingSphere(); group.add(im); }
   return group;
 }
