@@ -85,6 +85,7 @@ export function addRockets(heli, ctx) {
   }
   function step(dt) {
     S.t += dt; S.cool = Math.max(0, S.cool - dt);
+    { const tod = g.night && typeof g.night.tod === 'number' ? g.night.tod : 12.5, e = Math.cos((tod - 12.5) * Math.PI / 12), u = Math.max(0, Math.min(1, (e + 0.15) / 0.5)), d = 0.07 + 0.93 * u * u * (3 - 2 * u); if (d !== S.day) { S.day = d; puffs.setDay(d); } }     /* by the game's clock (sky/night.js): smoke and trail are lit by the day, dark at night */
     if (S.reload > 0) { S.reload -= dt; if (S.reload <= 0) { S.ammo = CLIP; S.reload = 0; } }
     const fl = flying();
     if (fl) {

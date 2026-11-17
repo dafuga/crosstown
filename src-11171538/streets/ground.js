@@ -10,6 +10,10 @@
 // Replaces at load: the materials of road_* and grass_*; hides sidewalk_*, curb_*, marks_* of the lead's city (they are rebuilt here).
 import * as THREE from 'three';
 import { BAKE_LIGHT_GLSL } from '../facade.js';
+/* merge lane batch 9: parkside.js is fetched only on a map that can use it (one of the uptown lane's sets in city.meta.sets, or one of its four switches in the address); every other map gets the same empty answer parkside() gives there, with no request */
+const upSide = async (game) => { if (game.__parkside) return game.__parkside; const Q = game.P, has = (k) => !!(Q && Q.get && Q.get(k) !== null);
+  if ((game.city && game.city.meta && (game.city.meta.sets || []).some((s) => /^u\d/.test((s && s.set) || ''))) || has('pkside') || has('hexwalk') || has('pkbench') || has('pkwall')) return (await import('./parkside.js')).parkside(game);
+  return (game.__parkside = { hex: false, bench: false, wall: false, wallH: 1.3, segs: [], strips: [], byExt: new Map(), inStrip: () => false, report: { segs: 0 } }); };
 import { waterOf, cutBlocks, landBase, waterInit } from './water.js';     /* tiles lane: the water of a city that lists it (city.water) */
 import { WET_DECL, WET_MAIN, WET_U } from '../sky/wet.glsl.js';     /* progress/night: wet roads in the rain */
 
@@ -1073,6 +1077,33 @@ function mkMat(shared, U, o) {
 }
 
 const ASPH_DEF = [0.4, 0.55, 0.6, 0.7];     // handoff-road: level of drawn asphalt by day, grazing-angle paling, make-good slab level, level at night (set from stills: README there)
+// uptown (parkside): hexagonal asphalt blocks where the city-wide mask says "outside Central Park's wall" (tUpHex; see add()). Put in front of FS_SIDEWALK's last
+// colour line when the map has such a sidewalk and ?hexwalk is not 0. 8 inch blocks (0.2032 m across the flats) laid in the frame of the kerb, each with its own worn
+// tone, a few darker (tar-patched) and a few paler ones, dark open joints near the eye that melt into the mean tone far off, a slight tilt per block for the sun.
+const UP_HEX_AT = '  diffuseColor.rgb = col;\n';
+const UP_HEX = /* glsl */`
+  { vec2 hxu = (m - uUpHexR.xy) / uUpHexR.zw; float hxM = smoothstep(0.42, 0.58, texture2D(tUpHex, hxu).r);
+    if (hxM > 0.0) {
+      vec2 hq = grot(m, ang) / 0.2032 + 0.035 * (vec2(gvn(m * 0.9 + 3.0), gvn(m * 0.9 + 17.0)) - 0.5) * 6.0;      // the courses wander a little over metres
+      vec2 hr = vec2(1.0, 1.7320508), hh2 = hr * 0.5, ha = mod(hq, hr) - hh2, hb = mod(hq - hh2, hr) - hh2, hv = dot(ha, ha) < dot(hb, hb) ? ha : hb, hid = hq - hv;
+      float hed = 0.5 - max(abs(hv.x), dot(abs(hv), vec2(0.5, 0.8660254)));      // 0 on the joint, 0.5 at the middle of a block
+      vec3 hh = gh32(floor(hid * 4.0 + 0.5) + 31.0);
+      float hpx = px / 0.2032, hfar = smoothstep(0.10, 0.45, hpx);
+      float htone = 0.84 + 0.32 * hh.x + (hh.y > 0.93 ? -0.22 : (hh.y < 0.05 ? 0.22 : 0.0)); htone = mix(htone, 1.0, hfar);
+      vec3 hcol = vec3(0.082, 0.079, 0.074) * htone * vec3(1.0 + 0.06 * (hh.z - 0.5), 1.0, 1.0 - 0.08 * (hh.z - 0.5));
+      hcol *= (0.62 + 0.76 * agg) * (0.80 + 0.40 * grain) * (0.88 + 0.24 * big) * (0.92 + 0.16 * mid);
+      float hj = 1.0 - smoothstep(0.022, 0.022 + 1.2 * hpx + 0.012, hed); hj = mix(hj, 0.13, hfar);      // the joint: sand and dirt, darker
+      hcol *= 1.0 - 0.52 * hj * (0.6 + 0.8 * gvn(hid * 0.7 + 5.0));
+      hcol *= 1.0 - 0.10 * (1.0 - smoothstep(0.0, 0.16, hed)) * (1.0 - hfar);      // edges of a block wear rounder and hold dust
+      float hmoss = smoothstep(0.62, 0.80, gfbmT(m * 0.21 + 140.0)) * (1.0 - smoothstep(0.0, 0.10, hed)) * (1.0 - hfar);      // green in the joints where it stays damp
+      hcol = mix(hcol, vec3(0.085, 0.105, 0.045), 0.55 * hmoss);
+      hcol *= vec3(1.0, 0.985, 0.95) * (1.0 - 0.20 * shade) * (1.0 - 0.20 * kerbDirt * (0.3 + 1.4 * mid)) * (1.0 - 0.20 * stain);
+      hcol = mix(hcol, mix(hcol * 0.36 + 0.012, vec3(0.42, 0.41, 0.39), pale), gum * gAge * 0.8);
+      col = mix(col, hcol, hxM);
+      gNrm = normalize(vec3((hh.xz - 0.5) * 0.16 + vec2(hv.x, hv.y) * 0.10 * smoothstep(0.20, 0.0, hed), 1.0)); gNs = hxM * (1.0 - hfar);
+    } }
+`;
+
 const FS_SIDEWALK = /* glsl */`
   vec4 F = gfield(m);
   float dK = F.r * ${FIELD_D}.0, dB = F.b * ${FIELD_DB}.0, dN = F.a * ${FIELD_DN}.0;
@@ -1710,10 +1741,15 @@ export async function add(game, ctx) {
     tAsC: { value: tAsC }, tAsN: { value: tAsN }, tPaint: { value: tPaint }, tNoise: { value: (world.__groundNoise = world.__groundNoise || renderNoise(renderer)).texture }, tMacro: { value: tMacro }, tPhoto: { value: tPack1 }, uHN: { value: new THREE.Vector4(-240.1, -353.8, -201.4, -374.4) },
     uHC: { value: new THREE.Vector4(...hist.cap) }, uHR: { value: new THREE.Vector2(30, 36) }, uHD: { value: new THREE.Vector4(...hist.n23, 0, 0) }, uHX: { value: new THREE.Vector4(...hist.nx) }, uField: { value: new THREE.Vector4(fx, fy, C.grid * D2R, 0) }, uFieldC: { value: new THREE.Vector2(fcx, fcy) } };
 
+  // uptown (parkside): where the sidewalk outside Central Park's wall is, as ONE small picture for the whole city (parkside.js mask(): white = hexagonal blocks), shared by
+  // every area's sidewalk material. Not the area's own field: a block as long as the park is drawn by one area far outside that area's field box. ?hexwalk=0 = shader and uniforms as before.
+  const upPS = await upSide(game), upMask = upPS.hex ? (world.__upHexMask = world.__upHexMask || upPS.mask()) : null, upHexOn = !!upMask;
+  if (upHexOn) { if (!upMask.tex) { const t = new THREE.CanvasTexture(upMask.canvas); t.colorSpace = THREE.NoColorSpace; t.minFilter = t.magFilter = THREE.LinearFilter; t.generateMipmaps = false; upMask.tex = t; } U.tUpHex = { value: upMask.tex }; U.uUpHexR = { value: new THREE.Vector4(...upMask.rect) }; }
+  const upWalk = (v) => (upHexOn ? { ...v, name: 'walkhx', fsDecl: v.fsDecl + ' uniform sampler2D tUpHex; uniform vec4 uUpHexR;', fsMain: v.fsMain.replace(UP_HEX_AT, UP_HEX + UP_HEX_AT) } : v);
   const vary = (decl, body) => ({ vsDecl: decl.map((d) => `attribute ${d}; varying ${d.replace(' a', ' v')};`).join(' '), vsMain: body, fsDecl: decl.map((d) => `varying ${d.replace(' a', ' v')};`).join(' ') });
   const mats = {
-    sidewalk: mkMat(shared, U, { name: 'walk', ...vary(['vec4 aS'], 'vS = aS;'), fsMain: FS_SIDEWALK }),
-    band: mkMat(shared, U, { name: 'walk', ...vary(['vec4 aS'], 'vS = aS;'), fsMain: FS_SIDEWALK, setup: (m) => { m.polygonOffset = true; m.polygonOffsetFactor = -1; m.polygonOffsetUnits = -2; } }),
+    sidewalk: mkMat(shared, U, upWalk({ name: 'walk', ...vary(['vec4 aS'], 'vS = aS;'), fsMain: FS_SIDEWALK })),     /* uptown (parkside): upWalk */
+    band: mkMat(shared, U, upWalk({ name: 'walk', ...vary(['vec4 aS'], 'vS = aS;'), fsMain: FS_SIDEWALK, setup: (m) => { m.polygonOffset = true; m.polygonOffsetFactor = -1; m.polygonOffsetUnits = -2; } })),     /* uptown (parkside): upWalk */
     kerb: mkMat(shared, U, { name: 'kerb', ...vary(['vec4 aK'], 'vK = aK;'), fsMain: FS_KERB, setup: (m) => { m.side = THREE.DoubleSide; m.polygonOffset = true; m.polygonOffsetFactor = -2; m.polygonOffsetUnits = -4; } }),
     road: mkMat(shared, U, { name: 'road', vsDecl: '', vsMain: '', fsDecl: '', fsMain: FS_ROAD, graze: 0.55 }),
     ribbon: (() => { const v = vary(['vec4 aL', 'vec4 aE', 'vec4 aS2'], 'vL = aL; vE = aE; vS2 = aS2;'); v.fsDecl = '#define RIBBON\n' + v.fsDecl; return mkMat(shared, U, { name: 'ribbon', ...v, fsMain: FS_ROAD, graze: 0.55, setup: (m) => { m.polygonOffset = true; m.polygonOffsetFactor = -1; m.polygonOffsetUnits = -2; } }); })(),

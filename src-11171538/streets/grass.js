@@ -56,30 +56,35 @@ function noiseTexture() {            // 256 px, tileable, smooth; lattice of 16 
 }
 
 // squared euclidean distance transform (Felzenszwalb): for each pixel, distance in pixels to the nearest pixel with on[i] != 0
-function edt(on, W, H) {
+function* edt(on, W, H) {     /* uptown: a generator, see parkMask */
   const INF = 1e20, n = Math.max(W, H), f = new Float64Array(n), dd = new Float64Array(n), v = new Int32Array(n), z = new Float64Array(n + 1), g = new Float32Array(W * H);
   const pass = (len) => { let k = 0; v[0] = 0; z[0] = -INF; z[1] = INF;
     for (let q = 1; q < len; q++) { let s; for (;;) { const p = v[k]; s = ((f[q] + q * q) - (f[p] + p * p)) / (2 * q - 2 * p); if (s <= z[k] && k > 0) k--; else break; } k++; v[k] = q; z[k] = s; z[k + 1] = INF; }
     k = 0; for (let q = 0; q < len; q++) { while (z[k + 1] < q) k++; const p = v[k]; dd[q] = (q - p) * (q - p) + f[p]; } };
-  for (let x = 0; x < W; x++) { for (let y = 0; y < H; y++) f[y] = on[y * W + x] ? 0 : INF; pass(H); for (let y = 0; y < H; y++) g[y * W + x] = dd[y]; }
-  for (let y = 0; y < H; y++) { for (let x = 0; x < W; x++) f[x] = g[y * W + x]; pass(W); for (let x = 0; x < W; x++) g[y * W + x] = Math.sqrt(dd[x]); }
+  for (let x = 0; x < W; x++) { if ((x & 63) === 63) yield; for (let y = 0; y < H; y++) f[y] = on[y * W + x] ? 0 : INF; pass(H); for (let y = 0; y < H; y++) g[y * W + x] = dd[y]; }
+  for (let y = 0; y < H; y++) { if ((y & 63) === 63) yield; for (let x = 0; x < W; x++) f[x] = g[y * W + x]; pass(W); for (let x = 0; x < W; x++) g[y * W + x] = Math.sqrt(dd[x]); }
   return g;
 }
 // signed distance in metres (inside positive), packed to 0..255 around 128
-function sdfBytes(alpha, W, H, res, out, ch) {
-  const inside = new Uint8Array(W * H), outside = new Uint8Array(W * H); for (let i = 0; i < W * H; i++) { const a = alpha[i * 4] > 127 ? 1 : 0; inside[i] = a; outside[i] = 1 - a; }
-  const dOut = edt(outside, W, H), dIn = edt(inside, W, H);          // for inside pixels: distance to the nearest outside pixel, and the reverse
-  const d = new Float32Array(W * H), t = new Float32Array(W * H); for (let i = 0; i < W * H; i++) d[i] = (inside[i] ? dOut[i] - 0.5 : -(dIn[i] - 0.5)) * res;
+function* sdfBytes(alpha, W, H, res, out, ch) {
+  const inside = new Uint8Array(W * H), outside = new Uint8Array(W * H); for (let i = 0; i < W * H; i++) { const a = alpha[i * 4] > 127 ? 1 : 0; inside[i] = a; outside[i] = 1 - a; if ((i & 262143) === 262143) yield; }
+  const dOut = yield* edt(outside, W, H), dIn = yield* edt(inside, W, H);          // for inside pixels: distance to the nearest outside pixel, and the reverse
+  const d = new Float32Array(W * H), t = new Float32Array(W * H); yield; for (let i = 0; i < W * H; i++) d[i] = (inside[i] ? dOut[i] - 0.5 : -(dIn[i] - 0.5)) * res; yield;
   for (let k = 0; k < 2; k++) {          // soften the pixel staircase of the binary edge: [1 2 1] twice each way
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const i = y * W + x; t[i] = (d[y * W + Math.max(0, x - 1)] + 2 * d[i] + d[y * W + Math.min(W - 1, x + 1)]) / 4; }
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const i = y * W + x; d[i] = (t[Math.max(0, y - 1) * W + x] + 2 * t[i] + t[Math.min(H - 1, y + 1) * W + x]) / 4; } }
-  for (let i = 0; i < W * H; i++) out[i * 4 + ch] = Math.max(0, Math.min(255, Math.round(127.5 + d[i] / MASK_D * 255)));
+    for (let y = 0; y < H; y++) { if ((y & 127) === 127) yield; for (let x = 0; x < W; x++) { const i = y * W + x; t[i] = (d[y * W + Math.max(0, x - 1)] + 2 * d[i] + d[y * W + Math.min(W - 1, x + 1)]) / 4; } }
+    for (let y = 0; y < H; y++) { if ((y & 127) === 127) yield; for (let x = 0; x < W; x++) { const i = y * W + x; d[i] = (t[Math.max(0, y - 1) * W + x] + 2 * t[i] + t[Math.min(H - 1, y + 1) * W + x]) / 4; } } }
+  yield; for (let i = 0; i < W * H; i++) { out[i * 4 + ch] = Math.max(0, Math.min(255, Math.round(127.5 + d[i] / MASK_D * 255))); if ((i & 262143) === 262143) yield; }
 }
 
 function pip(x, y, r) { let c = false; for (let i = 0, j = r.length - 1; i < r.length; j = i++) { const a = r[i], b = r[j]; if ((a[1] > y) !== (b[1] > y) && x < (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0]) c = !c; } return c; }
 
 // the mask of one park: R = lawn signed distance, G = wear under trees, B = paving signed distance, A = sand
-function parkMask(pk, lay, trees, hero, noise) {
+// uptown (row3c, Nov 15): parkMask, sdfBytes and edt are GENERATORS that `yield` every few ms of their work and change nothing else. drainG runs one to its end at once
+// (a load: exactly as before); drainLate runs it in slices of about 6 ms, one slice a frame (an area built during play: Central Park's seven lawns in u3f held the page
+// 243 .. 509 ms EACH, the stall 7 s after ready; CONTRACT rule 8, 50 ms). ?gyield=0 = at once, as before.
+const drainG = (g) => { let r; while (!(r = g.next()).done); return r.value; };
+const drainLate = async (g, ms = 6) => { let r, t = performance.now(); drainLate.max = 0; while (!(r = g.next()).done) if (performance.now() - t > ms) { drainLate.max = Math.max(drainLate.max, performance.now() - t); await new Promise((res) => { let d = false; const go = () => { if (!d) { d = true; res(); } }; requestAnimationFrame(go); setTimeout(go, 100); }); t = performance.now(); } return r.value; };
+function* parkMask(pk, lay, trees, hero, noise) {
   const xs = pk.ext.map((p) => p[0]), ys = pk.ext.map((p) => p[1]), M = 3;
   const x0 = Math.min(...xs) - M, y0 = Math.min(...ys) - M, w = Math.max(...xs) + M - x0, h = Math.max(...ys) + M - y0;
   const res = Math.max(hero ? 0.2 : 0.4, Math.max(w, h) / 1536), W = Math.ceil(w / res), H = Math.ceil(h / res);
@@ -92,6 +97,7 @@ function parkMask(pk, lay, trees, hero, noise) {
   const gp = mk(); gp.strokeStyle = gp.fillStyle = '#fff';
   for (const p of paths) { ring(gp, p.p, p.c); gp.lineWidth = PATH_W / res; gp.stroke(); if (p.c && big(p.p) < 900) gp.fill(); }
   for (const a of areas) { if (a.k === 'sand' || a.k === 'water') continue; ring(gp, a.p, true); gp.fill(); gp.lineWidth = (a.k === 'building' ? 5.0 : 0.6) / res; gp.stroke(); }
+  yield;
   // sand
   const gs = mk(); gs.fillStyle = gs.strokeStyle = '#fff'; for (const a of areas) if (a.k === 'sand') { ring(gs, a.p, true); gs.fill(); }
   // lawn: the park, less a bed inside its fence, less paving and sand each with a soil strip
@@ -99,15 +105,16 @@ function parkMask(pk, lay, trees, hero, noise) {
   gl.strokeStyle = gl.fillStyle = '#000'; ring(gl, pk.ext, true); gl.lineWidth = 2 * RIM_W / res; gl.stroke();
   for (const p of paths) { ring(gl, p.p, p.c); gl.lineWidth = (PATH_W + 2 * BED_W) / res; gl.stroke(); if (p.c && big(p.p) < 900) gl.fill(); }
   for (const a of areas) { ring(gl, a.p, true); gl.fill(); gl.lineWidth = ((a.k === 'building' ? 5.0 : 0.6) + 2 * BED_W) / res; gl.stroke(); }
+  yield;
   // wear: bare soil round each trunk, wider under some
-  const gw = mk(); gw.globalCompositeOperation = 'lighter';
-  for (const t of trees) { const r = (NXG ? 2.6 + 5.2 * t.h : 1.6 + 3.8 * t.h) / res, cx = X(t.x), cy = Y(t.y), gr = gw.createRadialGradient(cx, cy, 0, cx, cy, r); const k = Math.round(120 + 135 * t.h2);
+  const gw = mk(); gw.globalCompositeOperation = 'lighter'; let nT = 0;
+  for (const t of trees) { if ((++nT & 127) === 0) yield; const r = (NXG ? 2.6 + 5.2 * t.h : 1.6 + 3.8 * t.h) / res, cx = X(t.x), cy = Y(t.y), gr = gw.createRadialGradient(cx, cy, 0, cx, cy, r); const k = Math.round(120 + 135 * t.h2);
     gr.addColorStop(0, `rgb(${k},${k},${k})`); gr.addColorStop(0.35, `rgb(${k >> 1},${k >> 1},${k >> 1})`); gr.addColorStop(1, '#000'); gw.fillStyle = gr; gw.beginPath(); gw.arc(cx, cy, r, 0, 6.2832); gw.fill(); }
   const out = new Uint8Array(W * H * 4), rd = (g) => g.getImageData(0, 0, W, H).data;
-  sdfBytes(rd(gl), W, H, res, out, 0); sdfBytes(rd(gp), W, H, res, out, 2);
+  yield; { const a = rd(gl); yield; yield* sdfBytes(a, W, H, res, out, 0); } { const a = rd(gp); yield; yield* sdfBytes(a, W, H, res, out, 2); }
   // wear (G), on the CPU once: bare rings under trees, a thinned band along every lawn edge, a few bare patches, fine jitter
-  const wd = rd(gw), sd = rd(gs), ss = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); }; let lawnPx = 0;
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+  const wd = rd(gw); yield; const sd = rd(gs); yield; const ss = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); }; let lawnPx = 0;
+  for (let y = 0; y < H; y++) { if ((y & 7) === 7) yield; for (let x = 0; x < W; x++) {
     const i = y * W + x, mx = x0 + (x + 0.5) * res, my = y0 + (y + 0.5) * res, dL = (out[i * 4] - 127.5) / 255 * MASK_D; let wear = 0;
     if (dL > -0.3) {
       const edgeW = 1 - ss(0, 0.12 + 0.5 * noise(mx / 6 + 4, my / 6 + 4, 2), dL);
@@ -117,7 +124,8 @@ function parkMask(pk, lay, trees, hero, noise) {
       wear = Math.max(0, Math.min(1, Math.max(ring * 1.0, edgeW * 0.85, bare * 0.3) + jit));
     }
     out[i * 4 + 1] = Math.round(wear * 255); out[i * 4 + 3] = sd[i * 4]; if (out[i * 4] > 128) lawnPx++;
-  }
+  } }
+  yield;
   const tex = new THREE.DataTexture(out, W, H, THREE.RGBAFormat, THREE.UnsignedByteType); tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping; tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearMipmapLinearFilter; tex.generateMipmaps = true; tex.colorSpace = THREE.NoColorSpace; tex.needsUpdate = true;
   const sdf = (x, y, ch) => { const px = Math.max(0, Math.min(W - 1, Math.floor((x - x0) / res))), py = Math.max(0, Math.min(H - 1, Math.floor((y - y0) / res))), v = out[(py * W + px) * 4 + ch]; return ch === 0 || ch === 2 ? (v - 127.5) / 255 * MASK_D : v / 255; };
   return { tex, rect: new THREE.Vector4(x0, y0, W * res, H * res), res, W, H, lawnM2: lawnPx * res * res, data: out, sdf, hasPaths: paths.length > 0 && !(lay && lay.nf) };          /* nf: a layout of parks-12.json that wants no edging and no lawn fence (housing greens: kilometres of path) */
@@ -777,7 +785,7 @@ export async function add(game, ctx) {
     if (ctx.late) { if (!group.parent) world.scene.add(group); await new Promise((r) => { let d = false; const go = () => { if (!d) { d = true; r(); } }; requestAnimationFrame(go); setTimeout(go, 100); }); tPark = performance.now(); }     /* an area built during play: one park a frame, each shown (its mask sent to the card) as it is made */
     const xs = pk.ext.map((p) => p[0]), ys = pk.ext.map((p) => p[1]), bb = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
     const mine = trees.filter((t) => t.x > bb[0] && t.x < bb[2] && t.y > bb[1] && t.y < bb[3] && pip(t.x, t.y, pk.ext));
-    const mask = parkMask(pk, Q && Q.get('glay') === 'pos' ? lay.parks && lay.parks[i] : layOf(pk, bb), mine, hero(pk), GN.sample);     /* ?glay=pos: by list position, as before */
+    const maskG = parkMask(pk, Q && Q.get('glay') === 'pos' ? lay.parks && lay.parks[i] : layOf(pk, bb), mine, hero(pk), GN.sample), tM0 = performance.now(), mask = ctx.late && !(Q && Q.get('gyield') === '0') ? await drainLate(maskG) : drainG(maskG), tM1 = performance.now();     /* uptown: a late area's mask is made a slice a frame (?gyield=0 = at once) */     /* ?glay=pos: by list position, as before */
     const U = { ...common, ...gU, tMask: { value: mask.tex }, uRect: { value: mask.rect } }; if (Q && Q.get('gnn') === '0') Object.defineProperty(U, 'noNrm', { value: true, enumerable: false });
     const contour = pk.ext.map((p) => new THREE.Vector2(p[0], p[1])), holes = (pk.holes || []).map((h) => h.map((p) => new THREE.Vector2(p[0], p[1])));
     if (THREE.ShapeUtils.isClockWise(contour)) contour.reverse(); for (const h of holes) if (!THREE.ShapeUtils.isClockWise(h)) h.reverse();
@@ -792,7 +800,7 @@ export async function add(game, ctx) {
       if (E.fence && !(Q && Q.get('gposts') === '0')) { const f = new THREE.Mesh(E.fence, fenceMat); f.receiveShadow = true; f.name = 'park_fence_' + i; group.add(f); }
       if (E.wire && !(Q && Q.get('gwire') === '0')) { const w = new THREE.Mesh(E.wire, wireMat); w.name = 'park_wire_' + i; w.renderOrder = 4; group.add(w); }
       tris += E.tris; fenceM += E.fenceM; kerbM += E.kerbM; for (const q of E.segs) fenceSegs.push(q); }
-    parks.push({ i, bb, mask, mesh }); if (ctx.late) { const n = performance.now(); lateSteps.push([pk.name || i, Math.round(n - tPark)]); }
+    parks.push({ i, bb, mask, mesh }); if (ctx.late) { const n = performance.now(); lateSteps.push([pk.name || i, Math.round(n - tPark), Math.round(tM1 - tM0), Math.round(n - tM1), mask.W * mask.H, Math.round(drainLate.max || 0)]); }     /* uptown: + the mask's wall time (frames drawn inside it when it yields), the rest of the step in one piece (mesh, edges), the mask's pixels, the longest slice of the mask */
   }
 
   // blades: two rings round the camera

@@ -21,7 +21,7 @@ export function lateSets(game) {
   const Q = game.P, m = game.city.meta; if (!m.sets || (Q && Q.get('persets') === '0')) return null;
   const tool = !!window.__noStart || !!navigator.webdriver || (Q && (Q.has('demo') || Q.has('capture') || Q.has('shot') || Q.has('play') || Q.get('crowd') === 'none' || Q.get('peds') === '0'));
   const late = Q && Q.get('setslate') === '1' ? true : Q && Q.get('setslate') === '0' ? false : !tool; if (!late) return null;
-  const pl = game.player || { x: -196, y: -214 }, B = bands(m), here = bandOf(B, pl.x, pl.y);
+  const sa = game.world && game.world.startAt, pl = game.player || (sa ? { x: sa[0], y: sa[1] } : { x: -196, y: -214 }), B = bands(m), here = bandOf(B, pl.x, pl.y);
   return { here: B[here].s.set, far: B.filter((b, i) => i !== here).map((b) => b.s.set), edgeHere: (e) => edgeOf(B, e) === here, edgeFar: (e) => edgeOf(B, e) !== here, edgeIn: (name) => (e) => B[edgeOf(B, e)].s.set === name };     /* edgeIn(name): the edges of ONE far area (each far area is built in its own turn, when the player comes near it) */
 }
 export function setsOf(city) {

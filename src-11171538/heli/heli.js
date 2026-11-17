@@ -197,7 +197,7 @@ class Heli {
   }
   // the street-level spot: the nearest open ground in a park to where the player starts, clear of trees, poles and walls
   streetPad() {
-    const g = this.g, H = this.heights, sx = -196, sy = -214, h = g.city.meta.grid_deg * Math.PI / 180 + Math.PI / 2, posts = [];
+    const g = this.g, H = this.heights, sa = g.world && g.world.startAt /* uptown: the map's own start point (city.meta.spawn) */, sx = sa ? sa[0] : -196, sy = sa ? sa[1] : -214, h = g.city.meta.grid_deg * Math.PI / 180 + Math.PI / 2, posts = [];
     for (const m of g.propMeshes || []) if (['tree', 'tree2', 'light', 'signal'].includes(m.userData.kind)) for (const p of m.userData.items) posts.push(p);
     let best = null;
     /* tiles lane (helper cost 2), Nov 15: only the parks whose box reaches the 340 m square that is searched, and only the trees and poles within 12.5 m of that square, are tried: no other park can hold one of its points and no other post can spoil one, so the same spot (the search was every park of the city x 12,996 points: 211 ms of the nine-area load, 148 of six). ?padfast=0 = all of them. */
@@ -207,10 +207,10 @@ class Heli {
       const x = sx + dx, y = sy + dy, d = Math.hypot(dx, dy); if ((best && d >= best.d) || !pointInPoly(x, y, park.ext)) continue;
       let ok = true; for (const p of near) if (Math.abs(p[0] - x) < 12.5 && Math.abs(p[1] - y) < 12.5 && Math.hypot(p[0] - x, p[1] - y) < 12.5) { ok = false; break; }
       if (ok) for (let a = 0; a < 8 && ok; a++) for (const r of [4, 8, 14, 20]) if (H.top(x + Math.cos(a * Math.PI / 4) * r, y + Math.sin(a * Math.PI / 4) * r, 1e4) > 0.5 || g.roads.inLane(x + Math.cos(a * Math.PI / 4) * r, y + Math.sin(a * Math.PI / 4) * r, 1)) { ok = false; break; }
-      if (ok) best = { name: 'Madison Square Park', x, y, h, d };
+      if (ok) best = { name: sa ? 'the park' : 'Madison Square Park', x, y, h, d };
     }
     console.log('[heli] street pad: ' + (best ? 'park lawn at ' + best.x + ', ' + best.y + ' (' + posts.length + ' trees and poles checked)' : 'NO open park ground found, falling back to the plaza'));
-    return best || { name: 'Madison Square', x: -196, y: -232, h };
+    return best || (sa ? { name: 'the start', x: sx, y: sy - 18, h } : { name: 'Madison Square', x: -196, y: -232, h });
   }
   // painted landing marks: a circle and an H on each roof pad and the street spot
   padMarks() {

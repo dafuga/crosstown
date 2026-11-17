@@ -170,6 +170,7 @@ export const BOX_STRIDE = 17, GLASS_STRIDE = 27;
 export function layout(C, opts = {}) {
   const B = C.buildings, px = C.meta.px, py = C.meta.py;
   const PB = opts.core || !C.meta.play ? [-px, -py, px, py] : C.meta.play;     /* lanes/shops: the whole playable box (both areas); was core only */
+  const RESW = !opts.noRes && !opts.resBlank;     /* uptown */
   const SH = opts.shops || null, shT = SH ? SH.types : null; let shHit = 0;
   const skippedRuns = SH?.skipStorefrontRuns ? new Set(SH.skipStorefrontRuns) : null;
   const fixedCat = !!(SH && (SH.skipStorefrontRuns || SH.storefrontDockOverrides || SH.plazaStorefronts || SH.storefrontEndBayWidths || SH.storefrontSplits));     /* merge lane, batch 4b: service bays read a survey row only from the corrected catalog, so ?shopsfix=0 lays out exactly as before (shops.json has a row on one service bay, 102664:65) */
@@ -275,24 +276,28 @@ export function layout(C, opts = {}) {
     stats.buildings++;
     // which street each bay faces, and what stands opposite
     for (const P of plazaPieces.length ? pieces.concat(plazaPieces) : pieces) {
-      const e = egrid.nearest(P.x + P.nx * (P.kd + 3), P.y + P.ny * (P.kd + 3), 40); P.ave = e ? !!C.edges[e[1]].ave : false;
+      const e = egrid.nearest(P.x + P.nx * (P.kd + 3), P.y + P.ny * (P.kd + 3), 40); P.ave = e ? !!C.edges[e[1]].ave : false; P.res = e ? !!C.edges[e[1]].res : false;     /* uptown: a street with no shops (Central Park West, Fifth and Park Avenues uptown, the brownstone side streets): edge key res, set in the city data */
       const o = bgrid.ray(P.x + P.nx * 0.5, P.y + P.ny * 0.5, P.nx, P.ny, 90, bi);
       if (o && o[0] > 6) { const ob = B[o[1]]; P.oppD = o[0] + 0.5; P.oppH = ob.h; P.oppC = lay(o[1]).wall; if (ob.style === 2) P.oppC = [0.08, 0.10, 0.12]; } else { P.oppD = 0; P.oppH = 0; P.oppC = [0, 0, 0]; }
     }
     // roles: a lobby in the middle of the longest front of a big building, a residential entry beside a shop on walk-ups and lofts
     let lobby = null;
     if ((style === 1 || style === 2 || style === 3) && h >= 20 && b.area >= 300) for (const P of pieces) if (P.Lp >= 4 && (!lobby || P.SL - Math.abs(P.mid - P.SL / 2) * 2 > lobby.SL - Math.abs(lobby.mid - lobby.SL / 2) * 2)) lobby = P;
+    if (RESW && lobby && !lobby.res && pieces.some((q) => q.res)) { let l2 = null; for (const P of pieces) if (P.res && P.Lp >= 4 && (!l2 || P.SL - Math.abs(P.mid - P.SL / 2) * 2 > l2.SL - Math.abs(l2.mid - l2.SL / 2) * 2)) l2 = P; if (l2 && l2.SL >= lobby.SL * 0.6) lobby = l2; }     /* uptown: the lobby of a corner apartment house opens on the street with no shops when that front is nearly as long */
     if (lobby) lobby.role = 'lobby';
-    else if ((style === 0 || style === 4 || style === 3) && h > 8) {
-      const P = pieces.find((q) => q.Lp >= 5.2);
+    else if (((style === 0 || style === 4 || style === 3) && h > 8) || (RESW && pieces.some((q) => q.res))) {
+      let P = pieces.find((q) => q.Lp >= 5.2);
+      if (RESW && pieces.some((q) => q.res)) { let P2 = null; for (const q of pieces) if (q.res && q.Lp >= 3.4 && (!P2 || q.Lp > P2.Lp)) P2 = q; if (P2) P = P2; else if (!((style === 0 || style === 4 || style === 3) && h > 8)) P = null; }     /* uptown: a house on a street with no shops has its one door on that street, in its widest bay */
       if (P) { const side = rnd(bid, 701) < 0.5 ? -1 : 1, w = 1.7; pieces.push({ ...P, x: P.x + P.dx * side * (P.Lp - w) / 2, y: P.y + P.dy * side * (P.Lp - w) / 2, Lp: w, role: 'entry', extA: side < 0 ? P.extA : 0, extB: side > 0 ? P.extB : 0, key: P.key + 32 });
         P.x -= P.dx * side * w / 2; P.y -= P.dy * side * w / 2; P.Lp -= w; if (side < 0) P.extA = 0; else P.extB = 0; }
     }
     let prev = null; const mixl = MIXES[style] || MIXES[0];
+    if (RESW) for (const P of pieces) if (P.role === 'entry' && P.res) stats.resEntry = (stats.resEntry || 0) + 1; else if (P.role === 'lobby' && P.res) stats.resLobby = (stats.resLobby || 0) + 1;     /* uptown */
     for (const P of pieces) {
       const r = (k) => rnd(bid, P.key + 1000, k);
       if (!P.role) {
-        if (P.Lp < 2.3) P.role = 'infill';
+        if (P.res && !opts.noRes) P.role = RESW && P.Lp >= 1.9 ? 'reswin' : 'infill';     /* uptown: no shop, gate or loading bay on a residential street: wall with windows ('reswin'); ?resrule=0 = as before, ?resrule=1 = the blank wall of Nov 15 18:03 */
+        else if (P.Lp < 2.3) P.role = 'infill';
         else if (r(1) < (P.ave ? 0.03 : 0.16)) P.role = P.Lp >= 4.4 && !P.ave && r(2) < 0.4 && P.kd < 9 ? 'dock' : 'service';
         else if (r(3) < 0.07) P.role = 'gate';
         else if (r(3) < 0.105) P.role = 'vacant';
@@ -371,6 +376,25 @@ export function layout(C, opts = {}) {
         }
       };
       const stepTile = [0.30 + 0.2 * r(6), 0.29 + 0.18 * r(6), 0.27 + 0.15 * r(6)];
+      if (P.role === 'reswin') {     /* uptown: the ground floor of a house on a street with no shops: wall between the piers, with sash windows like the storeys above (was 'infill', a blank band) */
+        const pr = pproud - 0.06, nW = Math.max(1, Math.round(W / 2.6)), sl = Math.max(0.95, Math.min(1.5, sLo - 1.9)), hd = Math.min(sHi - 0.3, sl + 1.85), ww = Math.min(1.25, W / nW - 0.7), zg = pr - 0.22;
+        so(x0, x1, pr);
+        if (ww < 0.6 || hd - sl < 1.0) { bx(1, x0, x1, 0, sHi, 0, pr, K.MAS, baseCol, ...masP); continue; }
+        bx(1, x0, x1, 0, sl, 0, pr, K.MAS, baseCol, ...masP); bx(1, x0, x1, hd, sHi, 0, pr, K.MAS, baseCol, ...masP);
+        bx(0, x0, x1, 0, 0.4, 0, pr + 0.04, K.MAS, mul(baseCol, 0.85), mas === 1 ? 0 : mas, 0, 0, seed);
+        let xp = x0;
+        for (let k = 0; k < nW; k++) {
+          const cx = x0 + W * (k + 0.5) / nW, wl = cx - ww / 2, wr = cx + ww / 2, mr = (sl + hd) / 2, s1 = rnd(bid, P.key + 2100 + k, 1), s2 = rnd(bid, P.key + 2100 + k, 2);
+          bx(1, xp, wl, sl, hd, 0, pr, K.MAS, baseCol, ...masP); xp = wr;
+          bx(0, wl - 0.08, wr + 0.08, sl - 0.1, sl, 0, pr + 0.07, K.MAS, mul(baseCol, 1.12), 2, 0, 0, seed);     // stone sill
+          F(0, wl, wl + 0.05, sl, hd, zg - 0.03, zg + 0.05); F(0, wr - 0.05, wr, sl, hd, zg - 0.03, zg + 0.05); F(0, wl, wr, hd - 0.05, hd, zg - 0.03, zg + 0.05); F(0, wl, wr, mr - 0.025, mr + 0.025, zg - 0.03, zg + 0.06);
+          bx(0, wl + 0.05, wr - 0.05, sl, hd - 0.05, zg - 0.03, zg, K.PLAIN, [0.03, 0.035, 0.045], 0.12, 0, 0, seed);     // the pane: dark and glossy (the module's glass pane shows a SHOP room behind it: colour blocks in a flat's window, hold of 18:25)
+          if (s1 >= 0.6 && s1 < 0.85) bx(0, wl + 0.05, wr - 0.05, sl, mr - 0.025, zg + 0.001, zg + 0.012, K.PLAIN, [0.52, 0.52, 0.49], 0.95, 0, 0, seed);     // a net curtain over the lower sash
+          if (s1 < 0.6) bx(0, wl + 0.05, wr - 0.05, hd - 0.05 - (hd - sl) * (0.25 + 0.5 * s2), hd - 0.05, zg + 0.001, zg + 0.012, K.PLAIN, s1 < 0.3 ? [0.62, 0.59, 0.52] : [0.45, 0.44, 0.42], 0.9, 0, 0, seed);     // a drawn shade
+        }
+        bx(1, xp, x1, sl, hd, 0, pr, K.MAS, baseCol, ...masP);
+        continue;
+      }
 
       if (P.role === 'service' || P.role === 'dock') {
         so(x0, x1, 0.16);
@@ -594,7 +618,7 @@ export async function add(game, ctx) {
     shared.uHiddenShopSign.value.set(hidden?.x ?? 0, -(hidden?.y ?? 0), hidden?.radius ?? 0, row);
   }
   const { tiles, frames, stats, shops, solid, doors, gars, goods } = layout(     /* interiors: doors */     /* garages */
- C, { noDressing: !hasDressing, shops: shopsJ, core: new URLSearchParams(location.search).get('sfcore') === '1' });
+ C, { noDressing: !hasDressing, shops: shopsJ, core: new URLSearchParams(location.search).get('sfcore') === '1', noRes: new URLSearchParams(location.search).get('resrule') === '0', resBlank: new URLSearchParams(location.search).get('resrule') === '1' /* uptown */ });
   const tex = { mask: makeMask(THREE, shopsJ && shopsJ.names), rooms: makeRooms(THREE), props: makeProps(THREE) };
   const tune = { value: new THREE.Vector4(0.15, 2.8, 0.55, 0.6) };
   const det = await detailArrays(ctx.A); const mSolid = solidMaterial(shared, tex.mask, false, det), mAwn = solidMaterial(shared, tex.mask, true, det), mGlass = glassMaterial(shared, tex, tune);

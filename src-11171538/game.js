@@ -157,9 +157,10 @@ export class Game {
     // rooftop kit: water tanks and plant on mid-rise roofs
     const r = rng(5), extra = { watertower: [], ac: [] }, kitB = new Map();     /* facades lane: kitB = each roof unit's own building, for roofkit.js */
     for (const b of city.buildings) {
-      if (b.part || b.minh > 0 || b.area < 180) continue; const cx = b.poly.reduce((s, p) => s + p[0], 0) / b.poly.length, cy = b.poly.reduce((s, p) => s + p[1], 0) / b.poly.length;
+      if (b.part || b.minh > 0 || b.area < 180) continue; const nkW = extra.watertower.length, nkA = extra.ac.length;     /* uptown: a building a hand-built one replaces (city data key nokit) gets no roof tank or plant: they hung in the air over the lower model; the random draws are still made, so every other roof is as before */
+      const cx = b.poly.reduce((s, p) => s + p[0], 0) / b.poly.length, cy = b.poly.reduce((s, p) => s + p[1], 0) / b.poly.length;
       if (b.h > 22 && b.h < 95 && b.style !== 2 && r() < 0.55) { extra.watertower.push([cx + (r() - 0.5) * 3, cy + (r() - 0.5) * 3, r() * TAU, 0.9 + r() * 0.3, b.h]); kitB.set(extra.watertower[extra.watertower.length - 1], b); }
-      const n = b.area > 600 ? 3 : 1; for (let i = 0; i < n; i++) if (r() < 0.7) { extra.ac.push([cx + (r() - 0.5) * Math.sqrt(b.area) * 0.5, cy + (r() - 0.5) * Math.sqrt(b.area) * 0.5, city.meta.grid_deg * Math.PI / 180 + Math.PI / 2, 1 + r(), b.h]); kitB.set(extra.ac[extra.ac.length - 1], b); }
+      const n = b.area > 600 ? 3 : 1; for (let i = 0; i < n; i++) if (r() < 0.7) { extra.ac.push([cx + (r() - 0.5) * Math.sqrt(b.area) * 0.5, cy + (r() - 0.5) * Math.sqrt(b.area) * 0.5, city.meta.grid_deg * Math.PI / 180 + Math.PI / 2, 1 + r(), b.h]); kitB.set(extra.ac[extra.ac.length - 1], b); } if (b.nokit) { extra.watertower.length = nkW; extra.ac.length = nkA; }
     }
     extra.tree2 = []; city.props.tree = city.props.tree.filter((p) => { if (p[3] > 1.3) { extra.tree2.push([p[0], p[1], p[2], p[3] * 0.7]); return false; } return true; });
     for (const p of city.props.signal) { p[6] = Math.PI; }
@@ -183,7 +184,7 @@ export class Game {
     this.drivers = [];
     if (!this.P.has('nodrivers') && this.kit.person && this.kit.pedKinds) for (const k of this.kit.pedKinds().slice(0, 3)) { let parts = null; try { parts = bakeFigure(this.kit, k, 'drive'); } catch (e) { console.log('[game] no driver figure from ' + k + ': ' + e.message); } if (parts) { const fb = new FigureBatch(w.scene, parts, this.kit.peopleExport ? 8 : 36); fb.who = k; this.drivers.push(fb); } }
     this.hud = new Hud(this); this.sound = new Sound(this);
-    const _sp = (this.P.get('spawn') || '').split(',').map(Number), _sx = _sp.length === 2 && isFinite(_sp[0]) && isFinite(_sp[1]) ? _sp : [-196, -214];     /* brooklyn lane: ?spawn=x,y (map metres) starts the player elsewhere: a set that does not touch the core yet */
+    const _sp = (this.P.get('spawn') || '').split(',').map(Number), _sx = _sp.length === 2 && isFinite(_sp[0]) && isFinite(_sp[1]) ? _sp : (w.startAt || [-196, -214]);     /* uptown: a map that names its own start (city.meta.spawn, read in world.js) starts there when the address gives none */     /* brooklyn lane: ?spawn=x,y (map metres) starts the player elsewhere: a set that does not touch the core yet */
     this.player = { x: _sx[0], y: _sx[1], h: 2.0, vehicle: null, speed: 0, vis: null, animT: 0, enterT: 0 };
     this.missions = new Missions(this);
     if (this.P.get('pedlooks') !== '0') try { (await import('./pedlooks.js')).install(this); } catch (e) { console.log('[pedlooks] not loaded: ' + (e && e.message)); }     // people lane: each close pedestrian body gets its own clothing colour, hair and skin tone (no more clones); ?pedlooks=0 = as before

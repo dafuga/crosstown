@@ -14,6 +14,10 @@
 //     about his feet to the nearest heading that is clear (looked for once at the hit, where the slide will end, while he is still
 //     upright, and checked again as he goes down); a move to a place where he could not lie in any direction is not made.
 // A person at rest costs two compares a step. No three.js, no state but p.pf on the person. Used by: traffic.js, crowd/sim.js.
+import { segmentHitsBox, exitsNearestBoxFace, staticPathBlocked } from '../geo.js';
+import { furnitureCrossing } from '../crowd/nav.js';
+
+const nearbyFurniture = [];
 const R = 0.3, LEN = 1.75, TIP = 0.12, _o = {}, _h = { t: 2, s: null }, _cars = [], _near = [];
 
 // the first collision line the move (ax, ay) -> (bx, by) crosses: _h.t in [0, 1], _h.s the line; false if none
@@ -26,11 +30,17 @@ function first(st, ax, ay, bx, by) {
   _h.t = best; _h.s = bs; return bs !== null;
 }
 // the cars standing near (x, y)
-function standing(g, x, y) {
-  _cars.length = 0; const add = (e) => { if (e && e.def && !e.gone && Math.abs(e.x - x) < 9 && Math.abs(e.y - y) < 9) _cars.push(e); };
+function standing(g, x, y, travel) {
+  _cars.length = 0;
+  const reach = halfDiagonal => travel === undefined ? 9 : Math.max(9, travel + R*Math.SQRT2 + halfDiagonal);
+  const add = e => {
+    if (!e?.def || e.gone) return;
+    const range = reach(Math.hypot(e.def.len, e.def.wid)/2);
+    if (Math.abs(e.x-x) < range && Math.abs(e.y-y) < range) _cars.push(e);
+  };
   if (g.vehicles) for (const e of g.vehicles) if (Math.abs(e.vx || 0) + Math.abs(e.vy || 0) < 0.5) add(e);
   if (g.traffic && g.traffic.cars) for (const e of g.traffic.cars) if (Math.abs(e.v || 0) < 0.5) add(e);
-  if (g.parked && g.parked.near) for (const e of g.parked.near(x, y, 9, _near)) add(e);
+  if (g.parked && g.parked.near) for (const e of g.parked.near(x, y, reach(g.parked.bodyReach || 0), _near)) add(e);
 }
 // is (x, y) inside car e's box grown by m?
 function inBox(e, x, y, m) { const dx = x - e.x, dy = y - e.y, c = Math.cos(e.h), s = Math.sin(e.h); return Math.abs(dx * c + dy * s) < e.def.len / 2 + m && Math.abs(-dx * s + dy * c) < e.def.wid / 2 + m; }
@@ -48,11 +58,24 @@ function turn(st, p, x, y, full, reach, noCars) {
   return false;
 }
 
-export function plainSlide(g, p, dt) {
+function crossesStandingCar(x, y, nx, ny) {
+  const dx = (nx-x)/2, dy = (ny-y)/2;
+  for (const car of _cars) {
+    const c = Math.cos(car.h), s = Math.sin(car.h), mx = x-car.x+dx, my = y-car.y+dy;
+    const u = mx*c+my*s, v = -mx*s+my*c, du = dx*c+dy*s, dv = -dx*s+dy*c;
+    const length = car.def.len/2+R, width = car.def.wid/2+R;
+    if (!segmentHitsBox(u, v, du, dv, length, width)) continue;
+    const epsilon = 8*Number.EPSILON*Math.max(1, Math.abs(x), Math.abs(y), Math.abs(nx), Math.abs(ny));
+    if (!exitsNearestBoxFace(u-du, v-dv, u+du, v+dv, length, width, epsilon)) return true;
+  }
+  return false;
+}
+
+export function plainSlide(g, p, dt, checkWalls, furniture) {
   const st = g.statics, fall = p.fall || 0; let vx = p.vx || 0, vy = p.vy || 0; const sp = Math.hypot(vx, vy), moving = sp >= 0.05;
   if (!moving) { p.vx = p.vy = 0; if (p.pf === 2 || fall < 0.25) return; }       // at rest (or held by a ragdoll, which keeps fall at 0): nothing to do
   if (!st || !st.segs) { p.x += vx * dt; p.y += vy * dt; return; }
-  const full = LEN * (p.scale || 1); standing(g, p.x, p.y);
+  const full = LEN * (p.scale || 1); standing(g, p.x, p.y, checkWalls ? sp*dt + full : undefined);
   if (moving) {
     const ox = p.x, oy = p.y, ml = sp * dt, ux = vx / sp, uy = vy / sp; let nx = ox + vx * dt, ny = oy + vy * dt;
     // the walls: stop a half width short of the first line met, keep half the speed along it
@@ -67,7 +90,15 @@ export function plainSlide(g, p, dt) {
       else { let lo = 0, hi = 1; for (let k = 0; k < 5; k++) { const m = (lo + hi) / 2; if (inCars(ox + (nx - ox) * m, oy + (ny - oy) * m, R)) hi = m; else lo = m; } nx = ox + (nx - ox) * lo; ny = oy + (ny - oy) * lo; }
       vx = vy = 0; }
     // the place he has been given must be reachable in a straight line from where he was: else he stays
-    if (first(st, ox, oy, nx, ny)) { nx = ox; ny = oy; vx = vy = 0; }
+    // Base pedestrians draw their feet from the sidewalk height and fall progress.
+    const footZ = checkWalls && furniture ? (p.z ?? ((st.onSidewalk(ox, oy) ? 0.15 : 0) + TIP * fall)) : undefined;
+    const endFootZ = checkWalls && furniture && p.z == null
+      ? (st.onSidewalk(nx, ny) ? 0.15 : 0) + TIP * Math.min(1, fall + dt * 4)
+      : footZ;
+    if (first(st, ox, oy, nx, ny) ||
+        (checkWalls && crossesStandingCar(ox, oy, nx, ny)) ||
+        (checkWalls && staticPathBlocked(st, ox, oy, nx, ny, true, undefined, undefined, R)) ||
+        checkWalls && furniture && furnitureCrossing(furniture, nearbyFurniture, ox, oy, nx, ny, undefined, R, Math.min(footZ, endFootZ), Math.max(footZ, endFootZ))) { nx = ox; ny = oy; vx = vy = 0; }
     // and he must be able to lie there (turned if need be): else he stays, where he could
     if (nx !== ox || ny !== oy) { const h0 = p.h, r1 = full * Math.sin(1.5 * Math.min(1, fall + dt * 4)); if (!clear(st, nx, ny, p.h, r1) && !turn(st, p, nx, ny, full, r1)) { p.h = h0; nx = ox; ny = oy; vx = vy = 0; } }
     p.x = nx; p.y = ny; p.vx = vx; p.vy = vy;

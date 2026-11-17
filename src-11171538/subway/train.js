@@ -144,7 +144,17 @@ function paintAds(c) { // eight invented advert cards (no real brands), each wit
     c.strokeStyle = '#9da1a6'; c.lineWidth = 3; c.strokeRect(r.x - 1.5, r.y + 1.5, r.w + 3, r.h - 3); });
 }
 
+// Nov 17: every train painted its whole 2048 x 2048 sheet (brushed steel, speckle, floor, seats, adverts: 30 to 45 ms), two to four trains a station, on the frames in which he steps onto the
+// stair. Only the route badge, the destination, the strip and the inside sign differ from train to train (and setRoute repaints just those). The sheet without them is painted once for each
+// kind of car and copied (a few ms); the trains of a kind then share one pattern of speckle, which nobody can tell. ?subsheet=0 = every train its own, as it was.
+const BASES = new Map(), SHARE = !(typeof location !== 'undefined' && /[?&]subsheet=0(&|$)/.test(location.search));
 function paintSheet(D, route, seed) {
+  const cv = document.createElement('canvas'); cv.width = TW; cv.height = TH; const c = cv.getContext('2d'); const key = SHARE ? JSON.stringify(D) : null; let base = SHARE ? BASES.get(key) : null;      /* (D is the car's measures: one key for each kind of car) */
+  if (!base) { base = paintBase(D, SHARE ? 7 : seed).cv; if (SHARE) BASES.set(key, base); }
+  c.drawImage(base, 0, 0); paintBadge(c, REG.BADGE, route); paintDest(c, REG.DEST, route); paintStrip(c, REG.STRIP, route); paintISign(c, REG.ISIGN, route);
+  return { cv, c };
+}
+function paintBase(D, seed) {
   const cv = document.createElement('canvas'); cv.width = TW; cv.height = TH; const c = cv.getContext('2d'); const R = rng32(seed * 7919 + 13);
   c.fillStyle = '#808080'; c.fillRect(0, 0, TW, TH);
   const lin = (y0, y1, stops) => { const g = c.createLinearGradient(0, y0, 0, y1); stops.forEach(([t, col]) => g.addColorStop(t, col)); return g; };
@@ -223,7 +233,7 @@ function paintSheet(D, route, seed) {
     c.fillStyle = lin(r.y + r.h * 0.7, r.y + r.h, [[0, 'rgba(50,42,34,0)'], [1, 'rgba(50,42,34,0.28)']]); c.fillRect(r.x - 3, r.y, r.w + 6, r.h + 3);
     c.restore(); }
   c.fillStyle = '#fff'; c.fillRect(REG.WHITE.x - 4, REG.WHITE.y - 4, REG.WHITE.w + 8, REG.WHITE.h + 8);
-  paintAds(c); paintBadge(c, REG.BADGE, route); paintDest(c, REG.DEST, route); paintStrip(c, REG.STRIP, route); paintISign(c, REG.ISIGN, route);
+  paintAds(c);
   return { cv, c };
 }
 

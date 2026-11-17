@@ -30,7 +30,7 @@ export class Missions {
     this.byName = (a, s) => this.corners.find((c) => c.name.includes(a) && c.name.includes(s));
     this.home = (this.byName('Madison Ave', 'E 26th') || this.corners[0]).node;     // a corner in the middle of the map: every stop must have a way back to it
     // the car for the job: the parked car nearest a spot on 5th Avenue beside Madison Square Park, repainted
-    const want = { x: -165, y: -222 }; let best = null, bd = 1e9;
+    const sa = game.world && game.world.startAt, want = sa ? { x: sa[0], y: sa[1] } /* uptown: a map with its own start point (city.meta.spawn) takes the parked car nearest to it */ : { x: -165, y: -222 }; let best = null, bd = 1e9;
     for (const s of game.parked.slots) { const d = Math.hypot(s.x - want.x, s.y - want.y); if (d < bd) { bd = d; best = s; } }
     const sport = game.kit.cars.sport || best.def; best.type = sport.type; best.def = sport; best.color = 0x8c1010; best.mission = true; this.car = best;
     // the player starts on the pavement a few steps behind it

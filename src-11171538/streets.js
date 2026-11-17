@@ -24,7 +24,7 @@ export async function addStreets(game, opts = {}) {
         // the area the player starts in is built now; the others AFTER the game is ready, one at a time (the load does not wait for streets a player cannot reach
         // for a minute). Stills, films and test tools build everything now, as hero.js does; ?setslate=1 forces the late order, ?setslate=0 the old one.
         const Q = game.P, tool = !!window.__noStart || !!navigator.webdriver || (Q && (Q.has('demo') || Q.has('capture') || Q.has('shot') || Q.has('play') || Q.get('crowd') === 'none' || Q.get('peds') === '0'));
-        const late = Q && Q.get('setslate') === '1' ? true : Q && Q.get('setslate') === '0' ? false : !tool, pl = game.player || { x: -196, y: -214 };
+        const late = Q && Q.get('setslate') === '1' ? true : Q && Q.get('setslate') === '0' ? false : !tool, sa = game.world && game.world.startAt, pl = game.player || (sa ? { x: sa[0], y: sa[1] } : { x: -196, y: -214 });
         const here = all.find((S) => pl.x >= S.play[0] && pl.x <= S.play[2] && pl.y >= S.play[1] && pl.y <= S.play[3]) || all[0];
         const one = async (S, isLate) => { const st = game.statics; if (st) st.owner = S.name; const t1 = performance.now(); try { res[S.name] = (await m.add(game, { ...ctx, city: S.city, set: S, late: !!isLate })) || {};     /* late: built during play (the layer yields between pieces and makes its shaders before it shows) */ } finally { if (st) st.owner = null; } return Math.round(performance.now() - t1); };
         await one(here); for (const S of all) if (S !== here) { if (late) (out.later = out.later || []).push({ part: p, set: S.name, region: S.region, run: () => one(S, true) }); else await one(S); }

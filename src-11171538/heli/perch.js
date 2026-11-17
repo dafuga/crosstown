@@ -14,7 +14,7 @@
 import * as THREE from 'three';
 import { WEAPONS } from '../combat/combat.js';
 
-const HIGH = 15, REACH = 900, ZOOMS = [15, 7.5, 3.75], LONG = ['rifle', 'sniper'];      // ZOOMS: fields of view (degrees): 3x, 6x, 12x of the rifle's own 47
+const HIGH = 8, REACH = 900, ZOOMS = [15, 7.5, 3.75], LONG = ['rifle', 'sniper'];      // ZOOMS: fields of view (degrees): 3x, 6x, 12x of the rifle's own 47
 const SNIPE = { auto: false, rpm: 46, dmg: 600, spread: 0, hip: 0, bloom: 0, bloomMax: 0, force: 3 };
 const _v = new THREE.Vector3(), _d = new THREE.Vector3();
 
@@ -42,14 +42,46 @@ export function addPerch(heli, ctx) {
   function marks() {
     const zD = level(315, 327.5), zR = level(327.5, 345), gh = g.city.meta.grid_deg * Math.PI / 180 + Math.PI / 2, out = [];
     // the terrace mark on the side toward Madison Square (south-west on the map: where the player comes from), the roof mark wherever the roof is widest
-    const d = zD !== null ? patch(zD, [-0.5, -0.87]) : null; if (d) out.push({ name: 'Empire State Building · 86th floor terrace', x: d.x, y: d.y, z: d.z, h: d.wall < 11 ? d.wa + Math.PI / 2 : gh, roof: true, esb: true, size: d.size, wall: d.wall, edge: d.edge });
+    const d = zD !== null ? patch(zD, [-0.5, -0.87]) : null; if (d) out.push({ name: 'Empire State Building · 86th floor terrace', x: d.x, y: d.y, z: d.z, h: d.wall < 11 ? d.wa + Math.PI / 2 : gh, roof: true, esb: true, size: d.size, wall: d.wall, edge: d.edge, wa: d.wa });
     const r = zR !== null ? patch(zR, [0.5, 0.87]) : null; if (r) out.push({ name: 'Empire State Building · roof', x: r.x, y: r.y, z: r.z, h: r.wall < 11 ? r.wa + Math.PI / 2 : gh, roof: true, esb: true, size: r.size, wall: r.wall, edge: r.edge });
     if (!out.length) return false;
+    if (d && DECK) { try { helideck(out[0]); } catch (e) { console.log('[perch] helideck not built: ' + (e && (e.stack || e.message))); } }
     const old = heli.padGroup && heli.padGroup.children[0];
     for (const p of out) { heli.pads.push(p); S.pads.push(p);
       if (old) { const s = p.size / 13, m = new THREE.Mesh(old.geometry, old.material); m.position.set(p.x, p.z + 0.04, -p.y); m.rotation.y = p.h; m.scale.set(s, 1, s); m.receiveShadow = true; m.renderOrder = 3; heli.padGroup.add(m); } }
     console.log('[perch] Empire State Building marks: ' + out.map((p) => p.name.split('· ')[1] + ' at ' + p.x.toFixed(0) + ', ' + p.y.toFixed(0) + ', ' + p.z.toFixed(1) + ' m (mark ' + p.size.toFixed(0) + ' m, wall ' + p.wall + ' m, drop ' + p.edge + ' m)').join('; '));
     return true;
+  }
+  // ---------------------------------------------------------------- 1b. a helideck (Matt, Nov 17 12:47: "Couldn't land on the ESB, so difficult")
+  // The terrace is 8 m wide under a 10.7 m rotor. So a steel deck 13 m square is hung off it at terrace level, reaching 10 m out over the drop: the mark moves to its
+  // middle (9 m clear of the tower wall), the height picture answers the deck's level inside its square (flight, the walk on foot and the cameras all read that),
+  // and on the deck the street's wall lines (the building's own edge runs under it) do not stop his feet. ?perchdeck=0 = the bare terrace as before.
+  const DECK = g.P.get('perchdeck') !== '0';
+  function helideck(p) {
+    const ux = -Math.cos(p.wa), uy = -Math.sin(p.wa), HALF = 6.5, cx = p.x + ux * 3.5, cy = p.y + uy * 3.5, z = p.z + 0.25;      // u: away from the tower wall
+    const inD = (x, y) => { const dx = x - cx, dy = y - cy; return Math.abs(dx * ux + dy * uy) <= HALF && Math.abs(-dx * uy + dy * ux) <= HALF; };
+    const top0 = H.top; H.top = function (x, y, zq) { const t = top0.call(this, x, y, zq); return inD(x, y) && zq > z - 1.5 && t < z ? z : t; };
+    const st = g.statics, res0 = st.resolve; st.resolve = function (x, y, r, out, skip) { if (pl.roof && Math.abs((pl.alt || 0) - z) < 1.2 && r < 0.6 && inD(x, y) && Math.abs(x - pl.x) + Math.abs(y - pl.y) < 4) { out.x = x; out.y = y; return 0; } return res0.call(this, x, y, r, out, skip); };
+    S.deck = { cx, cy, z, ux, uy, half: HALF, inD }; p.x = cx; p.y = cy; p.z = z; p.size = 11; p.wall = (p.wall || 5) + 3.5; p.edge = HALF; p.name = 'Empire State Building · helideck';
+    // the deck as built: plate, a yellow edge line, beams under it, struts back to the wall, green edge lights
+    const G = new THREE.Group(); G.name = 'esbHelideck'; G.position.set(cx, z, -cy); G.rotation.y = Math.atan2(uy, ux);
+    const cv = document.createElement('canvas'); cv.width = cv.height = 512; const c = cv.getContext('2d'); c.fillStyle = '#3b3f43'; c.fillRect(0, 0, 512, 512);
+    for (let i = 0; i < 2600; i++) { c.fillStyle = 'rgba(' + (Math.random() < 0.5 ? '20,22,24' : '110,114,118') + ',' + (0.05 + Math.random() * 0.1) + ')'; c.fillRect(Math.random() * 512, Math.random() * 512, 1 + Math.random() * 5, 1 + Math.random() * 2); }
+    c.strokeStyle = 'rgba(20,22,24,0.55)'; c.lineWidth = 2; for (let i = 1; i < 8; i++) { c.beginPath(); c.moveTo(i * 64, 0); c.lineTo(i * 64, 512); c.stroke(); }      // plate joints
+    c.strokeStyle = '#e2b521'; c.lineWidth = 12; c.strokeRect(14, 14, 484, 484);
+    const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;
+    const steel = new THREE.MeshStandardMaterial({ color: 0x2c3034, roughness: 0.7, metalness: 0.5 }), plate = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.82, metalness: 0.25 });
+    const add = (geo, mat, x, y, zz) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, zz); m.castShadow = true; m.receiveShadow = true; G.add(m); return m; };
+    add(new THREE.BoxGeometry(HALF * 2, 0.06, HALF * 2), plate, 0, -0.03, 0); add(new THREE.BoxGeometry(HALF * 2, 0.24, HALF * 2), steel, 0, -0.18, 0);
+    for (const zz of [-5, -1.7, 1.7, 5]) add(new THREE.BoxGeometry(HALF * 2, 0.5, 0.28), steel, 0, -0.55, zz);
+    for (const zz of [-5, 5]) { const L = Math.hypot(8.5, 7), strut = add(new THREE.CylinderGeometry(0.16, 0.16, L, 10), steel, 1.25, -0.8 - 3.5, zz); strut.rotation.z = -Math.atan2(8.5, 7); }      // from the outer beam down and back to the tower's face below the terrace
+    const lamp = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.25, 3.2, 1.1) }), lg = new THREE.SphereGeometry(0.09, 8, 6);
+    for (let i = -3; i <= 3; i++) for (const e of [-1, 1]) { add(lg, lamp, i * 2.1, 0.09, e * (HALF - 0.15)).castShadow = false; add(lg, lamp, e * (HALF - 0.15), 0.09, i * 2.1).castShadow = false; }
+    // the beacon: a column of amber light over the deck, shown to the pilot only, so the place can be found from across the map
+    const bm = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.4, 1.3, 0.2), transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 1.6, 70, 20, 1, true), bm); beam.position.set(0, 36, 0); beam.renderOrder = 7; beam.visible = false; G.add(beam); S.beam = beam;
+    W.scene.add(G); S.deckGroup = G;
+    console.log('[perch] helideck 13 m square at ' + cx.toFixed(0) + ', ' + cy.toFixed(0) + ', ' + z.toFixed(1) + ' m, 10 m out over the drop');
   }
   function tryMarks() {
     if (S.pads.length || !S.esb || S.tries > 40) return; const k = sq(ex, ey); if (k < 0) { S.tries = 99; return; }
@@ -125,28 +157,29 @@ export function addPerch(heli, ctx) {
   const ASSIST = g.P.get('perchassist') !== '0', cl = (v) => Math.max(-1, Math.min(1, v)), wp = (a) => Math.atan2(Math.sin(a), Math.cos(a));
   function assist(c, dt) {
     S.helping = 0; if (!ASSIST) return; const f = heli.f; if (f.onGround || f.engine !== 'run') return;
-    for (const p of S.pads) { const ex = p.x - f.pos.x, ey = p.y + f.pos.z, d = Math.hypot(ex, ey), h = f.pos.y - 1.25 - p.z; if (d > 10 || h < -0.5 || h > 14) continue;
-      const w = Math.max(0, 1 - d / 10) * Math.max(0.3, 1 - h / 14) * 0.85 + (d < 3 ? 0.15 * (1 - h / 14) : 0), cs = Math.cos(f.heading), sn = Math.sin(f.heading), vf = f.vel.x * cs - f.vel.z * sn, vr = f.vel.x * sn + f.vel.z * cs;
-      const a0 = wp(p.h - f.heading), hh = Math.abs(a0) < Math.PI / 2 ? p.h : p.h + Math.PI, k = Math.min(0.85, w);
-      c.pitch = c.pitch * (1 - k) + cl((ex * cs + ey * sn) * 0.25 - vf * 0.3) * k; c.roll = c.roll * (1 - k) + cl((ex * sn - ey * cs) * 0.25 - vr * 0.3) * k; c.yaw = c.yaw * (1 - k) + cl(-wp(hh - f.heading) * 2) * k;
-      S.helping = k; if (k > 0.2 && !S.told && !heli.note) { S.told = true; heli.note = { t: 0, text: 'OVER THE MARK · EASE THE COLLECTIVE DOWN' }; } return; }
+    for (const p of S.pads) { const ex = p.x - f.pos.x, ey = p.y + f.pos.z, d = Math.hypot(ex, ey), h = f.pos.y - 1.25 - p.z, sp = Math.hypot(f.vel.x, f.vel.z); if (d > 70 || h < -1.5 || h > 55) continue;
+      // Matt, Nov 17 12:47 ("so difficult", with the 10 m help already live): the help now reaches 70 m out and 55 m up, takes nearly all of the cyclic and pedals once he is
+      // within 14 m and slow, and holds him up while he is low beside the deck, so "come near it and hold S" is the whole landing
+      const far = Math.max(0, Math.min(1, (70 - d) / 30)) * Math.max(0, Math.min(1, (40 - sp) / 12)), k = Math.min(0.97, d < 14 ? Math.max(far * 0.9, 0.97 - d * 0.012) : far * 0.9);
+      const cs = Math.cos(f.heading), sn = Math.sin(f.heading), vf = f.vel.x * cs - f.vel.z * sn, vr = f.vel.x * sn + f.vel.z * cs, a0 = wp(p.h - f.heading), hh = Math.abs(a0) < Math.PI / 2 ? p.h : p.h + Math.PI;
+      /* it is flown toward the deck at a speed that falls with the distance (9 m/s at most, a walk at the end), not leaned at it as hard as the distance is long: from 46 m that built 20 m/s and went straight past (the landing clip, fix1 and fix2) */
+      const vd = Math.min(9, d * 0.35), ux = ex / (d || 1), uy = ey / (d || 1); c.pitch = c.pitch * (1 - k) + cl(((ux * cs + uy * sn) * vd - vf) * 0.33) * k; c.roll = c.roll * (1 - k) + cl(((ux * sn - uy * cs) * vd - vr) * 0.33) * k; if (d < 25) c.yaw = c.yaw * (1 - k) + cl(-wp(hh - f.heading) * 2) * k;
+      if (d > 4.5 && h < 3.5 && k > 0.3) c.lift = Math.max(c.lift, 0.25 + (3.5 - h) * 0.2);      // low, and not over the deck yet: up a little, then across
+      S.helping = k; if (k > 0.25 && !S.told) { S.told = true; heli.note = { t: 0, text: 'EMPIRE STATE HELIDECK · HOLD S TO SET IT DOWN' }; } return; }
     S.told = false;
   }
 
   function step(dt) {
     tryMarks();
-    { const f = heli.f; let free = false; if (!f.onGround || heli.piloted) for (const p of S.pads) if (Math.abs(f.pos.x - p.x) < 13 && Math.abs(f.pos.z + p.y) < 13 && f.pos.y < p.z + 12 && f.pos.y > p.z - 1) free = true; f.rotorFree = free || (f.onGround && S.pads.some((p) => Math.abs(f.pos.x - p.x) < 13 && Math.abs(f.pos.z + p.y) < 13 && Math.abs(f.pos.y - p.z) < 4)); }
+    { const f = heli.f; let free = false; if (!f.onGround || heli.piloted) for (const p of S.pads) if (Math.abs(f.pos.x - p.x) < 22 && Math.abs(f.pos.z + p.y) < 22 && f.pos.y < p.z + 14 && f.pos.y > p.z - 2) free = true; f.rotorFree = free || (f.onGround && S.pads.some((p) => Math.abs(f.pos.x - p.x) < 22 && Math.abs(f.pos.z + p.y) < 22 && Math.abs(f.pos.y - p.z) < 4)); if (S.beam) { S.beam.visible = heli.piloted && !f.onGround; if (S.beam.visible) { const p0 = S.pads[0], dd = p0 ? Math.hypot(f.pos.x - p0.x, f.pos.z + p0.y) : 99; S.beam.material.opacity = (0.16 + 0.1 * Math.sin(g.t * 3.2)) * Math.max(0.12, Math.min(1, (dd - 20) / 60)); } }     /* fainter as he comes in: close up it stood across the picture like a wall */ }
     const C = g.combat; if (C && !S.wrapped && C.cast && C.canCarry) wrap(C);
     const on = roofNow();
     if (on !== S.on) {
       S.on = on;
-      if (on) { S.hintT = 0; if (S.C && S.C.slot !== 'rifle' && WEAPONS.rifle && !LONG.includes(S.C.slot)) { try { S.C.equip('rifle'); } catch (e) {} } }
-      else scope(false);
+      if (on) { S.hintT = 0; S.banner = 5; if (WEAPONS.rifle && !S.nameWas) { S.nameWas = WEAPONS.rifle.name; WEAPONS.rifle.name = 'SNIPER RIFLE'; } if (S.C && S.C.slot !== 'rifle' && WEAPONS.rifle && !LONG.includes(S.C.slot)) { try { S.C.equip('rifle'); } catch (e) {} } }
+      else { scope(false); if (S.nameWas && WEAPONS.rifle) { WEAPONS.rifle.name = S.nameWas; S.nameWas = null; } }
     }
-    // the near plane: the renderer pushes it out to 6 m at this height (right for a camera in the air, but it cuts away the man, the roof under him and the aircraft he walks to):
-    // pinned at 0.5 m while he is on foot on a high roof or climbing in or out up there; through the scope the renderer's own rule stands
-    { const want = !S.scoped && !heli.piloted && !pl.vehicle && pl.alt > HIGH && !(g.fly && g.fly.on) ? 0.5 : 0; if (want !== S.near) { if (want || S.near) W.fixedNear = want; S.near = want; } }
-    if (!on) { WP.set = false; return; } S.hintT += dt; watch(dt);
+    if (!on) { WP.set = false; return; } S.hintT += dt; S.banner = Math.max(0, (S.banner || 0) - dt); watch(dt); glass();
     const K = S.C && S.C.inp, aim = !!(S.C && K && K.aim && longGun() && S.C.armedFoot() && (S.C.zoomT || 0) > 0.5);
     const cam = g.cam;
     if (aim && !S.scoped) { scope(true); S.yaw0 = cam.yaw; S.pitch0 = cam.pitch; S.fov = 0; }
@@ -161,6 +194,13 @@ export function addPerch(heli, ctx) {
   }
   // through the scope the camera is the eye at the rifle: set last, just before the frame is drawn
   function sync(dt) {
+    // THE NEAR PLANE (Matt, Nov 17 12:47: "landed the heli on a rooftop, got out, and the heli kept disappearing"). The renderer pushes the near plane out with the camera's
+    // height (2.4 m on an 81 m roof, 6 m on the Empire State Building): right for a camera in the air, but on foot up there it cuts away the aircraft he stands beside, the
+    // roof under him and his own body. It was pinned at 0.5 m here before, but ONCE, in the step, and the helicopter's own camera code wrote it back to the renderer's rule
+    // the same moment he got out: seen on a MacBook on the live build (near 2.38 m and 6 m all the time he walked round the aircraft; lanes/heli/bugs/r1-live). Now it is
+    // written every drawn frame, last, while he is on foot more than 8 m up or climbing in or out there; through the scope the renderer's own rule stands.
+    { const want = !S.scoped && !heli.piloted && !pl.vehicle && (pl.alt || 0) > HIGH && !(g.fly && g.fly.on) ? 0.5 : 0, cam = W.camera;
+      if (want) { W.fixedNear = want; if (cam.near !== want) { cam.near = want; cam.updateProjectionMatrix(); } S.near = want; } else if (S.near) { W.fixedNear = 0; S.near = 0; } }
     if (!S.on || !S.scoped) return; const cam = W.camera, c = g.cam, cp = Math.cos(c.pitch), kick = (S.kick || 0) * (S.kick || 0) * 0.012;
     S.dir.set(Math.cos(c.yaw) * cp, -Math.sin(c.pitch) + kick, -Math.sin(c.yaw) * cp).normalize();
     S.eye.set(pl.x, pl.alt + 1.58, -pl.y).addScaledVector(_v.set(S.dir.x, 0, S.dir.z).normalize(), 0.35);
@@ -168,7 +208,23 @@ export function addPerch(heli, ctx) {
     S.fov = S.fov ? S.fov + (ZOOMS[S.zoom] - S.fov) * Math.min(1, (dt || 0.016) * 16) : 30; if (Math.abs(cam.fov - S.fov) > 0.005) { cam.fov = S.fov; cam.updateProjectionMatrix(); }      /* the game's own camera code sets its field of view every frame: ours is kept here and put on last */
     cam.updateMatrixWorld(); pl.vis.object.visible = false;
   }
+  // the rifle wears a telescopic sight while he is on a roof: a tube over the receiver, set the first time the rifle is held level (its own axes are read off it then)
+  function glass() {
+    const C = S.C; if (!C || !C.guns) return; const gun = C.guns.rifle; if (S.glass) { S.glass.visible = S.on && !S.scoped; return; } if (!gun || C.slot !== 'rifle' || !((C.aimT || 0) > 0.95) || !C.muzzleWorld) return;
+    try { gun.updateMatrixWorld(true); const inv = new THREE.Matrix4().copy(gun.matrixWorld).invert(), bb = new THREE.Box3(); const pt = new THREE.Vector3(), mm = new THREE.Matrix4(); gun.traverse((o) => { const pa = o.isMesh && o.geometry && o.geometry.attributes.position; if (!pa) return; mm.multiplyMatrices(inv, o.matrixWorld); for (let i = 0, st = Math.max(1, Math.floor(pa.count / 400)); i < pa.count; i += st) { pt.fromBufferAttribute(pa, i); if (isFinite(pt.x) && isFinite(pt.y) && isFinite(pt.z)) { pt.applyMatrix4(mm); if (isFinite(pt.x + pt.y + pt.z)) bb.expandByPoint(pt); } } });     /* its own points, the bad ones left out (one of the rifle's parts carries empty positions: a bounding box asked of it is all NaN) */
+      if (bb.isEmpty()) throw new Error('the rifle has no usable points');
+      const mz = C.muzzleWorld(new THREE.Vector3()).applyMatrix4(inv); if (!isFinite(mz.x + mz.y + mz.z)) throw new Error('no muzzle'); const ctr = bb.getCenter(new THREE.Vector3()), fwd = mz.clone().sub(ctr).normalize(), up = new THREE.Vector3(0, 1, 0).transformDirection(inv); up.addScaledVector(fwd, -up.dot(fwd)).normalize();
+      const len = bb.getSize(new THREE.Vector3()).length(), sc = 1 / (gun.getWorldScale(new THREE.Vector3()).x || 1), G = new THREE.Group(), black = new THREE.MeshStandardMaterial({ color: 0x0c0d0e, roughness: 0.35, metalness: 0.8 }), lens = new THREE.MeshStandardMaterial({ color: 0x1a2a44, roughness: 0.05, metalness: 1 });
+      const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), fwd), part = (r0, r1, L, off, m) => { const o = new THREE.Mesh(new THREE.CylinderGeometry(r1 * sc, r0 * sc, L * sc, 14), m || black); o.quaternion.copy(q); o.position.copy(ctr).addScaledVector(up, 0.075 * sc).addScaledVector(fwd, off * sc); o.castShadow = true; G.add(o); return o; };
+      part(0.014, 0.014, 0.24, 0.0); part(0.014, 0.024, 0.07, 0.15); part(0.024, 0.024, 0.05, 0.2); part(0.019, 0.019, 0.06, -0.14); part(0.0235, 0.0235, 0.004, 0.226, lens);
+      for (const off of [-0.05, 0.07]) { const ring = new THREE.Mesh(new THREE.BoxGeometry(0.02 * sc, 0.05 * sc, 0.02 * sc), black); ring.quaternion.copy(q); ring.position.copy(ctr).addScaledVector(up, 0.045 * sc).addScaledVector(fwd, off * sc); G.add(ring); }
+      G.traverse((o) => { o.layers.mask = gun.layers.mask; }); gun.add(G); S.glass = G; console.log('[perch] telescopic sight set on the rifle (gun ' + len.toFixed(2) + ' long in its own units)'); } catch (e) { S.glass = new THREE.Group(); console.log('[perch] sight not set: ' + (e && e.message)); }
+  }
   function drawHud(hud) {
+    { const c = hud.ctx, Wd = hud.w / hud.k, Hh = 1080, p = S.pads[0], f = heli.f;      // the helideck's marker for the pilot: where it is on the screen and how far
+      if (p && heli.piloted && !f.onGround && !g.capture) { const d = Math.hypot(p.x - f.pos.x, p.y + f.pos.z, p.z - f.pos.y); if (d < 1500 && d > 12) { _v.set(p.x, p.z + 4, -p.y).project(W.camera); let x = _v.x, y = _v.y; const behind = _v.z > 1; if (behind) { x = -x; y = -y; } const off = behind || Math.abs(x) > 0.92 || Math.abs(y) > 0.86; if (off) { const m = Math.max(Math.abs(x) / 0.92, Math.abs(y) / 0.86) || 1; x /= m; y /= m; }
+          const sx = (x * 0.5 + 0.5) * Wd, sy = (-y * 0.5 + 0.5) * Hh; c.save(); c.translate(sx, sy); c.strokeStyle = 'rgba(0,0,0,0.6)'; c.lineWidth = 6; c.beginPath(); c.moveTo(0, -15); c.lineTo(15, 0); c.lineTo(0, 15); c.lineTo(-15, 0); c.closePath(); c.stroke(); c.strokeStyle = '#ffb82e'; c.lineWidth = 3; c.stroke(); c.restore();
+          hud.text('H', sx, sy + 6, 15, '#ffb82e', 'center', 800); hud.text('EMPIRE STATE HELIDECK  ' + Math.round(d) + ' m', sx, sy + 36, 14, '#fff', 'center', 700, 1); } } }
     if (!S.on) return; const c = hud.ctx, Wd = hud.w / hud.k, Hh = 1080, cx = Wd / 2, cy = Hh / 2;
     if (S.scoped) {
       const R = Hh * 0.46; c.save();
@@ -182,9 +238,13 @@ export function addPerch(heli, ctx) {
       hud.text([3, 6, 12][S.zoom] + 'x', cx + R * 0.5, cy + R * 0.62, 20, '#fff', 'left', 700, 1);
       if (A && A.ok && A.kind !== 'none') hud.text(Math.round(A.t) + ' m', cx + R * 0.5, cy + R * 0.62 + 26, 16, A.ped ? '#ff5a45' : '#ffb82e', 'left', 700, 1);
       if (am) hud.text(am.mag + ' / ' + am.reserve, cx - R * 0.5, cy + R * 0.62, 20, am.mag ? '#fff' : '#ff5a45', 'right', 700, 1);
-    } else if (S.hintT < 14 && !g.capture && S.C) {
-      c.globalAlpha = Math.max(0, Math.min(1, 14 - S.hintT)); hud.panel(Wd / 2 - 470, 172, 940, 40, 6);
-      hud.text('RIGHT MOUSE  scope     WHEEL  3x 6x 12x     LEFT MOUSE  fire     R  reload     F at the door  fly', Wd / 2, 199, 16, '#fff', 'center', 600, 1); c.globalAlpha = 1;
+    } else if (!g.capture && S.C) {
+      // said plainly and kept on the screen (Matt, Nov 17 12:47: "I didn't see a sniper"): what he holds and how to look through it
+      const long = LONG.includes(S.C.slot);
+      if (S.banner > 0) { c.globalAlpha = Math.min(1, S.banner); hud.panel(Wd / 2 - 360, 250, 720, 86, 8); hud.text('SNIPER RIFLE', Wd / 2, 290, 30, '#ffb82e', 'center', 800, 3); hud.text('HOLD RIGHT MOUSE TO LOOK THROUGH THE SCOPE', Wd / 2, 320, 16, '#fff', 'center', 600, 1.5); c.globalAlpha = 1; }
+      hud.panel(Wd / 2 - 250, Hh - 150, 500, 44, 22);
+      if (long) { hud.text('RMB', Wd / 2 - 196, Hh - 120, 18, '#ffb82e', 'center', 800); hud.text('scope', Wd / 2 - 138, Hh - 120, 17, '#fff', 'center', 600); hud.text('WHEEL', Wd / 2 - 44, Hh - 120, 18, '#ffb82e', 'center', 800); hud.text('3x 6x 12x', Wd / 2 + 44, Hh - 120, 17, '#fff', 'center', 600); hud.text('LMB', Wd / 2 + 134, Hh - 120, 18, '#ffb82e', 'center', 800); hud.text('fire', Wd / 2 + 186, Hh - 120, 17, '#fff', 'center', 600); }
+      else { hud.text('2', Wd / 2 - 150, Hh - 120, 18, '#ffb82e', 'center', 800); hud.text('take the SNIPER RIFLE (it has the scope)', Wd / 2 + 20, Hh - 120, 17, '#fff', 'center', 600); }
     }
   }
   S.step = step; S.sync = sync; S.drawHud = drawHud; S.marks = marks; S.assist = assist;
