@@ -16,7 +16,8 @@
 //   - wheel against the slide: the nose swings back to the path in about half a second and the car grips again;
 //   - no snap the other way and no spin: the angle has a ceiling.
 // PER CLASS (cars.js's class of the car, or its size when ?cars=0): LOOSE below. The sports car is the loosest (60 degrees, quick to rotate),
-// ordinary cars 50, the SUV and pickup 38, a van 28 and no hold, a truck 21, the bus barely steps out (12 degrees, heavy and slow).
+// ordinary cars 50, the SUV and pickup 38, a van 28 and no hold, a truck 21. The bus is left on the game's own lever (TUNE.minLoose): it steps out a little
+// there already, and a real slide in a 12 m bus put it into the parked row.
 //
 // WHERE IT SITS: its line in game.js comes after handling.js's and before cars.js's, so it wraps handling's step and cars.js wraps this: what
 // arrives is the per-kind v.spec and cars.js's substitute pedals. While a slide is on, this file moves the car and the step below is not run
@@ -36,7 +37,7 @@ export const LOOSE = { sport: 1, hatch: 0.86, sedan: 0.8, taxi: 0.78, suv: 0.58,
 // would scrub that is given back: always, and more with the pedal. hbDec: what the lever takes off along the car, turning / straight. spinK: how
 // much pull is lost to wheelspin at a full angle. out: the angle under which the slide is over, rad. resp: how fast the car's turn rate follows, 1/s
 // (loosest, stiffest). wet: the share of the slide's side grip a wet road takes (slides run longer and wider in the rain).
-export const TUNE = { vIn: 4.5, vOut: 2.4, steerIn: 0.15, aLo: 13, aHi: 9, vLo: 12, vHi: 28, stiff: 6, kick: 2.7, track: 2.6, nat: 0.68, max: 1.05, maxLo: 0.21, keep0: 0.42, keepT: 0.5, hbDec: 1.8, hbDec0: 5.5, spinK: 0.25, spinUp: 0, gripUp: 0.35, out: 0.075, resp: 11, respLo: 3, respOut: 16, wet: 0.2, ease: 0, catch: 3.6, holdMin: 0.45 };
+export const TUNE = { vIn: 4.5, vOut: 2.4, steerIn: 0.15, aLo: 13, aHi: 9, vLo: 12, vHi: 28, stiff: 6, kick: 2.7, track: 2.6, nat: 0.68, max: 1.05, maxLo: 0.21, keep0: 0.42, keepT: 0.5, hbDec: 1.8, hbDec0: 5.5, spinK: 0.25, spinUp: 0, gripUp: 0.35, out: 0.075, resp: 11, respLo: 3, respOut: 16, wet: 0.2, minLoose: 0.2, ease: 0, catch: 3.6, holdMin: 0.45 };
 const NEUTRAL = { steer: 0, throttle: 0, brake: 0, handbrake: false };
 const _TSQ = (() => { try { const q = new URLSearchParams(location.search).get('topspeed'); return q === '0' ? 0 : 1; } catch (e) { return 0; } })();     // the lead's top-speed change of Nov 16 (handling.js has the same line)
 
@@ -57,10 +58,12 @@ export function slide(D, v, dt, inp, g, below) {
   // ---- along the car: the lead's formulas (game.js Vehicle.step), with the lever's own drag and some pull lost to wheelspin at an angle
   let acc = 0; const tsOn = _TSQ && thr > 0 && vf > 0, tsTop = sp.top * (_TSQ ? 1.15 : 1);
   if (thr > 0) acc += thr * sp.acc * Math.max(0, 1 - (vf / tsTop) ** 2) * (vf < 8 ? 1.15 : 1) * (1 - (T.spinK + T.spinUp * clamp((L - 0.8) / 0.2, 0, 1)) * Math.min(1, Math.abs(Math.sin(sig0)) * 1.3));     /* the loosest cars spin their wheels more at an angle: the sports car's power does not carry it wide out of a corner */
-  if (brk > 0) acc -= 15 * brk;
   acc -= (tsOn ? 0.05 : 0.12) * vf + (tsOn ? 0.0012 : 0.0042) * vf * Math.abs(vf) + (thr === 0 && brk === 0 ? Math.sign(vf) * 0.5 : 0);
-  if (hb) acc -= Math.min(Math.abs(vf) / dt, lerp(T.hbDec0, lerp(T.hbDec0, T.hbDec, Math.min(1, L * 1.5)), Math.min(1, Math.abs(st) * 1.5)));
   vf = Math.max(0, vf + acc * dt);
+  // the brake pedal and the lever slow the car along the way it is GOING, not along the way it points: a braked car in a slide loses its sideways speed with
+  // its forward speed (taken off the forward part only, a hard brake left the car crabbing sideways at a right angle to its nose)
+  { const dec = (brk > 0 ? 15 * brk : 0) + (hb ? lerp(T.hbDec0, lerp(T.hbDec0, T.hbDec, Math.min(1, L * 1.5)), Math.min(1, Math.abs(st) * 1.5)) : 0);
+    if (dec > 0) { const sp0 = Math.hypot(vf, vl); if (sp0 > 1e-6) { const k = Math.max(0, sp0 - dec * dt) / sp0; vf *= k; vl *= k; } acc -= dec; } }
   // ---- across the car: the tyres push against the side speed, up to the slide's grip; part of what that scrubs off is given back
   const aCap = lerp(T.aLo, T.aHi, clamp((spd0 - T.vLo) / (T.vHi - T.vLo), 0, 1)) * lerp(0.8, 1, L) * (1 + T.gripUp * clamp((L - 0.8) / 0.2, 0, 1)) * (1 - T.wet * wet), spd1 = Math.hypot(vf, vl);     /* the loosest class has the tyres to match its speed: its path comes round as tightly as an ordinary car's although it carries more speed through the slide */
   vl += clamp(-vl * (1 - Math.exp(-dt * T.stiff)), -aCap * dt, aCap * dt);
@@ -121,7 +124,8 @@ export function install(g, Vehicle) {
       // the kick: the lever, some wheel, and enough speed forward
       if (!inp.handbrake || Math.abs(inp.steer || 0) < D.TUNE.steerIn) return below.call(this, dt, inp, gg);
       const c = Math.cos(this.h), s = Math.sin(this.h), vf = this.vx * c + this.vy * s; if (vf < D.TUNE.vIn) return below.call(this, dt, inp, gg);
-      const N = this._dr || (this._dr = fresh()); N.on = true; N.t = 0; N.calm = 0; N.st = 0; N.L = looseOf(gg, this); N.n++; D.slides++; D.car = this;
+      const L0 = looseOf(gg, this); if (L0 < D.TUNE.minLoose) return below.call(this, dt, inp, gg);     /* the bus: its lever is the game's own, as before (in a browser the slide took a 12 m bus 6 m wide into the parked row at 40 km/h, where the old lever got it round clean: Nov 17) */
+      const N = this._dr || (this._dr = fresh()); N.on = true; N.t = 0; N.calm = 0; N.st = 0; N.L = L0; N.n++; D.slides++; D.car = this;
     }
     try { slide(D, this, dt, inp, gg, below); D.n++; D.car = this; }
     catch (e) { D.err = String(e && e.stack || e); console.warn('[drift] off after an error: ' + D.err); this._dr.on = false; return below.call(this, dt, inp, gg); }

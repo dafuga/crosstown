@@ -8,7 +8,7 @@ import { BASE } from './ground.js';
 import { material } from './bridge.js';
 
 export function build(game, S, structures, inChunk) {
-  const T = game.terrain, sg = game.statics, pos = [], col = [], STONE = [1, 1, 1], ROOF = [0.98, 1, 1], group = new THREE.Group(); group.name = 'park_structs'; let nw = 0, nb = 0;
+  const T = game.terrain, sg = game.statics, pos = [], col = [], STONE = [1, game.P && game.P.get('parkwall') === '0' ? 1 : 0.98, 1]      /* handoff-9: g 0.98 = a wall's or a house's stone (bridge.js material) */, ROOF = [0.98, 1, 1], group = new THREE.Group(); group.name = 'park_structs'; let nw = 0, nb = 0;
   const quad = (a, b, c, d, k) => { for (const v of [a, b, c, a, c, d]) { pos.push(v[0], v[1], v[2]); col.push(k[0], k[1], k[2]); } };
   for (const s of structures || []) {
     if (s.kind === 'wall' && s.line && s.line.length > 1) { const h = Math.max(0.5, Math.min(2.4, s.h || 1.1)), t = 0.24; if (!inChunk(s.line[0][0], s.line[0][1])) continue; nw++;

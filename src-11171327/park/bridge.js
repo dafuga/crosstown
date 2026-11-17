@@ -16,16 +16,35 @@ export function material(game, S) {
   if (MAT) return MAT;
   const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.94, metalness: 0, vertexColors: true, side: THREE.DoubleSide });
   // rubble schist laid in rough courses: blocks of uneven length, each its own grey, dark recessed joints; the deck (vertex colour red) is path asphalt
-  MAT = lit(m, game.world.shared, { key: 'bridge', pars: 'uniform sampler2D tRock, tAsph;', uniforms: { tRock: S.tRock, tAsph: S.tAsph },
-    body: `vec3 an = abs(bakeN); vec2 f = an.y > 0.7 ? vWPos.xz : (an.x > an.z ? vWPos.zy : vWPos.xy);
-           float row = floor(f.y / 0.34), off = hash21(vec2(row, 3.0)) * 2.0, len = 0.45 + 0.5 * hash21(vec2(row, 9.0));
-           vec2 cell = vec2(floor((f.x + off) / len), row), q = vec2(fract((f.x + off) / len) * len, fract(f.y / 0.34) * 0.34);
-           float jt = (1.0 - smoothstep(0.012, 0.035, min(min(q.x, len - q.x), min(q.y, 0.34 - q.y))));
-           vec3 rk = texture2D(tRock, f / 2.3 + hash32(cell).xy).rgb; rk = mix(vec3(dot(rk, vec3(0.333))), rk, 0.4);
-           vec3 stone = rk * mix(vec3(0.30, 0.29, 0.28), vec3(0.50, 0.47, 0.43), hash21(cell + 1.7)) * (0.75 + 0.5 * fbm(f * 2.0)) * (1.0 - 0.6 * jt);
-           stone = mix(stone, stone * vec3(0.5, 0.58, 0.4), smoothstep(0.6, 0.85, fbm(f * 0.6 + 4.0)) * 0.5);
-           vec3 deck = texture2D(tAsph, vWPos.xz / 4.0).rgb; deck = mix(vec3(dot(deck, vec3(0.333))), deck, 0.5) * 1.2;
-           diffuseColor.rgb = mix(stone, deck, step(vColor.r, 0.99));      // vertex colour: white = stone, r 0.98 = the walk (three multiplies it in afterwards: both near 1)` });
+  const WALL = !(game.P && game.P.get('parkwall') === '0');
+  MAT = lit(m, game.world.shared, { key: 'bridge', spec: 0.3, night: 2.8      /* handoff-9: stone 0.30 .. 0.50 -> 0.10 .. 0.19 and the deck 1.2 -> 0.36 by day, back at night (mat.js) */, pars: 'uniform sampler2D tRock, tAsph;', uniforms: { tRock: S.tRock, tAsph: S.tAsph },
+    body: `vec3 an = abs(bakeN); vec2 f0 = an.y > 0.7 ? vWPos.xz : (an.x > an.z ? vWPos.zy : vWPos.xy);
+           // look pass k1 (critic r1: "tiled even stone"): the courses wander and the stones differ in height and length (rubble, not ashlar); the stone's
+           // albedo is on the lawn's scale (0.30 .. 0.50 -> 0.10 .. 0.19); creeper hangs on the upright faces in patches (dull red and brown in November)
+           // handoff-8 (critic r3: "brick tiling, too small"; Gapstow's stones are half a metre and more): on a bridge (vertex colour b 0.98) the courses, the stones, their
+           // wander and their joints are twice the size; the park's walls and houses (structs.js) keep theirs. ?parkstone=0 = as before
+           float sz = 1.0 + step(vColor.b, 0.99), rh = 0.34 * sz;
+           vec2 f = f0 + vec2(vnoise(f0.yx * 1.3 / sz + 5.0) - 0.5, vnoise(f0 * vec2(0.55, 1.7) / sz) - 0.5) * vec2(0.34, 0.30) * sz;
+           float row = floor(f.y / rh), off = hash21(vec2(row, 3.0)) * 2.0, len = (0.36 + 0.85 * hash21(vec2(row, 9.0))) * sz;
+           vec2 cell = vec2(floor((f.x + off) / len), row), q = vec2(fract((f.x + off) / len) * len, fract(f.y / rh) * rh);
+           float jw = (0.02 + 0.03 * hash21(cell + 4.1)) * sz, jt = (1.0 - smoothstep(jw * 0.4, jw, min(min(q.x, len - q.x), min(q.y, rh - q.y))));
+           vec3 rk = texture2D(tRock, f / 1.4 + hash32(cell).xy).rgb; rk = mix(vec3(dot(rk, vec3(0.333))), rk, 0.4);
+           vec3 stone = rk * mix(vec3(0.100, 0.096, 0.092), vec3(0.190, 0.175, 0.155), hash21(cell + 1.7)) * (0.7 + 0.6 * fbm(f * 2.0)) * (1.0 - 0.8 * jt);
+           stone = mix(stone, stone * vec3(0.5, 0.62, 0.38), smoothstep(0.55, 0.8, fbm(f0 * 0.6 + 4.0)) * 0.6);
+           float cre = smoothstep(0.55, 0.64, fbm(f0 * vec2(0.45, 0.30) + 13.0)) * step(an.y, 0.7) * step(0.35, hash21(floor(f0 * 23.0)));
+           stone = mix(stone, mix(vec3(0.050, 0.014, 0.010), vec3(0.030, 0.026, 0.010), hash21(floor(f0 * 23.0) + 2.0)), cre);
+           ${WALL ? `// handoff-9 (critic, batch 7: "wall almost black with a rusty red patch"): the perimeter wall and the park's houses (structs.js, vertex colour g 0.98) shared
+           // Gapstow's stone with its creeper and moss. They have their own now: a plain grey-buff stone, no creeper, little moss, and in shade it keeps a part
+           // of the sky's light as the bridge's stone does (below), so a wall turned from the sun reads as stone beside the bridge's sunlit face. ?parkwall=0 = as before
+           float wl = step(vColor.g, 0.99);
+           vec3 wst = rk * mix(vec3(0.175, 0.165, 0.145), vec3(0.245, 0.228, 0.196), hash21(cell + 1.7)) * (0.8 + 0.4 * fbm(f * 2.0)) * (1.0 - 0.7 * jt);
+           wst = mix(wst, wst * vec3(0.62, 0.70, 0.52), smoothstep(0.62, 0.86, fbm(f0 * 0.6 + 4.0)) * 0.35);
+           stone = mix(stone, wst, wl); pkNight = mix(pkNight, 1.9, wl);` : 'float wl = 0.0;'}
+           vec3 deck = texture2D(tAsph, vWPos.xz / 4.0).rgb; deck = mix(vec3(dot(deck, vec3(0.333))), deck, 0.5) * 0.36;
+           diffuseColor.rgb = mix(stone, deck, step(vColor.r, 0.99));      // vertex colour: white = stone, r 0.98 = the walk (three multiplies it in afterwards: both near 1)
+           // handoff-8 (critic r3: "a black slab wall at Gapstow's right end"): no stray block: rays from the camera hit the bridge's own outer face over its abutment
+           // (probe f8a), which stands in shade there and drew near black beside the sunlit stone. A bridge's stone in shade keeps a little of the sky's light.
+           totalEmissiveRadiance += stone * uSunColor * (0.04 * (sz - 1.0) + 0.09 * wl * step(0.99, vColor.r));` });
   return MAT;
 }
 
@@ -50,7 +69,7 @@ function stations(pts, step) {
 // build(game, S (ground.shared), structure, waterLevel) -> { group, decks (terrain decks), corridors, info }
 export function build(game, S, st, waterLevel) {
   const T = game.terrain, sp = SPEC[st.name] || SPEC.default, wl = st.water_level !== undefined ? st.water_level : waterLevel;
-  const pos = [], col = [], STONE = [1, 1, 1], DECK = [0.98, 1, 1], sg = game.statics, decks = [], corridors = [], info = { decks: 0 };
+  const pos = [], col = [], STONE = [1, 1, game.P && game.P.get('parkstone') === '0' ? 1 : 0.98]      /* handoff-8: b 0.98 = a bridge's stone, drawn twice the size (material, above) */, DECK = [0.98, 1, 1], sg = game.statics, decks = [], corridors = [], info = { decks: 0 };
   const quad = (a, b, c, d, k) => { for (const v of [a, b, c, a, c, d]) { pos.push(v[0], v[1], v[2]); col.push(k[0], k[1], k[2]); } };
   const water = st.over === 'water' || (st.kind === 'bridge' && wl !== undefined);
   const all = decksOf(T, st, sp, wl);
@@ -65,14 +84,16 @@ export function build(game, S, st, waterLevel) {
       const level = wl !== undefined ? wl : Math.min(Q[0].z, Q[n - 1].z) - 1.5; let crown = -1e9; for (const q of Q) crown = Math.max(crown, q.z); crown = Math.max(crown, level + 1.6 + sp.ring);
       const span = Math.min(sp.span, len - 3), rise = crown - sp.ring - level, Rr = (span * span / 4 + rise * rise) / (2 * rise), zc = level + rise - Rr, foot = level - 1.2;
       const under = (s) => { const d = s - len / 2; return Math.abs(d) < span / 2 ? Math.max(foot, zc + Math.sqrt(Math.max(0, Rr * Rr - d * d))) : foot; };
+      // look pass k1 (critic r1: "dead-straight top"): the parapet's line bows up to the middle of the bridge and is a little uneven, as rubble coping is
+      const bow = (q) => q.z + par + 0.32 * Math.sin(Math.PI * Math.max(0, Math.min(1, q.s / len))) + 0.05 * Math.sin(q.s * 2.1) * Math.sin(q.s * 0.7 + 1.0);
       for (let k = 0; k + 1 < n; k++) { const a = Q[k], b = Q[k + 1], ua = under(a.s), ub = under(b.s);
         for (const sd of [1, -1]) { const o = sd * hw, oi = sd * inner, f = (p, q, r, t, kk) => (sd > 0 ? quad(p, q, r, t, kk) : quad(t, r, q, p, kk));
-          f(P(b, o, ub), P(a, o, ua), P(a, o, a.z + par), P(b, o, b.z + par), STONE);                    // outer face (spandrel and parapet in one plane)
-          f(P(a, oi, a.z), P(b, oi, b.z), P(b, oi, b.z + par), P(a, oi, a.z + par), STONE);              // parapet, inner face
-          f(P(a, o, a.z + par), P(a, oi, a.z + par), P(b, oi, b.z + par), P(b, o, b.z + par), STONE); }      // coping
+          f(P(b, o, ub), P(a, o, ua), P(a, o, bow(a)), P(b, o, bow(b)), STONE);                    // outer face (spandrel and parapet in one plane)
+          f(P(a, oi, a.z), P(b, oi, b.z), P(b, oi, bow(b)), P(a, oi, bow(a)), STONE);              // parapet, inner face
+          f(P(a, o, bow(a)), P(a, oi, bow(a)), P(b, oi, bow(b)), P(b, o, bow(b)), STONE); }      // coping
         quad(P(a, -inner, a.z), P(b, -inner, b.z), P(b, inner, b.z), P(a, inner, a.z), DECK);              // the walk
         if (ua > foot || ub > foot) quad(P(a, hw, ua), P(b, hw, ub), P(b, -hw, ub), P(a, -hw, ua), STONE); }      // the vault's underside
-      for (const [q, first] of [[Q[0], true], [Q[n - 1], false]]) for (const sd of [1, -1]) { const a = P(q, sd * hw, q.z + par), b = P(q, sd * inner, q.z + par), c = P(q, sd * inner, foot), d = P(q, sd * hw, foot); if (first === (sd > 0)) quad(a, b, c, d, STONE); else quad(d, c, b, a, STONE); }      // parapet ends
+      for (const [q, first] of [[Q[0], true], [Q[n - 1], false]]) for (const sd of [1, -1]) { const a = P(q, sd * hw, bow(q)), b = P(q, sd * inner, bow(q)), c = P(q, sd * inner, foot), d = P(q, sd * hw, foot); if (first === (sd > 0)) quad(a, b, c, d, STONE); else quad(d, c, b, a, STONE); }      // parapet ends
       for (const sd of [1, -1]) for (let k = 0; k + 4 < n; k += 4) { const a = Q[k], b = Q[Math.min(n - 1, k + 4)], o = sd * (inner + 0.05); sg.addSeg(a.x - a.ty * o, a.y + a.tx * o, b.x - b.ty * o, b.y + b.tx * o, par, 'bridge'); }
       Object.assign(info, { len: +len.toFixed(1), span: +span.toFixed(1), crown: +crown.toFixed(2), water: +level.toFixed(2), rise: +rise.toFixed(2), ends: [+Q[0].z.toFixed(2), +Q[n - 1].z.toFixed(2)] });
     } else {

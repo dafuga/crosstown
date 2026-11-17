@@ -36,16 +36,31 @@ function mirror(game) {
 }
 function material(game) {
   if (MAT) return MAT;
-  const m = new THREE.MeshStandardMaterial({ color: new THREE.Color(0.020, 0.022, 0.011), roughness: 0.1, metalness: 0.0, envMapIntensity: 0.32 });
+  // critic r2 (Nov 17): the Pond still read as a milky pale-teal slab with tree shadows on it. Cause: three r170 ignores a material's envMapIntensity
+  // when the environment comes from scene.environment (WebGLRenderer: m_uniforms.envMapIntensity.value = scene.environmentIntensity), so the 0.20 /
+  // 0.32 / 0.04 set here never arrived and the sheet mirrored the sky map at the scene's full 1.1 by Fresnel, over a mirror picture held down to 0.27.
+  // Now: with the mirror on, the sky map and the sun's highlight are off (pkSpec 0) and the mirror picture is the reflection, by Fresnel (dark looking
+  // down, bright at grazing angles); with the mirror off (far, ?parkmirror=0) the sky map shows only at middle angles and the grazing band is dark, as a
+  // reflected tree line is; the sheet takes no cast shadows. ?parkwater=0 = the water as before.
+  const OLD = !!(game.P && game.P.get('parkwater') === '0'), RIP = !OLD && !(game.P && game.P.get('parkripple') === '0');      // handoff-8: ripples and the browner tint; ?parkripple=0 = the water of handoff-6
+  const m = new THREE.MeshStandardMaterial({ color: OLD ? new THREE.Color(0.020, 0.022, 0.011) : new THREE.Color(0.012, 0.012, 0.006), roughness: 0.1, metalness: 0.0, envMapIntensity: 0.20 })      /* critic r1, Nov 16: the Pond read milky pale green; mirror tint 0.40/0.45/0.35 -> 0.27/0.28/0.20, sky 0.32 -> 0.20 */;
   const mir = mirror(game), MU = mir ? mir.U : { tMirror: { value: null }, uMirM: { value: new THREE.Matrix4() }, uMirOn: { value: 0 } };
-  MAT = lit(m, game.world.shared, { key: 'water', uniforms: MU, pars: 'uniform float uTime; uniform sampler2D tMirror; uniform mat4 uMirM; uniform float uMirOn;',
+  m.userData.old = OLD;
+  MAT = lit(m, game.world.shared, { key: 'water', night: 1.7      /* handoff-9: at night the Pond takes the sky's reflection again (pkSpec back to 1) and its old tint (0.020 -> 0.012 by day): mat.js */, uniforms: MU, pars: 'uniform float uTime; uniform sampler2D tMirror; uniform mat4 uMirM; uniform float uMirOn;',
     body: `float mur = fbm(vec2(w.x, -w.y) * 0.05); diffuseColor.rgb *= 0.7 + 0.7 * mur;
            float lf = smoothstep(0.80, 0.86, vnoise(vec2(w.x, -w.y) * 1.3)) * smoothstep(0.55, 0.75, fbm(vec2(w.x, -w.y) * 0.08 + 5.0));      // drifts of floating leaves
            diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.10, 0.060, 0.018), lf); pkRough = mix(0.1, 0.8, lf);
            if (uMirOn > 0.5) { vec4 mp = uMirM * vec4(vWPos, 1.0); float md = distance(cameraPosition, vWPos); vec2 mq = vWPos.xz * 1.9 + uTime * 0.12;
              vec2 muv = mp.xy / max(mp.w, 0.001) + (vec2(vnoise(mq), vnoise(mq * 1.3 + 7.0)) - 0.5) * vec2(0.003, 0.011) * clamp(30.0 / md, 0.15, 1.0);      // nearly still: the picture trembles a little, more up and down than sideways
+             ${RIP ? `// handoff-8 (critic r3: "the mirror is perfect"): a breath of wind ruffles the sheet in slow drifting patches (the sheet has no measure of how far a bank is: the
+             // patches stand in for open water) and there the picture breaks into short wavering streaks; between the patches a faint ripple only
+             float gust = smoothstep(0.40, 0.66, fbm(vec2(w.x, -w.y) * 0.04 + vec2(uTime * 0.015, 3.0))); vec2 rq = vWPos.xz * vec2(2.2, 5.5) + vec2(uTime * 0.10, uTime * 0.22);
+             muv += (vec2(vnoise(rq + 11.0), vnoise(rq * 1.6 + 23.0)) - 0.5) * vec2(0.004, 0.022) * (0.25 + 0.75 * gust) * clamp(30.0 / md, 0.2, 1.0);` : ''}
              float cosv = clamp(normalize(cameraPosition - vWPos).y, 0.0, 1.0), fres = 0.03 + 0.97 * pow(1.0 - cosv, 5.0);
-             totalEmissiveRadiance += texture2D(tMirror, clamp(muv, 0.002, 0.998)).rgb * vec3(0.40, 0.45, 0.35) * fres * (1.0 - lf); }`,
+             vec3 mc = texture2D(tMirror, clamp(muv, 0.002, 0.998)).rgb; mc = mc / (1.0 + ${OLD ? '0.9' : '0.7'} * dot(mc, vec3(0.333)));      // look pass k1: the far half mirrored the bare sky as a milky sheet: the bright end of the picture is pressed down, the tint is the Pond's green-brown
+             ${RIP ? 'mc = mix(vec3(dot(mc, vec3(0.3, 0.6, 0.1))), mc, 0.72);      // handoff-8 (critic r3: "too yellow-lime"; the photographs: a darker, browner green): the mirrored lawn and leaves lose some colour and the tint below is browner and darker (was 0.62, 0.61, 0.47)' : ''}
+             totalEmissiveRadiance += mc * ${OLD ? 'vec3(0.27, 0.27, 0.16)' : RIP ? 'vec3(0.50, 0.475, 0.37)' : 'vec3(0.62, 0.61, 0.47)'} * fres * (1.0 - lf);${OLD ? '' : ' pkSpec = 0.0;'} }
+           ${OLD ? '' : 'else { float cv = clamp(normalize(cameraPosition - vWPos).y, 0.0, 1.0); pkSpec = mix(0.05, 0.42, smoothstep(0.05, 0.26, cv + (mur - 0.5) * 0.08)) * (1.0 - lf); }'}`,
     nbody: `{ vec2 q = vWPos.xz * 2.3; float t = uTime * 0.25;
               vec2 r = vec2(vnoise(q + vec2(t, 0.3 * t)) - vnoise(q + vec2(0.35 - t * 0.6, 1.7)), vnoise(q * 1.7 + vec2(4.0, t)) - vnoise(q * 1.7 + vec2(1.3, 9.0 - t))) * 0.011;
               normal = normalize(normal + (viewMatrix * vec4(r.x, 0.0, r.y, 0.0)).xyz); }` });
@@ -59,7 +74,7 @@ export function build(game, a, corridors = []) {
   const V = (r) => r.map((p) => new THREE.Vector2(p[0], p[1])); const shape = new THREE.Shape(V(a.ring)); for (const h of a.holes || []) shape.holes.push(new THREE.Path(V(h)));
   const geo = new THREE.ShapeGeometry(shape); geo.rotateX(-Math.PI / 2);      // (x, y) -> (x, 0, -y), facing up
   let level = a.level; if (level == null || !isFinite(level)) { const hs = a.ring.map((p) => game.terrain.ground(p[0], p[1])).filter((v) => isFinite(v)).sort((x, y) => x - y); level = hs.length ? hs[Math.floor(hs.length * 0.25)] - 0.1 : 0; }      /* no level in the data: the low quarter of the ground along the outline */
-  const mesh = new THREE.Mesh(geo, material(game)); mesh.position.y = BASE + level - 0.05; mesh.receiveShadow = true; mesh.name = 'park_water'; group.add(mesh);
+  const mesh = new THREE.Mesh(geo, material(game)); mesh.position.y = BASE + level - 0.05; mesh.receiveShadow = !!mesh.material.userData.old;      /* a mirror takes no cast shadows */ mesh.name = 'park_water'; group.add(mesh);
   if (MIR) { const lv = mesh.position.y; let cx = 0, cy = 0; for (const p of a.ring) { cx += p[0] / a.ring.length; cy += p[1] / a.ring.length; } MIR.meshes.add(mesh);      /* one mirror plane: that of the water sheet in view whose middle is nearest the camera */
     let rr = 0; for (const p of a.ring) rr = Math.max(rr, Math.hypot(p[0] - cx, p[1] - cy)); const MD = game.P && game.P.has('parkmirrord') ? +game.P.get('parkmirrord') : 60;      /* Nov 16: the mirror's extra scene draw cost 6 fps at the Grand Army Plaza corner (M1 Pro, 38 v 43.5 with ?park=0; 44.5 with ?parkmirror=0) where the Pond lies hidden behind the wall: now only within MD metres of the sheet's reach (?parkmirrord=) */
     mesh.onBeforeRender = (r, sc, cam) => { const now = performance.now(), d = Math.hypot(cam.position.x - cx, -cam.position.z - cy); if (d - rr > MD) return; if (now - MIR.seen > 300 || d <= MIR.dist + 1 || MIR.who === mesh) { MIR.who = mesh; MIR.dist = d; MIR.level = lv; MIR.seen = now; } }; mesh.addEventListener('removed', () => MIR.meshes.delete(mesh)); }

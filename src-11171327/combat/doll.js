@@ -135,7 +135,23 @@ export class Doll {
       // leaves the ground turning; no two are thrown alike
       const dv = 1.3 * force, cx = h.cx ?? h.x - dx * 3, cy = h.cy ?? 0.3, cz = h.cz ?? h.z - dz * 3;
       let dc = Math.hypot(p[I.P * 3] - cx, p[I.P * 3 + 2] - cz); const fall = Math.max(0.35, 1 - dc / 11);
-      for (let i = 0; i < NP; i++) { let ex = p[i * 3] - cx, ey = p[i * 3 + 1] - cy + 0.5, ez = p[i * 3 + 2] - cz; const el = Math.hypot(ex, ey, ez) || 1, lowr = 1 - Math.min(1, Math.max(0, (p[i * 3 + 1] - cy) / 1.7)), k = dv * fall * (0.5 + 0.95 * lowr); this.addVel(i, (ex / el) * k + (r() - 0.5) * 1.2, (ey / el) * k + 1.6 * fall + (r() - 0.5), (ez / el) * k + (r() - 0.5) * 1.2); }
+      // (ragdoll lane, Nov 17, a critic on a rocket's blast: 'three victims leave the blast stacked one on top of another in the same flat, rigid pose and fly out as a single
+      // piece'): people standing close together got the same push. Each body now leaves a little off the line from the blast (up to 20 degrees either way) and
+      // harder or softer than its neighbour (three quarters to five quarters), when the caller says where the blast was.
+      const own = h.cx !== undefined, ja = own ? (r() - 0.5) * 0.7 : 0, jc = Math.cos(ja), js = Math.sin(ja), jk = own ? 0.75 + r() * 0.5 : 1;
+      for (let i = 0; i < NP; i++) { let ex = p[i * 3] - cx, ey = p[i * 3 + 1] - cy + 0.5, ez = p[i * 3 + 2] - cz; if (own) { const t = ex * jc - ez * js; ez = ex * js + ez * jc; ex = t; } const el = Math.hypot(ex, ey, ez) || 1, lowr = 1 - Math.min(1, Math.max(0, (p[i * 3 + 1] - cy) / 1.7)), k = dv * fall * jk * (0.5 + 0.95 * lowr); this.addVel(i, (ex / el) * k + (r() - 0.5) * 1.2, (ey / el) * k + 1.6 * fall + (r() - 0.5), (ez / el) * k + (r() - 0.5) * 1.2); }
+      // ragdoll lane, Nov 17 (a critic on a car fire: 'several bodies glide flat through the air like Superman, rigid and level with the ground, and end as face-down
+      // planks in a row'): every point left along almost the same line, so the body kept the straight shape it stood in and only tipped over. Now each body also
+      // (1) tumbles: a turn about a level axis across the throw, either way, and a little about the upright; (2) folds at the waist: the hips lead or trail the
+      // head and feet; (3) lets its arms and legs go their own way. All of it scaled by how hard the blast took this one (fall), none of it alike twice.
+      if (h.cx !== undefined) {      /* (only when the caller says where the blast was: combat.js does unless ?blastfall=0, which gives the throw as before) */
+        let ax = p[I.P * 3] - cx, az = p[I.P * 3 + 2] - cz; const al = Math.hypot(ax, az) || 1; ax /= al; az /= al; const mx = (p[I.P * 3] + p[I.C * 3]) / 2, my = (p[I.P * 3 + 1] + p[I.C * 3 + 1]) / 2, mz = (p[I.P * 3 + 2] + p[I.C * 3 + 2]) / 2;
+        const w = (r() < 0.5 ? -1 : 1) * (1.3 + r() * 2.4) * fall * Math.max(1, dv / 6.5),      /* (a harder blast turns them harder: a rocket is force 6, a car 5) */ yaw = (r() - 0.5) * 3 * fall, tx = -az, tz = ax;      // somersault about the level axis (tx, tz), yaw about the upright
+        for (let i = 0; i < NP; i++) { const rx = p[i * 3] - mx, ry = p[i * 3 + 1] - my, rz = p[i * 3 + 2] - mz; this.addVel(i, w * (tz * ry) + yaw * rz, w * (tx * rz - tz * rx), w * (-tx * ry) - yaw * rx); }
+        const fold = (r() < 0.5 ? -1 : 1) * (0.7 + r() * 1.3) * fall; for (const i of [I.P, I.PF, I.HL, I.HR]) this.addVel(i, ax * fold, 0.3 * Math.abs(fold), az * fold); for (const i of [I.H, I.FL, I.FR, I.TL, I.TR]) this.addVel(i, -ax * fold * 0.5, 0, -az * fold * 0.5);
+        for (const [i, m] of [[I.EL, 1.6], [I.ER, 1.6], [I.WL, 2.6], [I.WR, 2.6], [I.AL, 2.6], [I.AR, 2.6], [I.KL, 1.2], [I.KR, 1.2], [I.FL, 1.8], [I.FR, 1.8]]) this.addVel(i, (r() - 0.5) * 2 * m * fall, (r() - 0.3) * 1.4 * m * fall, (r() - 0.5) * 2 * m * fall);
+        { const q = this.q, top = 3.6 * H_SUB; for (let i = 0; i < NP; i++) if (p[i * 3 + 1] - q[i * 3 + 1] > top) q[i * 3 + 1] = p[i * 3 + 1] - top; }      /* no point leaves upward faster than 3.6 m/s (first browser run: one body went 4.3 m up a shop front; at 5.2 a critic still saw bodies at awning height) */
+      }
       return;
     }
     const dv = 1.25 * force, heavy = force > 1.8;
