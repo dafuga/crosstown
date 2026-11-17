@@ -14,7 +14,7 @@ import * as THREE from 'three';
 import { clamp, wrapPi, rng } from '../geo.js';
 import { buildBike, buildBox, buildCrate, buildRider, buildWheel, AXLES, riderMaterial, BIKE } from './ridermodel.js';
 import { furnitureOf } from '../crowd/nav.js';
-import { buildPeople, VARIANTS, PEOPLE_POSES } from './riderpeople.js';
+import { buildPeople, skinnedRider, VARIANTS, PEOPLE_POSES } from './riderpeople.js';
 
 const lin = (hex) => { const c = new THREE.Color(hex); return [c.r, c.g, c.b]; };
 const JACKET = [0x26282d, 0x283048, 0x34373d, 0x413e36, 0x2c3f33, 0x26282d, 0x1c1d21, 0x3c4150, 0x4a4c50].map(lin).map((c) => c.map((v) => v * 0.6)), PANTS = [0x24262b, 0x2e3038, 0x33405e, 0x4c5058, 0x1c1d20, 0x5a5346].map(lin).map((c) => c.map((v) => v * 0.75));
@@ -164,15 +164,21 @@ export async function install(g) {
   // lead's pedhit ragdoll (game.onPedHit: its thud by speed, its camera knock, the street scattering); the bike alone is thrown ahead of the car and to the
   // side it was struck on, turns over in the air, comes down with a clatter, bounces once and slides to rest on its side. Nothing here runs until a hit.
   function clatter(f) { out.stats.clatter++; try { const s = g.sound; (s.clatter ? s : s.sfx).clatter(f); } catch (e) {} }
-  function body(x, y, z, h, pv, v, act) { const PH = g.__pedhit, pd = g.peds; if (!PH || !PH.on || !pd || !pd.kinds || !pd.kinds.length || !pd.visual) return false;
-    const vis = pd.visual(pd.kinds[(pv || 0) % pd.kinds.length]); if (!vis || !vis.object) return false;
+  // ragdoll lane, Nov 16 (Matt: "once I shoot them, they get a suit"): the body is the rider himself, in his own jacket, helmet and colours (riderpeople.js
+  // skinnedRider), not one of the game's pedestrians in other clothes. ?ridersuit=0 = the pedestrian as before; also when the crowd has no cast.
+  const OWN = !(P && P.get('ridersuit') === '0');
+  out.riderVis = (o, pose) => { if (!OWN || !o || !o.tr) return null; try { return skinnedRider(g, o.pv, o.tr, pose); } catch (e) { if (!out._rvErr) { out._rvErr = true; console.log('[riders] own body not made: ' + (e && (e.stack || e.message))); } return null; } };
+  function body(x, y, z, h, pv, v, act, who = null) { const PH = g.__pedhit, pd = g.peds; if (!PH || !PH.on || !pd || !pd.kinds || !pd.kinds.length || !pd.visual) return false;
+    const vis = out.riderVis(who, act === 'idle' ? (who && who.pose) || 'stand' : who && who.astride ? 'astride' : 'ride') || pd.visual(pd.kinds[(pv || 0) % pd.kinds.length]); if (!vis || !vis.object) return false;
     const p = { x, y, h, kind: vis.kind, vis, scale: 1, fall: 0, t: 0, state: 'down', speed: 0, vx: v.vx * 0.9, vy: v.vy * 0.9 };
+    /* ragdoll lane, Nov 17: with the revised bodies (?ragdoll2, the default now) a struck walker is thrown by the car's own panels, but a rider's body is made when the car is already on him: it got no push at all, dropped where it was in its riding crouch and stayed in it (a critic: 'a couple of metres for 60 km/h ... locks into a kneeling crouch'). He leaves with four fifths of the car's speed and a little lift, as a man knocked off a saddle does; the panels do the rest */
+    { const sp = Math.hypot(v.vx || 0, v.vy || 0); p.beforeHit = { x: (v.vx || 0) * 0.8, y: (v.vy || 0) * 0.8, up: Math.min(3.2, 0.9 + sp * 0.11) }; }
     vis.object.scale.setScalar(1); vis.object.position.set(x, z, -y); vis.object.rotation.set(0, h, 0);
     if (vis.mixer) { vis.mixer.stopAllAction(); vis.cur = null; vis.mixer.timeScale = 1; const a = vis.acts[act] || vis.acts.idle; if (a) a.reset().play(); vis.mixer.setTime(0.2); vis.mixer.timeScale = 0; }
     vis.object.updateMatrixWorld(true); pd.list.push(p); try { g.onPedHit(p, v); } catch (e) { console.log('[riders] cychit: ' + (e && e.message)); } if (vis.mixer) vis.mixer.timeScale = 0; return true; }
   function knock(r, v, own) {      // own: he was riding, so his own speed counts; false: a bike on its stand. false back = not hard enough (or no ragdoll to give him): the caller tips him over as before
     const sp = Math.hypot(v.vx || 0, v.vy || 0), ox = own ? Math.cos(r.h) * r.v : 0, oy = own ? Math.sin(r.h) * r.v : 0, cs = Math.hypot(v.vx - ox, v.vy - oy); if (cs < HARD || sp < 0.5) return false;
-    const had = own || !!r.rider; if (had && !body(r.x, r.y, r.z || 0, r.hv, own ? r.pv : r.sit ? r.sit.pv : r.pv, v, 'drive')) return false;
+    const had = own || !!r.rider; if (had && !body(r.x, r.y, r.z || 0, r.hv, own ? r.pv : r.sit ? r.sit.pv : r.pv, v, 'drive', own ? r : r.sit ? Object.assign({ astride: true }, r.sit) : r)) return false;
     const ux = v.vx / sp, uy = v.vy / sp, lat = -(r.x - v.x) * uy + (r.y - v.y) * ux, sg = Math.abs(lat) < 0.05 ? (rand() < 0.5 ? 1 : -1) : lat > 0 ? 1 : -1, side = 1.6 + 0.14 * cs + rand();
     r.state = 'down'; r.t = 0; r.mode = 'fallen'; r.rider = false; r.kn = 1; r.air = true; r.bz = 0; r.bvz = Math.min(5.5, 1.6 + 0.2 * cs); r.rest = 0;
     r.dvx = v.vx * 1.15 - uy * sg * side; r.dvy = v.vy * 1.15 + ux * sg * side; r.roll = -r.dvx * Math.sin(r.hv) + r.dvy * Math.cos(r.hv) > 0 ? -1 : 1;      // it turns over the way it is going
@@ -326,7 +332,7 @@ export async function install(g) {
       for (let i = C.bikes.length - 1; i >= 0; i--) { const b = C.bikes[i], dx = b.x - v.x, dy = b.y - v.y, f = dx * c + dy * s, l = -dx * s + dy * c; if (Math.abs(f) > v.def.len / 2 + 1.1 || Math.abs(l) > v.def.wid / 2 + 0.6) continue;
         for (const q of b.circ) q.on = false; C.bikes.splice(i, 1); const r = Object.assign(b, { mode: 'fallen', hv: b.h, z: 0.15, v: 0, id: -1 }); r.rider = !!b.sit; if (!(CYC && knock(r, v, false))) down(r, v.vx, v.vy, l); out.list.push(r); }
       for (let i = C.men.length - 1; i >= 0; i--) { const q = C.men[i]; if (q.fall) continue; const dx = q.x - v.x, dy = q.y - v.y, f = dx * c + dy * s, l = -dx * s + dy * c; if (Math.abs(f) > v.def.len / 2 + 0.5 || Math.abs(l) > v.def.wid / 2 + 0.4) continue;
-        if (CYC && sp >= HARD && body(q.x, q.y, kerbZ(q.x, q.y), q.h, q.pv, v, 'idle')) { q.circ.on = false; q.fall = { t: 99, vx: 0, vy: 0, sg: 1 }; out.stats.hits++; out.stats.thrown++; continue; }      // a man standing by: thrown as a body too (his figure here is no longer drawn)
+        if (CYC && sp >= HARD && body(q.x, q.y, kerbZ(q.x, q.y), q.h, q.pv, v, 'idle', q)) { q.circ.on = false; q.fall = { t: 99, vx: 0, vy: 0, sg: 1 }; out.stats.hits++; out.stats.thrown++; continue; }      // a man standing by: thrown as a body too (his figure here is no longer drawn)
         q.circ.on = false; q.fall = { t: 0, vx: v.vx * 0.8, vy: v.vy * 0.8, sg: l > 0 ? 1 : -1 }; out.stats.hits++; try { g.sound.thud(); g.missions.onPedHit(); } catch (e) {} } } }
 
   // ------------------------------------------------------------------ the step

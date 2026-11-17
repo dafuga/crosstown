@@ -12,7 +12,7 @@ import * as THREE from 'three';
 import { clamp, lerp, smooth, TAU } from './kit.js';
 import { makeSheet, aquaplane, waterLook } from './hydrant-water.js';
 
-const TUNE = { run: 150, fade: 25, dry: 240, v0: 13.5, elev: 0.16, up: 16, mist: 0.03, kids: 3, grown: 1, breakSpeed: 5, light: 1.0, far: 230, vol: 0.9 };
+const TUNE = { run: 150, fade: 25, dry: 240, v0: 13.5, elev: 0.16, up: 16, mist: 0.03, kids: 3, grown: 1, breakSpeed: 5, light: 1.0, lamp: 0.38, far: 230, vol: 0.9 };
 const G = 9.81, CELL = 24;
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _q3 = new THREE.Quaternion(), _m = new THREE.Matrix4(), _s = new THREE.Vector3(), _o = {}, ID = new THREE.Quaternion();
 const hsh = (a, b = 0) => { const s = Math.sin(a * 12.9898 + b * 78.233 + 0.5) * 43758.5453; return s - Math.floor(s); };
@@ -219,7 +219,7 @@ export function install(game, kit) {
     for (const o of S.open) { if (o.far > TUNE.far) { if (o.snd) o.snd.V.off(); continue; } near = true; if (dt > 0) { emit(o, dt); tyres(o, dt); } for (const kd of o.kids) kidDraw(kd, dt);
       if (o.snd) { o.snd.V.level = TUNE.vol * o.pr; o.snd.V.at(o.mode === 'jet' ? o.H.x + o.nx * 2 : o.H.x, o.mode === 'jet' ? o.H.y + o.ny * 2 : o.H.y, 1.2, dt || 0.016); } }
     if (near || R.puff.n || R.drop.n) { if (dt > 0) { if (!fPuff) { fPuff = fieldOf(R.puff); fDrop = fieldOf(R.drop); } R.puff.step(dt, R.nb ? fPuff : null); R.drop.step(dt, R.nb ? fDrop : null); }
-      kit.light(1, R.L); { const m = Math.max(R.L[0], R.L[1], R.L[2], 1e-3), k = (m > 1 ? 1 / m : 1) * TUNE.light; R.L[0] *= k; R.L[1] *= k; R.L[2] *= k; } R.puff.draw(R.L); R.drop.draw(R.L); }
+      kit.light(1, R.L); { const m = Math.max(R.L[0], R.L[1], R.L[2], 1e-3), k = (m > 1 ? 1 / m : 1) * TUNE.light; R.L[0] *= k; R.L[1] *= k; R.L[2] *= k; const nn = g.night ? g.night.n || 0 : 0, lp = TUNE.lamp * nn; R.L[0] += lp; R.L[1] += lp * 0.93; R.L[2] += lp * 0.8;      /* Nov 17: at night the water was lit by the sky's colour only and all but vanished; the street lamps' share (?hyd_lamp=0 = as it was) */ } R.puff.draw(R.L); R.drop.draw(R.L); }
     R.sheet.draw();
     if (t0) S.ms += (performance.now() - t0 - S.ms) * 0.05;
   }, 'hydrant');

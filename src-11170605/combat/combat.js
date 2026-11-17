@@ -646,9 +646,13 @@ export class Combat {
     if (h.kind === 'mounted') {
       const r = h.obj, heading = r.hv ?? r.h, speed = r.v || 0;
       const owner = r.moto ? g.moto : g.riders;
+      /* ragdoll lane, Nov 16 (Matt: "once I shoot them, they get a suit"): a shot rider fell as one of the game's pedestrians in other clothes. Now the body is the rider as drawn: a cyclist / delivery rider in his own jacket, helmet and colours (riders.riderVis), a motorcyclist as the figure mototraffic draws him as (moto.riderKind; it was a different one of the kit's people for every third rider). ?ridersuit=0 = as before */
+      const look = r.moto ? null : r.sit ? Object.assign({ astride: true }, r.sit) : r, old = g.P.get('ridersuit') === '0';
       if (!owner.releaseRider(r, h)) return null;
-      const kind = g.peds.kinds[(r.rk ?? r.pv ?? 0) % g.peds.kinds.length];
-      const vis = g.peds.visual(kind), p = {x:r.x, y:r.y, h:heading, kind, vis, scale:1, fall:0, t:0,
+      let own = null; if (look && !old && g.riders.riderVis) own = g.riders.riderVis(look, look.astride ? 'astride' : 'ride');
+      const mk = r.moto && !old && g.moto.riderKind ? g.moto.riderKind(r) : null;
+      const kind = own ? own.kind : mk || g.peds.kinds[(r.rk ?? r.pv ?? 0) % g.peds.kinds.length];
+      const vis = own || g.peds.visual(kind), p = {x:r.x, y:r.y, h:heading, kind, vis, scale:1, fall:0, t:0,
         state:'walk', speed, vx:Math.cos(heading)*speed, vy:Math.sin(heading)*speed};
       p.hp = (r.hp ?? 60) - (h.part === 'head' && this.HZ ? 1e4 : W.dmg * (h.part === 'head' ? 4 : h.part === 'legs' ? 0.7 : 1));
       vis.object.scale.setScalar(1);

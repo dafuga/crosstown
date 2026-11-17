@@ -104,7 +104,12 @@ function pvPlan(whole, blocks0, set) {
   const big = new Set(); for (const b of blocks0) if (b.ext && b.ext.length > 2 && Math.abs(ringArea(b.ext)) > PV_BIG) big.add(b);
   for (const w of waterOf(whole) || []) for (const c of w.cut || []) { const b = whole.blocks[c.block]; if (b && b.ext && b.ext.length > 2 && Math.abs(ringArea(b.ext)) > PV_BIG) for (const p of c.parts || []) big.add(p); }     /* and the pieces the water cut (cutBlocks) leaves of such a polygon, whatever their size */
   if (!big.size) return null;
-  return { big, region: set ? set.region : null, edges: whole.edges, nodes: whole.nodes, kerbs: [] };
+  // handoff-sliver: inRoad(x, y) = within a street's roadway (kerb to kerb by the data's width). A fused polygon keeps the holes the data did cut into it (a strip of parking lane,
+  // a bit of roadway); where such a hole lies inside a street that pvCarve cuts out, its kerb would stand as a stone ribbon down the middle of the road (W 41st St). ?pavedfix=nosliver = not.
+  let G = null; const grid = () => { if (G) return G; G = new Map(); for (const e of whole.edges) { const h = (e.width || 9.6) / 2 - 0.05; for (let i = 1; i < e.pts.length; i++) { const A = e.pts[i - 1], B = e.pts[i], q = [A[0], A[1], B[0] - A[0], B[1] - A[1], h * h];
+    for (let cx = Math.floor((Math.min(A[0], B[0]) - h) / 64); cx <= Math.floor((Math.max(A[0], B[0]) + h) / 64); cx++) for (let cy = Math.floor((Math.min(A[1], B[1]) - h) / 64); cy <= Math.floor((Math.max(A[1], B[1]) + h) / 64); cy++) { const k = cx * 100003 + cy; let a = G.get(k); if (!a) G.set(k, (a = [])); a.push(q); } } } return G; };
+  const inRoad = /[?&]pavedfix=nosliver/.test(location.search) ? null : (x, y) => { const a = grid().get(Math.floor(x / 64) * 100003 + Math.floor(y / 64)); if (a) for (const q of a) { const dx = x - q[0], dy = y - q[1], t = Math.max(0, Math.min(1, (dx * q[2] + dy * q[3]) / (q[2] * q[2] + q[3] * q[3] || 1e-9))), ex = dx - q[2] * t, ey = dy - q[3] * t; if (ex * ex + ey * ey < q[4]) return true; } return false; };
+  return { big, region: set ? set.region : null, edges: whole.edges, nodes: whole.nodes, kerbs: [], inRoad };
 }
 // a ring with a point added wherever it crosses an edge of the region: every segment is then wholly inside or wholly outside
 function pvSplit(pts, R) {
@@ -237,7 +242,8 @@ function readCity(city, pv = null) {     /* pv: streets handoff-paved (pvPlan), 
         const a = pts[i], c = pts[(i + 1) % pts.length], L = Math.hypot(c[0] - a[0], c[1] - a[1]), dx = (c[0] - a[0]) / (L || 1), dy = (c[1] - a[1]) / (L || 1);
         const sg = { ring, i, a, b: c, L, dx, dy, nx: -dy, ny: dx, run, notches: [], ave: false, ed: null, off: 0 }; run += L;
         const mx = (a[0] + c[0]) / 2, my = (a[1] + c[1]) / 2; let best = 60;
-        if (pvR && (mx < pvR[0] || mx > pvR[2] || my < pvR[1] || my > pvR[3])) { sg.out = true; ring.segs.push(sg); continue; }     /* handoff-paved: this stretch lies in another area: no kerb, no ramp, not in the field */
+        if (pvR && (mx < pvR[0] || mx > pvR[2] || my < pvR[1] || my > pvR[3])) { sg.out = true; ring.segs.push(sg); continue; }
+        if (big && k > 0 && pv.inRoad && pv.inRoad(mx, my) && pv.inRoad(a[0] * 0.8 + c[0] * 0.2, a[1] * 0.8 + c[1] * 0.2) && pv.inRoad(a[0] * 0.2 + c[0] * 0.8, a[1] * 0.2 + c[1] * 0.8)) { sg.out = true; ring.segs.push(sg); continue; }     /* handoff-sliver: a hole's edge that runs inside a street the cut opens: no kerb there */     /* handoff-paved: this stretch lies in another area: no kerb, no ramp, not in the field */
         eg.near(mx, my, (r) => { const d = segDist(mx, my, r.x1, r.y1, r.x2, r.y2)[0]; if (d < best) { best = d; sg.ed = r.ed; } });
         sg.ave = !!(sg.ed && sg.ed.ave);
         const og = offGrid(Math.atan2(dy, dx) / D2R, grid); if (L >= 5 && Math.abs(og) > 3) sg.off = Math.round(og * 2) / 2;   // half-degree steps

@@ -52,6 +52,7 @@ export async function install(g, M, POSE) {
 
   // ---------------------------------------------------------------- taking a bike from its rider
   function crime() { try { const H = g.combat && g.combat.heat; if (!H) return; if (typeof H.crime === 'function') H.crime('jack', pl.x, pl.y); else if (H.queue && H.start) { H.queue.push(['jack', pl.x, pl.y]); H.start('jack'); } } catch (e) { M.err('crime', e); } }
+  M.riderKind = (c) => (kinds.length ? kinds[c.rk % Math.min(kinds.length, 2)] : null);      // ragdoll lane, Nov 16: the figure this rider is drawn as (combat.js gives the same one to the body when he is shot)
   function makeNpc(c, v) { const kind = kinds.length ? kinds[c.rk % Math.min(kinds.length, 2)] : null; if (!kind || !EntryRig) return null; let vis = null; try { vis = g.kit.person(kind); } catch (e) {} if (!vis || !vis.acts.drive) return null; const rig = new EntryRig(vis, kind); if (!rig.ok) return null;
     g.world.scene.add(vis.object); vis.acts.drive.play(); vis.mixer.setTime(0.2); return { vis, rig, kind, v, c, state: 'ride', t: 0, rest: 0, pose: POSE.make(), x: v.x, y: v.y, h: v.h, z: 0, R: null, fake: null, U: null }; }
   function dropNpc(n) { try { g.world.scene.remove(n.vis.object); } catch (e) {} if (n.fake) n.fake.state = 'gone'; const i = M.npcs.indexOf(n); if (i >= 0) M.npcs.splice(i, 1); }

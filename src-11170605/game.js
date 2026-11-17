@@ -110,7 +110,7 @@ export class Vehicle {
 
 export class Game {
   constructor(world, params) {
-    if (!params.has('ragdoll2')) params.set('ragdoll2', '0');      /* merge lane, batch 5: the ragdoll lane's revised bodies (runtime 118) are in but OFF unless ?ragdoll2=1: a blind critic did not call the car hits better or equal in every pair (lanes/merge/batch-5/README.md). Delete this one line to make them the default; ?ragdoll2=0 then switches them off as the lane wrote it */
+    /* ragdoll lane, handoff 320 (CHIEF 22:30 Nov 16: 'decide whether revised bodies go on after throw strength and prop contact are fixed'): the revised bodies are ON by default now (the merge lane's one line that set ragdoll2 to 0 stood here). A blind critic preferred them in 7 of 10 pairs after the fixes (lanes/ragdoll/handoff-320/README.md). ?ragdoll2=0 = the bodies as before */
     this.world = world; this.P = params; this.city = world.city; this.t = 0; this.frame = 0;
     this.input = { steer: 0, throttle: 0, brake: 0, handbrake: false, mx: 0, my: 0, run: false, use: false, lookX: 0, lookY: 0 };
     this.keys = new Set(); this.vehicles = []; this.focus = { x: 0, y: 0 };
@@ -186,6 +186,7 @@ export class Game {
     const _sp = (this.P.get('spawn') || '').split(',').map(Number), _sx = _sp.length === 2 && isFinite(_sp[0]) && isFinite(_sp[1]) ? _sp : [-196, -214];     /* brooklyn lane: ?spawn=x,y (map metres) starts the player elsewhere: a set that does not touch the core yet */
     this.player = { x: _sx[0], y: _sx[1], h: 2.0, vehicle: null, speed: 0, vis: null, animT: 0, enterT: 0 };
     this.missions = new Missions(this);
+    if (this.P.get('pedlooks') !== '0') try { (await import('./pedlooks.js')).install(this); } catch (e) { console.log('[pedlooks] not loaded: ' + (e && e.message)); }     // people lane: each close pedestrian body gets its own clothing colour, hair and skin tone (no more clones); ?pedlooks=0 = as before
     this.setupPlayer();
     this.autopilot = new Autopilot(this);
     this.focus.x = this.player.x; this.focus.y = this.player.y;
