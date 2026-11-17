@@ -100,7 +100,9 @@ export class Heights {
     const q = (this.hfQ = this.hfQ || []); for (const n of list) if (!q.includes(n)) q.push(n);
     if (this.hfPump || !q.length) return; this.hfPump = true;
     const step = () => { if (!window.__ready && !window.__error) { setTimeout(step, 400); return; }     /* not during the load: the squares left for later would only be paid there after all */
-      const n = q.shift(); if (n === undefined) { this.hfPump = false; return; } try { this.bake([n]); } catch (e) {} setTimeout(() => requestAnimationFrame(step), 60); };
+      /* facades lane, Nov 17: the square NEAREST the player first (was: in the order they were asked for). On a map of many areas the list is long (71 squares waiting on the battery map after a jump to Grace Church), and the roofs where he stands were read last: until then the helicopter met the map's footprints there and the roof units (roofkit.js) were not drawn. ?hfnear=0 = before */
+      let bi = 0; const pl = this.g.player; if (pl && q.length > 1 && this.hfSq && !(this.g.P && this.g.P.get('hfnear') === '0')) { let bd = 1e18; for (let i = 0; i < q.length; i++) { const k = q[i], cx = this.hfX0 + (k % this.hfTX + 0.5) * this.hfSq, cy = this.hfY0 + (Math.floor(k / this.hfTX) + 0.5) * this.hfSq, d = (cx - pl.x) * (cx - pl.x) + (cy - pl.y) * (cy - pl.y); if (d < bd) { bd = d; bi = i; } } }
+      const n = q.splice(bi, 1)[0]; if (n === undefined) { this.hfPump = false; return; } try { this.bake([n]); } catch (e) {} setTimeout(() => requestAnimationFrame(step), 60); };
     requestAnimationFrame(step);
   }
   // a tile set came in during play: its squares are read again, one every few frames (each is one small draw and one read-back)
@@ -169,6 +171,10 @@ class Heli {
     await part('wash', (m) => new m.Wash(ctx)); if (this.parts.wash && this.parts.wash.solids) H.solids = this.parts.wash.solids;
     if (g.P.get('hboard') !== '0') try { await (await import('../entry/heliboard.js')).addHeliBoard(this); } catch (e) { console.log('[hboard] not loaded, the old boarding beat stands: ' + (e && (e.stack || e.message))); }     // gameplay lane: getting in and out as a watched beat (walk, door, climb, camera); ?hboard=0 off
     if (g.P.get('hwreck') === '0') f.sweep = false; else try { (await import('./wreck.js')).addWreck(this); } catch (e) { console.log('[hwreck] not loaded (the floor rule and the guard in flight.js still stand): ' + (e && (e.stack || e.message))); }     // gameplay lane, Nov 14: a wreck never falls through the world (flight.js) and the man in it is thrown clear or put out (wreck.js); ?hwreck=0 = as before
+    /* heli lane, Nov 16 (Matt: "Add missiles to the copter", "take a helicopter up to the top of the Empire State building and play sniper"): rockets.js = rocket pods (?hrockets=0 off);
+       perch.js = landing marks on the Empire State Building's deck and roof, and a rifle with a scope on any high roof (?perch=0 off). Neither file is fetched when it is off. */
+    if (g.P.get('hrockets') !== '0') try { this.rockets = (await import('./rockets.js')).addRockets(this, ctx); } catch (e) { console.log('[hrk] not loaded: ' + (e && (e.stack || e.message))); }
+    if (g.P.get('perch') !== '0') try { this.perch = (await import('./perch.js')).addPerch(this, ctx); } catch (e) { console.log('[perch] not loaded: ' + (e && (e.stack || e.message))); }
     // where it stands: a street-level spot by the player's start, and marked roofs to land on
     this.pads = [this.streetPad()];
     for (const [name, x, y] of [['The Grand Madison', -66.7, -124.3], ['1150 Broadway', -156.0, -62.5], ['Park Avenue South', 107.4, -137.2], ['East 21st', 107.9, -299.2], ['West 22nd', -366.5, -354.6], ['West 25th', -261.5, -180.2]]) { const p = H.findFlat(x, y, 34, 15, 25); if (p) this.pads.push({ name, x: p.x, y: p.y, h: this.pads[0].h, roof: true, z: p.z }); }
@@ -232,6 +238,8 @@ class Heli {
     const p = name === 'model' ? this.model : this.parts[name]; if (!p || p.dead || !p[fn]) return;
     try { p[fn](a, b, c, d); } catch (e) { p.errs = (p.errs || 0) + 1; if (p.errs <= 3) console.log('[heli] ' + name + '.' + fn + ' threw: ' + (e && (e.stack || e.message))); if (p.errs >= 3) { p.dead = true; console.log('[heli] ' + name + ' switched off after repeated errors'); if (p.root && name !== 'model') p.root.visible = false; } }
   }
+  // rockets.js / perch.js: one of their calls; a fault is logged and after three the part is left out
+  ext(name, fn, a, b) { const p = this[name]; if (!p || p.dead || !p[fn]) return; try { p[fn](a, b); } catch (e) { p.errs = (p.errs || 0) + 1; if (p.errs <= 3) console.log('[heli] ' + name + '.' + fn + ' threw: ' + (e && (e.stack || e.message))); if (p.errs >= 3) p.dead = true; } }
   get mapX() { return this.f.pos.x; } get mapY() { return -this.f.pos.z; }
   // the pilot's door, in map coordinates (the right side of the aircraft), on the surface it stands on
   doorPoint(out = {}) { const f = this.f, d = DIMS.doorR; _v.set((d.x0 + d.x1) / 2 - DIMS.cg[0] - 0.1, 0, DIMS.cabinHalfW + 0.95).applyQuaternion(f.quat); out.x = f.pos.x + _v.x; out.y = -(f.pos.z + _v.z); out.z = f.surface; return out; }
@@ -301,6 +309,7 @@ class Heli {
     if (this.note) { this.note.t += dt; if (this.note.t > 3) this.note = null; }
     if (this.piloted) this.hintT += dt;
     this.call('wash', 'step', f, dt, this);
+    this.ext('rockets', 'step', dt); this.ext('perch', 'step', dt);
   }
   // mouse (pointer locked): looks around, or flies the cyclic when G is on
   look(I) {
@@ -347,7 +356,7 @@ class Heli {
       C.clip = C.clip === undefined || !C.init ? ok : C.clip + (ok - C.clip) * Math.min(1, dt * (ok < C.clip ? 20 : 2)); d = Math.min(d, C.clip);
       const sh = (C.shake * C.shake * 0.35 + buzz * 0.04), n = g.frame;
       cam.position.set(C.tgt.x + bx * d + Math.sin(n * 1.7) * sh, Math.max(C.tgt.y + by * d + Math.sin(n * 2.3) * sh, 0.6), C.tgt.z + bz * d + Math.cos(n * 1.3) * sh);
-      _v.set(C.tgt.x, C.tgt.y + (far ? 0.5 : 0.2), C.tgt.z);     // the aircraft sits just below the middle of the frame, always
+      _v.set(C.tgt.x, C.tgt.y + (far ? 0.5 : 0.2) + (this.rockets && !this.rockets.dead && this.piloted ? 1.5 : 0), C.tgt.z);     // the aircraft sits just below the middle of the frame, always (with rockets a little lower still: the aim ring shows over the rotor head, not on the cabin)
       cam.up.set(0, 1, 0); cam.lookAt(_v);
       // a little of the bank reaches the horizon
       C.bank = (C.bank || 0) + (clamp(-f.roll * 0.1 * Math.cos(wrapPi(C.yaw - hd)), -0.07, 0.07) - (C.bank || 0)) * Math.min(1, dt * 2.5); cam.rotateZ(C.bank);
@@ -380,13 +389,15 @@ class Heli {
       const o = pl.vis.object, s = DIMS.pilotSeat, show = !inside && !!pl.vis.acts?.drive; o.visible = show;
       if (show) { g.playerAnim('drive'); _v.set(s[0] - 0.12, s[1] + 0.02, s[2]).applyMatrix4(this.root.matrixWorld.compose(this.root.position, this.root.quaternion, this.root.scale)); o.position.copy(_v); o.quaternion.copy(f.quat); if (pl.vis.mixer) { pl.vis.mixer.timeScale = 1; pl.vis.mixer.update(dt); } }
     } else if (pl.alt && !pl.vehicle && !pl.busy) pl.vis.object.position.y = pl.alt;
+    this.ext('rockets', 'sync', dt, view); this.ext('perch', 'sync', dt, view);
     if (!this.hasCamera && this._wasIn) { this._wasIn = false; g.world.fixedNear = 0; g.world.nearObject = null; cam.near = 0.25; cam.updateProjectionMatrix(); }
   }
 
   // ------------------------------------------------------------------ on screen
   drawHud(hud) {
     const g = this.g, f = this.f, c = hud.ctx, W = hud.w / hud.k, H = 1080, AMBER = '#ffb82e';
-    if (!this.piloted) { if (this.canBoard() && !g.demo) { hud.panel(W / 2 - 150, H * 0.62, 300, 44, 22); hud.text('F', W / 2 - 112, H * 0.62 + 30, 20, AMBER, 'center', 800); hud.text('Fly the helicopter', W / 2 + 14, H * 0.62 + 30, 20, '#fff', 'center', 600); } return; }
+    this.ext('perch', 'drawHud', hud); this.ext('rockets', 'drawHud', hud);
+    if (!this.piloted) { if (this.canBoard() && !g.demo && !(this.perch && this.perch.scoped)) { hud.panel(W / 2 - 150, H * 0.62, 300, 44, 22); hud.text('F', W / 2 - 112, H * 0.62 + 30, 20, AMBER, 'center', 800); hud.text('Fly the helicopter', W / 2 + 14, H * 0.62 + 30, 20, '#fff', 'center', 600); } return; }
     if (this.insideView && !g.P.has('helihud')) { /* in the cockpit the panel is the instrument; only warnings and notes are drawn */ }
     else {
       const x = 36, y = H - 190; hud.panel(x, y, 372, 104);
@@ -398,7 +409,7 @@ class Heli {
     if (f.engine === 'off' && !f.onGround) warn = 'ENGINE OUT · LOWER COLLECTIVE · FLARE'; else if (f.engine === 'fail') warn = 'ENGINE FAILED'; else if (f.nr < 0.88 && f.engine === 'run') warn = 'LOW ROTOR RPM'; else if (f.vrs > 0.45) warn = 'SINK RATE · FLY FORWARD'; else if (f.engine === 'starting') warn = 'STARTING'; else if (f.pos.y > CEILING - 12) warn = 'SERVICE CEILING';
     if (warn && (Math.floor(g.t * 3) % 2 || f.engine === 'starting')) { hud.panel(W / 2 - 250, 118, 500, 44, 6); hud.text(warn, W / 2, 148, 20, f.engine === 'starting' ? '#fff' : '#ff5a45', 'center', 700, 2); }
     if (this.note) { c.globalAlpha = clamp(3 - this.note.t, 0, 1); hud.panel(W / 2 - 300, 172, 600, 40, 6); hud.text(this.note.text, W / 2, 199, 17, '#fff', 'center', 600, 1.5); c.globalAlpha = 1; }
-    if (this.hintT < 16 && !g.capture) { c.globalAlpha = clamp(16 - this.hintT, 0, 1); hud.panel(W / 2 - 620, H - 58, 1240, 40, 6); hud.text('W S  up / down     A D  turn     ARROWS  tilt     C  view     E  engine     G  mouse flies     T  stability     F  get out (landed)', W / 2, H - 32, 15, '#fff', 'center', 600, 1); c.globalAlpha = 1; }
+    if (this.hintT < 16 && !g.capture) { c.globalAlpha = clamp(16 - this.hintT, 0, 1); const rk = this.rockets && !this.rockets.dead; hud.panel(W / 2 - (rk ? 720 : 620), H - 58, rk ? 1440 : 1240, 40, 6); hud.text('W S  up / down     A D  turn     ARROWS  tilt     C  view     E  engine     G  mouse flies     T  stability     ' + (rk ? 'MOUSE / R  rockets     ' : '') + 'F  get out (landed)', W / 2, H - 32, 15, '#fff', 'center', 600, 1); c.globalAlpha = 1; }
   }
 }
 
