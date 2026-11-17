@@ -118,8 +118,8 @@ export async function addCrowd(game, opts = {}) {
     let furniture;
     try { furniture = furnitureOf(game); }
     catch (e) { console.log('[crowd] furniture not read: ' + e.message); furniture = { extra: [], seats: [] }; }
-    const { extra, seats } = furniture;
-    const tN = performance.now(), nav = buildNav(game, plazas, extra); out.report.furniture = extra.length; out.report.seats = seats.length; out.report.nav_ms = Math.round(performance.now() - tN); Object.assign(out.report, { ways: nav.report.ways, km: nav.report.km, crossings: nav.report.crossings });
+    const { extra, seats, raisedTables } = furniture;
+    const tN = performance.now(), nav = buildNav(game, plazas, extra, raisedTables); out.report.furniture = extra.length; out.report.seats = seats.length; out.report.nav_ms = Math.round(performance.now() - tN); Object.assign(out.report, { ways: nav.report.ways, km: nav.report.km, crossings: nav.report.crossings });
     let cast = null; const tC = performance.now(), perf = (k) => !(P && (P.get(k) === '0' || P.get('crowdperf') === '0'));
     const { CrowdRender, smoothOf } = await import('./crowd/render.js');
     if (!(P && P.get('crowdcast') === 'people') && perf('crowdwork')) { try { cast = await loadCastSplit(P, smoothOf(P), P && P.get('crowdanim') === 'late'); } catch (e) { console.log('[crowd] cast not split (' + (e && e.message) + '): the whole file on the page'); } }
@@ -133,15 +133,15 @@ export async function addCrowd(game, opts = {}) {
     Object.assign(out, { on: true, nav, sim, render, count, group: render.group });
     const furnitureJobs = [];
     out.refreshFurniture = (region) => {
-      const { extra, seats } = furnitureOf(game);
+      const { extra, seats, raisedTables } = furnitureOf(game);
       // Walking bands sample up to 13 m from each route. Include seam neighbors.
       const nearby = region && (w => {
         const end = w.b || { x: w.ax, y: w.ay };
         return Math.max(w.ax, end.x) >= region[0] - 16 && Math.min(w.ax, end.x) <= region[2] + 16 &&
                Math.max(w.ay, end.y) >= region[1] - 16 && Math.min(w.ay, end.y) <= region[3] + 16;
       });
-      furnitureJobs.push(nav.refresh(extra, nearby));
-      sim.addSeats(seats);
+      furnitureJobs.push(nav.refresh(extra, nearby, raisedTables));
+      sim.addSeats(seats, true);
       out.report.furniture = extra.length;
       out.report.seats = sim.seats.length;
     };

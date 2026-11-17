@@ -23,6 +23,7 @@ export async function shared(game) {
 const PARS = /* glsl */`
   uniform sampler2D tMask, tLawn, tLitter, tDirt, tWorn, tAsph, tRock, tParkCut; uniform vec4 uParkBox; uniform vec3 uMLawn, uMLit, uMDirt, uMWorn; uniform vec4 uChunk;
   vec3 tone(vec3 c, vec3 mean, vec3 to) { return to * c / max(mean, vec3(0.01)); }`;
+const SAND8 = typeof location === 'undefined' || new URLSearchParams(location.search).get('parksand') !== '0';      // handoff-8: sand without a tile pattern and with a soft worn margin; `?parksand=0` = as before
 const BODY = /* glsl */`
   vec2 m = vec2(w.x, -w.y);
   vec3 mk = texture2D(tMask, (m - uChunk.xy) / uChunk.z).rgb;
@@ -31,34 +32,50 @@ const BODY = /* glsl */`
   float big = fbm(m * 0.045), mid = fbm(m * 0.33 + 9.0), fine = vnoise(m * 6.0);
   float rag = (mid - 0.5) * 0.5 + (fine - 0.5) * 0.25;
   float sand = min(mk.r, mk.g), paved = smoothstep(0.38, 0.62, mk.r - sand + rag * 0.6), wood = smoothstep(0.30, 0.70, mk.g - sand + rag), rock = smoothstep(0.35, 0.65, mk.b + rag * 0.5);
-  sand = smoothstep(0.35, 0.65, sand + rag * 0.6);
+  ${SAND8 ? `// handoff-8 (critic r3: "a hard straight edge" where sand meets lawn): the mask's own edge is one texel wide and the noise could not move it. The sand's share is read
+  // again 1.3 m to four sides: its mean falls off over the margin, the edge is ragged inside it and the lawn beside it is worn (sandM, below)
+  vec2 mu = (m - uChunk.xy) / uChunk.z, me = vec2(1.3 / uChunk.z, 0.0); vec3 s1 = texture2D(tMask, mu + me.xy).rgb, s2 = texture2D(tMask, mu - me.xy).rgb, s3 = texture2D(tMask, mu + me.yx).rgb, s4 = texture2D(tMask, mu - me.yx).rgb;
+  float sandV = 0.4 * sand + 0.15 * (min(s1.r, s1.g) + min(s2.r, s2.g) + min(s3.r, s3.g) + min(s4.r, s4.g)), sandM = smoothstep(0.04, 0.40, sandV + rag * 0.3);
+  sand = smoothstep(0.38, 0.62, sandV + rag * 1.1);` : `float sandM = 0.0;
+  sand = smoothstep(0.35, 0.65, sand + rag * 0.6);`}
   float steep = (1.0 - smoothstep(0.66, 0.80, bakeN.y + rag * 0.12)) * (1.0 - paved);
   rock = max(rock, steep);
   // lawn in November: still green, drier drifts, fallen leaves gathering in patches and more under the woods' edge
   vec3 lawn = tone(texture2D(tLawn, m / 3.3).rgb, uMLawn, vec3(0.033, 0.036, 0.016)) * mix(vec3(0.70, 0.80, 0.78), vec3(1.25, 1.08, 0.80), smoothstep(0.25, 0.75, big));
   vec3 wornC = tone(texture2D(tWorn, m / 2.7).rgb, uMWorn, vec3(0.040, 0.038, 0.020));
-  lawn = mix(lawn, wornC, smoothstep(0.55, 0.8, fbm(m * 0.11 + 3.0)) * 0.7);
+  lawn = mix(lawn, wornC, smoothstep(0.50, 0.68, fbm(m * 0.11 + 3.0)) * 0.8);      // look pass k1: worn patches were rare (0.55 .. 0.8, 0.7)
   vec3 lit_ = tone(texture2D(tLitter, m / 2.1).rgb, uMLit, vec3(0.060, 0.038, 0.018));
   vec3 lit2 = tone(texture2D(tLitter, m.yx / 3.7 + 0.4).rgb, uMLit, vec3(0.075, 0.050, 0.020));
   vec3 litter = mix(lit_, lit2, smoothstep(0.35, 0.65, mid));
-  vec3 dirt = tone(texture2D(tDirt, m / 2.9).rgb, uMDirt, vec3(0.085, 0.066, 0.042)) * (0.8 + 0.4 * big);
-  vec3 a1 = texture2D(tAsph, m / 4.0).rgb, a2 = texture2D(tAsph, m.yx / 11.3 + 0.31).rgb;
-  vec3 asph = mix(a1, a2, 0.45); asph = mix(vec3(dot(asph, vec3(0.333))), asph, 0.5) * 0.46 + 0.006;      /* Nov 16: was * 1.25 + 0.012: the drives and paths drew near white in sun (stills r1, s1); park asphalt is a worn mid grey */ asph *= 0.78 + 0.45 * big;
+  ${SAND8 ? `// handoff-8 (critic r3: "a visible checker tile on the sand"): one picture laid square every 2.9 m repeated across a playground; now two layers of it, turned
+  // and at other sizes, each showing where a slow noise picks it, so no tile comes round
+  vec3 dirt = tone(mix(texture2D(tDirt, (m * mat2(0.8, -0.6, 0.6, 0.8)) / 3.7).rgb, texture2D(tDirt, m.yx / 6.1 + 0.37).rgb, smoothstep(0.30, 0.70, fbm(m * 0.23 + 17.0))), uMDirt, vec3(0.062, 0.049, 0.032)) * (0.8 + 0.4 * big);`
+  : `vec3 dirt = tone(texture2D(tDirt, m / 2.9).rgb, uMDirt, vec3(0.062, 0.049, 0.032)) * (0.8 + 0.4 * big);`}
+  vec3 a1 = texture2D(tAsph, (m * mat2(0.8, -0.6, 0.6, 0.8)) / 6.7).rgb, a2 = texture2D(tAsph, m.yx / 11.3 + 0.31).rgb;      // look pass k1: the first layer lay square at 4 m and its cracks repeated; the paving stood white beside the rock (0.46 -> 0.34)
+  vec3 asph = mix(a1, a2, 0.5); asph = mix(vec3(dot(asph, vec3(0.333))), asph, 0.5) * 0.34 + 0.005;      /* Nov 16: was * 1.25 + 0.012: the drives and paths drew near white in sun (stills r1, s1); park asphalt is a worn mid grey */ asph *= 0.78 + 0.45 * big;
   asph *= 1.0 - 0.35 * (1.0 - smoothstep(0.0, 0.02, abs(fbm(m * 0.7 + 40.0) - 0.5) - 0.004)) * step(0.5, big);
   // Manhattan schist: grey, banded along the strike (north-east), glinting; darker in the joints
   vec2 sr = m * mat2(0.819, -0.574, 0.574, 0.819);
-  vec3 rk = texture2D(tRock, sr / vec2(5.0, 3.0)).rgb; rk = mix(vec3(dot(rk, vec3(0.333))), rk, 0.35);
+  // look pass k1 (critic r1: "pale smooth cream hump with stretched marble veins"): the rock's albedo is on the lawn's scale now (0.36 -> 0.12:
+  // the lawn is 0.035), the picture is laid at 2 m and 1.3 m in two directions (was one 5 x 3 m stretch), slabs step in tone along the strike,
+  // and soil, moss and grass sit in the cracks
+  vec3 rk = mix(texture2D(tRock, sr / vec2(2.1, 1.5)).rgb, texture2D(tRock, sr.yx / vec2(1.3, 1.9) + 0.37).rgb, 0.45); rk = mix(vec3(dot(rk, vec3(0.333))), rk, 0.35);
   float band = fbm(vec2(sr.x * 0.25, sr.y * 3.2) + big * 2.0), joint = (1.0 - smoothstep(0.0, 0.03, abs(fbm(sr * vec2(0.9, 0.35) + 7.0) - 0.5) - 0.006));
-  vec3 rockC = rk * vec3(0.36, 0.35, 0.34) * (0.62 + 0.75 * band) * (1.0 - 0.55 * joint) + vec3(0.02) * step(0.93, fine);
-  rockC = mix(rockC, rockC * vec3(0.55, 0.62, 0.42), smoothstep(0.62, 0.85, fbm(m * 0.21 + 21.0)) * 0.6);      // lichen and moss in the damp parts
+  float slab = hash21(vec2(floor(sr.y * 0.9 + fbm(sr * vec2(0.12, 0.5)) * 3.0), 5.0)), crack = 1.0 - smoothstep(0.0, 0.07, abs(fbm(sr * vec2(0.45, 0.16) + 31.0) - 0.5) - 0.012);
+  vec3 rockC = rk * vec3(0.076, 0.075, 0.074) *      /* look pass k2: 0.12 still drew pale grey against the sun (still k2a c) */ (0.50 + 0.75 * band) * (0.72 + 0.5 * slab) * (1.0 - 0.6 * joint) + vec3(0.008) * step(0.93, fine);
+  rockC = mix(rockC, rockC * vec3(0.55, 0.66, 0.40), smoothstep(0.58, 0.82, fbm(m * 0.21 + 21.0)) * 0.7);      // lichen and moss in the damp parts
+  rockC = mix(rockC, mix(dirt * 0.5, mix(dirt, lawn, 0.3) * 0.75, smoothstep(0.4, 0.6, mid)), crack * crack * 0.5 * smoothstep(0.75, 0.9, bakeN.y));      /* lead's read of k2 c: the grass in the cracks drew neon lime (was lawn * 1.1 at 0.85): dull olive-brown and thinner now; NOT seen in a still */      // soil and grass in the cracks of the flatter rock
   float leaves = smoothstep(0.40, 0.70, fbm(m * 0.16 + 11.0) * 0.7 + mid * 0.3);
   vec3 col = mix(lawn, litter, leaves * 0.75);
   col = mix(col, litter, wood);
+  col = mix(col, mix(wornC, dirt, 0.4), sandM * 0.75);      // handoff-8: the worn margin of thin grass and trodden soil round a sand patch (0 with ?parksand=0)
   col = mix(col, dirt, sand);
   col = mix(col, mix(asph, litter, leaves * 0.30 * smoothstep(0.4, 0.7, fine)), paved);
   col = mix(col, rockC, rock);
   diffuseColor.rgb = col;
-  pkRough = mix(0.97, 0.86, paved);`;
+  pkRough = mix(0.97, 0.86, paved);
+  pkNight = mix(mix(1.0, 1.36, paved), 4.5, rock);      /* handoff-9: at night the colour goes back up by what the look pass took off (asphalt 0.46 -> 0.34, rock 0.36 -> 0.076; the lawn was not changed): mat.js */
+  pkSpec = mix(mix(0.12, 0.22, paved), 0.08, rock);`;      /* look pass k2: grass, litter and weathered schist throw no sheet of glare back at a low sun (mat.js) */
 
 export function material(game, S, tMask, i, j) {
   const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95, metalness: 0 });
@@ -66,7 +83,7 @@ export function material(game, S, tMask, i, j) {
   return lit(m, game.world.shared, { key: 'ground', pars: PARS, body: BODY, uniforms: { ...S, tMask: { value: tMask }, uChunk: { value: new THREE.Vector4(i * CELL, j * CELL, CELL, 0) } } });
 }
 
-const COL = { lawn: '#000', wood: '#0f0', bed: '#0f0', rock: '#00f', sand: '#ff0', water: '#ff0', paving: '#f00', building: '#f00', ice: '#f00', playground: '#f00' };
+const COL = { lawn: '#000', wood: '#0f0', bed: '#0f0', rock: '#00f', sand: '#ff0', water: '#ff0', paving: '#f00', building: '#f00', ice: '#f00', playground: (typeof location !== 'undefined' && new URLSearchParams(location.search).get('parkplay') === '0') ? '#f00' : '#ff0' };      /* critic r2 (Nov 17): the Heckscher playground lay as one sheet of pale paving ("flat white, reads like snow"); a playground's ground is sand and safety surface: the sand / dirt look. ?parkplay=0 = paving as before */
 // paint the mask (S px across the chunk) and return the canvas
 export function paintMask(S, i, j, data, outline) {
   const c = document.createElement('canvas'); c.width = c.height = S; const g = c.getContext('2d'), k = S / CELL, X = (x) => (x - i * CELL) * k, Y = (y) => S - (y - j * CELL) * k;

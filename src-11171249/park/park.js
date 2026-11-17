@@ -61,7 +61,7 @@ export async function start(game) {
     }
   } catch (error) { console.log('[game] park: lamps.json not read: ' + error.message); }
   const G = await import('./ground.js'), Tr = await import('./trees.js'), Wa = await import('./water.js'), Br = await import('./bridge.js'), Pr = await import('./props.js'), St = await import('./structs.js'), Sh = await import('./shore.js'), shoreOn = !(Q && Q.get('parkshore') === '0');
-  const Cu = await import('./cut.js'), cut = Q && Q.get('parkcut') === '0' ? null : Cu.makeCut(game, park); park.cut = cut;      /* ?parkcut=0: the street's flat ground is left whole (hollows hidden under it) */
+  const Lm = await import('./landmarks.js'); const Cu = await import('./cut.js'), cut = Q && Q.get('parkcut') === '0' ? null : Cu.makeCut(game, park); park.cut = cut;      /* ?parkcut=0: the street's flat ground is left whole (hollows hidden under it) */
   const S = { ...(await G.shared(game)), ...(cut ? cut.U : Cu.noCut()) }, root = new THREE.Group(); root.name = 'park'; world.scene.add(root); park.root = root;
   Tr.setSpecies(park.index.species_info); const pool = treesOn ? Tr.nearPool(game, root) : null;
   const fid = (o, k) => String(o.id !== undefined ? o.id : (o.name || k) + ':' + ((o.ring || o.line)[0] || []).join(','));
@@ -90,6 +90,12 @@ export async function start(game) {
     C.fetchFailures = 0; C.retryAfter = 0; C.data = d.data; C.cm = d.cm; C.F = G.prepHeights(C.cm, C.i, C.j, C.data, park.outline, cut ? Cu.INSET : 0); T.set(C.i, C.j, C.cm);
     const wet = (C.data.areas || []).filter((a) => (a.kind === 'water' || a.kind === 'ice' || a.kind === 'building') && a.ring && a.ring.length > 2);      // no tree stands in water, on the rink or through a roof
     C.trees = treesOn ? Tr.parse(d.trees, C.data.paths, park.index.test ? 6 : 8).filter((t) => t.x >= C.i * CELL && t.x < C.i * CELL + CELL && t.y >= C.j * CELL && t.y < C.j * CELL + CELL && T.owns(t.x, t.y) && !wet.some((a) => pipR(t.x, t.y, a.ring))) : [];
+    { const W = (C.data.structures || []).filter((q) => q.kind === 'wall' && q.line && q.line.length > 1);      /* critic r1, Nov 16: a trunk whose lidar top lay over the wall stood IN the wall (its root flare poked through, still a): moved 1.5 m off the wall line, to its own side */
+      if (W.length) for (const t of C.trees) for (const q of W) for (let k = 0; k + 1 < q.line.length; k++) { const p0 = q.line[k], p1 = q.line[k + 1], dx = p1[0] - p0[0], dy = p1[1] - p0[1], L2 = dx * dx + dy * dy || 1, u = Math.max(0, Math.min(1, ((t.x - p0[0]) * dx + (t.y - p0[1]) * dy) / L2)), nx = t.x - p0[0] - dx * u, ny = t.y - p0[1] - dy * u, d = Math.hypot(nx, ny); if (d < 1.5 && d > 0.02) { t.x += nx / d * (1.5 - d); t.y += ny / d * (1.5 - d); t.mv = 1; } }
+      /* look pass k2: a moved tree can land against the next wall piece or on a path: such a tree is left out (tools/treewall.py --sim2 counts them) */
+      if (W.length) { const dl = (x, y, L) => { let m = 1e9; for (let k = 0; k + 1 < L.length; k++) { const dx = L[k + 1][0] - L[k][0], dy = L[k + 1][1] - L[k][1], u = Math.max(0, Math.min(1, ((x - L[k][0]) * dx + (y - L[k][1]) * dy) / (dx * dx + dy * dy || 1))); m = Math.min(m, Math.hypot(x - L[k][0] - dx * u, y - L[k][1] - dy * u)); } return m; };
+        const PP = (C.data.paths || []).filter((p) => p.pts && p.pts.length > 1 && !p.tunnel);
+        C.trees = C.trees.filter((t) => !t.mv || (!W.some((q) => dl(t.x, t.y, q.line) < 1.45) && !PP.some((p) => dl(t.x, t.y, p.pts) < (p.w || 3) / 2 + 0.2))); } }
     if (persistentTrunks && C.trees.length) addTrunks(C, 'park:trunks:' + C.id);
     C.data.__trees = C.trees;      /* the mask painter drifts fallen leaves under them (ground.js) */
     C.feat = [];
@@ -115,6 +121,7 @@ export async function start(game) {
     if (nb) rewall();
     const inC = (x, y) => x >= C.i * CELL && x < C.i * CELL + CELL && y >= C.j * CELL && y < C.j * CELL + CELL; C.nearG.add(owned(own, () => St.build(game, S, C.data.structures, inC)));
     C.nearG.add(owned(own, () => Pr.build(game, (C.data.props || []).filter((p) => p.x >= C.i * CELL && p.x < C.i * CELL + CELL && p.y >= C.j * CELL && p.y < C.j * CELL + CELL && !(LAMPS && p.kind === 'lamp')).concat((LAMPS && LAMPS.get(C.i + '_' + C.j)) || []))));
+    C.nearG.add(owned(own, () => Lm.build(game, S, C, park, inC)));      /* hand-built places (landmarks.js) */
     if (C.trees.length) { await breathe(); C.nearG.add(await Tr.mid(game, C.trees)); if (!persistentTrunks) addTrunks(C, own); }
     C.farG.visible = false; C.group.add(C.nearG); C.state = 2; park.report.near++; };
   const toFarAgain = (C) => { st.removeSet('park:' + C.id); if (pool) pool.forget(C.trees); for (const t of C.trees) t.wi = null; C.group.remove(C.nearG); disposeGroup(C.nearG); C.nearG = null; C.farG.visible = true; release(C, (f) => !!f.area || f.rock); C.state = 1; };
@@ -142,6 +149,7 @@ export async function start(game) {
   park.mirrorNow = () => Wa.mirrorNow();
   park.dispose = () => { clearInterval(park.timer); clearInterval(park.nightLamps?.t); for (const C of park.chunks.values()) if (C.state) drop(C); world.scene.remove(root); };
   park.count = () => { const n = [0, 0, 0]; for (const C of park.chunks.values()) n[C.state]++; return { none: n[0], far: n[1], near: n[2], features: park.features.size, nearTrees: pool ? pool.n : 0 }; };
+  if (!Q || Q.get('parkloop') !== '0') try { (await import('./loop.js')).install(game, park); } catch (e) { console.log('[game] park: runners and cyclists not loaded: ' + (e && e.message)); }      /* park/loop.js: runners and cyclists on the drives; ?parkloop=0 = none */
   // the first chunks before the game shows: the player may start in or beside the park
   try { const pl = game.player; if (pl && T.inBox(pl.x, pl.y)) await park.settle(); } catch (e) {}
   return park;

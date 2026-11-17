@@ -43,7 +43,7 @@ export async function addStreets(game, opts = {}) {
         if (ts && ts.state !== 2) return false;     /* the area's tile set (its buildings and the model's ground, which the ground layer takes over) must be in first: tiles.js fetches it from 1,200 m */
         if (!gate || !b || !c) return true; const x = c.x, y = -c.z, dx = Math.max(b[0] - x, 0, x - b[2]), dy = Math.max(b[1] - y, 0, y - b[3]); return Math.hypot(dx, dy) <= gate; };
       const pend = out.later.slice(), run1 = async (j) => { try { const ms = await j.run();
-        if (j.part === 'furniture') {
+        if (j.part === 'furniture' || j.part === 'storefronts') {
           if (game.peds) game.peds.furniture = null;
           game.crowd?.refreshFurniture?.(j.region);
         }

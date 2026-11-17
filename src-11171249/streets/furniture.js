@@ -757,7 +757,10 @@ function buildProtos(A, A2, A3) {
   // street-name blade (cantilevered from the pole along its own street) and the one-way plate strapped below
   { const b = pbS(); b.quad('blade', [0.62, 0.11, 0], 0.92, 0.2, { double: true, vary: true }); b.box([0.62, 0.222, 0], [0.96, 0.024, 0.02], cGalvD, GAL); b.box([0.62, -0.002, 0], [0.96, 0.024, 0.02], cGalvD, GAL); b.box([0.135, 0.11, 0], [0.05, 0.25, 0.03], cGalvD, GAL);
     for (const y of [0.05, 0.15]) b.cyl([0, y, 0], [0, y + 0.02, 0], 0.133, 0.132, C('#a9adac'), { w: [0.03, 0.6], seg: 10, spin: PI / 8 }); P.blade = b.build(); }
-  { const b = pb(); b.quad('oneway', [0, 0.15, 0.15], 0.92, 0.3, {}); b.quad('oneway', [0, 0.15, -0.15], 0.92, 0.3, { ry: PI, ci: 1 });      // two plates, one each side of the pole: read from both directions, the pole behind each
+  { const b = pb(); b.quad('oneway', [0, 0.15, 0.15], 0.92, 0.3, {}); b.quad('oneway', [0, 0.15, -0.15], 0.92, 0.3, { ry: PI, ci: 1 });
+    // handoff-oneway: the sign material draws both faces of a quad, so each plate seen from behind (past the pole, at a slant) showed the other plate's lettering mirrored. A plain
+    // galvanised back behind each plate hides it. ?owback=0 = as before.
+    if (!/[?&]owback=0/.test(typeof location !== 'undefined' ? location.search : '')) for (const sg of [1, -1]) b.box([0, 0.15, sg * 0.128], [0.92, 0.3, 0.02], cGalvD, GAL);      // two plates, one each side of the pole: read from both directions, the pole behind each
     for (const y of [0.06, 0.24]) { b.cyl([0, y, 0], [0, y + 0.02, 0], 0.134, 0.134, C('#a9adac'), { w: [0.03, 0.6], seg: 10, spin: PI / 8 }); b.box([0, y + 0.01, 0.138], [0.05, 0.03, 0.03], C('#a9adac'), { w: [0.03, 0.6] }); } P.oneway = b.build(); }
   // the hero blocks' own signs (fine sheet A2): a blade in its cast bracket on two stainless bands, the two one-way plates, a regulation plate
   if (A2) { const alu = C('#b7bbb9'), AL = { w: [0.02, 0.55] }, stl = C('#8f9493'), ST2 = { w: [0.02, 0.5] }, bnd = C('#bcc0bf'), BND = { w: [0.02, 0.62] }, bk = C('#9da1a0'), BK = { w: [0.05, 0.5] };
@@ -772,8 +775,8 @@ function buildProtos(A, A2, A3) {
       for (const y of [0.07, 0.23]) { b.cyl([0, y - 0.0095, 0], [0, y + 0.0095, 0], 0.129, 0.129, bnd, Object.assign({ seg: 18, spin: PI / 8 }, BND)); b.box([-0.02, y, 0.13], [0.03, 0.024, 0.008], bnd, BND); } P.honeway = b.build(); }
     { const b = new PB(A2), rp = 0.142; b.quad('park', [rp + 0.03, 0, 0], 0.305, 0.4575, { ry: PI / 2, vary: true, w: [0.01, 0.1] }); b.box([rp + 0.0275, 0, 0], [0.003, 0.4575, 0.305], bk, BK);
       for (const y of [0.15, -0.15]) { b.cyl([0, y - 0.0095, 0], [0, y + 0.0095, 0], rp - 0.004, rp - 0.004, stl, Object.assign({ seg: 12, spin: PI / 8 }, ST2)); b.box([rp + 0.012, y, 0], [0.03, 0.03, 0.05], stl, ST2); } P.hpsign = b.build(); } }
-  { const z = 8.2 - 2.9, y = P.sigL.armY(z) - 0.16; const b = pb(); b.quad('park', [0.0895, y, z], 0.51, 0.76, { ry: PI / 2, ci: 5, w: [0.05, 0], rx: -0.012 }); P.armface = b.build();
-    if (A2) { const h = new PB(A2); h.quad('park', [0.0895, y, z], 0.51, 0.76, { ry: PI / 2, w: [0.01, 0.1], rx: -0.012 }); P.harmface = h.build(); } }
+  { const z = 8.2 - 2.9, y = P.sigL.armY(z) - 0.16; const b = pb(); b.quad('park', [0.0895, y, z], 0.51, 0.76, Object.assign({ ry: PI / 2, ci: 5, w: [0.05, 0], rx: -0.012 }, /[?&]owback=0/.test(typeof location !== 'undefined' ? location.search : '') ? {} : { double: true, back: null })); P.armface = b.build();     /* handoff-oneway: a grey back, ?owback=0 = as before */
+    if (A2) { const h = new PB(A2); h.quad('park', [0.0895, y, z], 0.51, 0.76, Object.assign({ ry: PI / 2, w: [0.01, 0.1], rx: -0.012 }, /[?&]owback=0/.test(typeof location !== 'undefined' ? location.search : '') ? {} : { double: true, back: null })); P.harmface = h.build(); } }
   { const b = pbS(), aY = P.sigL.armY, y = aY(3.6) - 0.03; b.quad('blade', [0.092, y, 3.6], 1.2, 0.225, { ry: PI / 2, double: true, vary: true }); b.box([0.08, y, 3.6], [0.012, 0.235, 1.21], C('#8d9190'), { w: [0.1, 0.3] });
     for (const z of [3.2, 4.0]) { b.box([0.04, aY(z), z], [0.08, 0.14, 0.035], C('#4a4d4d'), { w: [0.3, 0.4] }); b.cyl([0, aY(z), z - 0.03], [0, aY(z), z + 0.03], 0.066, 0.066, C('#4a4d4d'), { w: [0.3, 0.4], seg: 8 }); } P.armsign = b.build(); }
   // a regulation plate strapped to a round pole (plate faces +X)

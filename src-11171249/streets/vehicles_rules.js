@@ -219,6 +219,7 @@ export function buildSlots(game, opts = {}) {
           for (let a = gi - 1; a <= gi + 1 && !bad; a++) for (let c = gj - 1; c <= gj + 1 && !bad; c++) for (const o of boxGrid.get(a + ',' + c) || []) if (boxCut(bx, o)) { bad = true; break; }
           if (bad) { overlapSkip++; s += 1.5; continue; }
           const gk = gi + ',' + gj; if (!boxGrid.has(gk)) boxGrid.set(gk, []); boxGrid.get(gk).push(bx); }
+        if (game.park && game.park.on && game.park.owns(sl.x, sl.y)) { s += def.len + (game._vehOx ? 0.5 + r() * 0.4 : 0.45 + r() * r() * 0.85); continue; }     /* park lane, handoff-8: Central Park's drives carry no parked cars (the map's kerb rows along them stood on the park's lawn, 80 m from the Pond); the place is worked out as before (the same random draws, so every car outside the park stands where it stood) and left empty; ?park=0: as before */
         const cx = Math.cos(h), cy = Math.sin(h), rad = rdef.wid * 0.5;
         const offs = def.len > 6.2 ? [-(def.len / 2 - rad), 0, def.len / 2 - rad] : [-def.len * 0.27, def.len * 0.27];
         for (const o of offs) sl.circles.push(st.addCircle(sl.x + cx * o, sl.y + cy * o, rad, sl));
@@ -311,6 +312,7 @@ export function applyDoubleParked(game, opts = {}) {
     { let bad = false; for (const a of [-5, 0, 5]) { R.lanePos(e, 1, li0, s0 + a, q); for (const c of [-2, 0, 2]) if (inPlaza(q.x + Math.sin(q.h) * c, q.y - Math.cos(q.h) * c, 1.0)) bad = true; e.line.at(Math.max(0, Math.min(e.len, s0 + a)), q); if (onShared(q.x, q.y, q.tx, q.ty)) bad = true; } R.lanePos(e, 1, li0, s0, q); for (let i = 0; i < bars.length; i += 2) if (Math.hypot(bars[i] - q.x, bars[i + 1] - q.y) < 7) bad = true;     // never on a crosswalk
       if (bad) return; }
     spots.push({ e, li: li0, s: s0, type: weighted({ van: 3, workvan: 3, boxtruck: 3, stepvan: 3 }, r()), seed: Math.floor(r() * 1e9), car: null, nudge: (right ? 1 : -1) * 0.75 });
+    if (game.park && game.park.on) { R.lanePos(e, 1, li0, s0, q); if (game.park.owns(q.x, q.y)) spots.pop(); }     /* park lane, handoff-8: no delivery van double-parked on a drive inside Central Park (the spot is drawn as before and dropped, so the others stay where they were) */
   });
   const step0 = T.step.bind(T), spawn0 = T.spawn.bind(T), t = {};
   /* THE TUCK FITS WHAT IS PARKED THERE (gameplay c1, Nov 15; public report 20261114174903-e25543 "Collision is wrong": a box truck on Madison Avenue stood half a metre

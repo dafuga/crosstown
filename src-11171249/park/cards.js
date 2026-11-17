@@ -59,8 +59,8 @@ export async function makeCards(game) {
     const ge = new THREE.BufferGeometry(); ge.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); ge.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3)); ge.setAttribute('uv', new THREE.Float32BufferAttribute(UV, 2)); ge.setIndex(I);
     ge.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0.5, 0), 1.2); ge.userData.shared = true; return ge; };
   // near: the painted edge as it is; far: coverage by a screen dither (a twig mass thins to a haze, it does not vanish with the small mips)
-  const mat = (key, cutv) => lit(new THREE.MeshStandardMaterial({ map: tex, color: 0xffffff, roughness: 0.86, metalness: 0, side: THREE.DoubleSide, alphaTest: 0.5 }), game.world.shared, { key,
-    body: `float dd = distance(cameraPosition, vWPos), hv = hash21(gl_FragCoord.xy + 0.37);
+  const mat = (key, cutv) => lit(new THREE.MeshStandardMaterial({ map: tex, color: 0xffffff, roughness: 0.86, metalness: 0, side: THREE.DoubleSide, alphaTest: 0.5 }), game.world.shared, { key, spec: 0, night: 1.8      /* handoff-9: the far crowns' x 0.55 comes back at night (mat.js) */,
+    body: `float dd = distance(cameraPosition, vWPos), hv = hash21(gl_FragCoord.xy + 0.37); pkSide = pkAgainstSun(0.3);      /* look pass k2: no highlight on a twig mass; its far side is in its own shade (mat.js) */
            diffuseColor.a = diffuseColor.a > mix(${cutv}, 0.10 + 0.82 * hv, smoothstep(22.0, 95.0, dd)) ? 1.0 : 0.0;`,
     nbody: 'normal = normalize((viewMatrix * vec4(bakeN, 0.0)).xyz);' });      /* one soft rounded normal for the whole card set, the same from both sides: the tree is lit as a mass */
   console.log('[game] park: tree cards painted ' + cv.width + 'x' + cv.height);

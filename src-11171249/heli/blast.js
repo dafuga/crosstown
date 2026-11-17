@@ -191,7 +191,7 @@ function harm(g, x, y, z, o) {
   if (o.dbg === 'noped') return;
   const near = []; if (g.peds && g.peds.list) for (const p of g.peds.list) if (p.state !== 'down') { const d = Math.hypot(p.x - x, p.y - y); if (d < 9) near.push({ p, kind: 'ped', d }); }
   const ag = g.crowd && g.crowd.sim && g.crowd.sim.agents; if (ag) for (const a of ag) if (!a.gone && !a.down) { const d = Math.hypot(a.x - x, a.y - y); if (d < 9) near.push({ p: a, kind: 'crowd', d }); }
-  near.sort((a, b) => a.d - b.d); for (const q of near.slice(0, PEOPLE)) { const p = q.p, d = q.d; C.kill(p, q.kind, { x: p.x, y: p.y, z: 1, dx: (p.x - x) / (d || 1), dy: (p.y - y) / (d || 1), dz: 0.7, part: 'body' }, 6); }
+  near.sort((a, b) => a.d - b.d); for (const q of near.slice(0, PEOPLE)) { const p = q.p, d = q.d; C.kill(p, q.kind, { x: p.x, y: p.y, z: 1, dx: (p.x - x) / (d || 1), dy: (p.y - y) / (d || 1), dz: 0.7, part: 'body', ...(g.P && g.P.get('blastfall') === '0' ? {} : { cx: x, cy: y }) }, 6); }      /* ragdoll lane, Nov 17 (handoff 322, second cut): the body is told where the blast was (cx, cy), so it tumbles and falls off with distance as it does beside a blown-up car; merge lane: not with ?blastfall=0 */
   const H = C.heat; if (H && H.cops && H.hitCop) for (const k of H.cops.slice()) { const d = Math.hypot(k.x - x, k.y - y); if (d < 8 && k.hp > 0) { try { H.hitCop({ kind: 'cop', obj: k, x: k.x, y: k.y, z: 1, nx: 0, ny: 0, nz: 1, dx: (k.x - x) / (d || 1), dy: (k.y - y) / (d || 1), dz: 0.5, part: 'body', t: d }, { dmg: 400, force: 6, name: 'ROCKET' }, true); } catch (e) {} } }
   if (C.scare) C.scare(x, y, 70, 2);
   if (H && H.crime) { try { H.crime('blast', x, y); } catch (e) {} }

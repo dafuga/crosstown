@@ -58,7 +58,6 @@ export class CrowdSim {
     this.held = {}; for (const c of this.clips) if (c.needs && !c.seat) { const h = this.held[c.needs] || (this.held[c.needs] = { stands: [] }); if (c.speed > 0.4) h.walk = c; else { h.stands.push(c); if (/look/i.test(c.name)) h.stands.push(c, c); h.stand = c; } }
     // sitting: single clips, and pairs captured together (partner / partner_at in the cast file)
     this.sits = this.clips.filter((c) => c.seat && !c.partner); this.sitPairs = this.clips.filter((c) => c.seat && c.partner && this.clips.some((d) => d.name === c.partner) && c.name < c.partner).map((c) => [c, this.clips.find((d) => d.name === c.partner)]);
-    this.seats = []; this.addSeats(opts.seats || []);
     this.acc = cast.accessories || {}; this.accNames = Object.keys(this.acc);
     // which hand each carried thing is in (from its bone); things on the body go with anything
     this.accHand = this.accNames.map((n) => (/hand_l/i.test(this.acc[n].bone || '') ? 'L' : /hand_r/i.test(this.acc[n].bone || '') ? 'R' : null));
@@ -66,6 +65,7 @@ export class CrowdSim {
     this.head = new Int16Array(GN * GN); this.nxt = new Int16Array(4096); this.cells = []; this.gx0 = 0; this.gy0 = 0;
     this.cx = 1e9; this.cy = 1e9; this.fx = 1; this.fy = 0; this.cosCone = 0.5; this.cosSee = 0.5; this.waysNear = [];
     { const P = opts.P || (game && game.P), on = (k) => !(P && P.get && (P.get(k) === '0' || P.get('crowdfb') === '0')); this.fbCars = on('crowdcars'); this.fbWalls = on('crowdwalls'); this.fbTwins = on('crowdtwins'); this.fbKeep = on('crowdkeep'); this.dodgeOld = !!(P && P.get && P.get('crowddodge') === '0'); }
+    this.seats = []; this.addSeats(opts.seats || []);
     this.kg = new Map(); this.kv = 1; this.tcars = []; this.slowCars = []; this.slowOwn = []; this.lying = []; this.lyT = 0; this.kn = { wall: 0, slide: 0, round: 0, soft: 0, car: 0, detour: 0, held: 0, turned: 0, body: 0, unstuck: 0 };
     // the collision world changes (an area's street layer lands after ready, a set comes or goes, a fence breaks): the cells are read again
     try { const st = game.statics; if (st && !st.__crowdV) { st.__crowdV = 1; for (const k of ['addSeg', 'addPoly', 'addCircle', 'removeSet']) { const f = st[k]; if (typeof f === 'function') st[k] = function () { st.__crowdV++; return f.apply(st, arguments); }; } } } catch (e) {}
@@ -239,13 +239,17 @@ export class CrowdSim {
     const nearby = this._pathFurniture || (this._pathFurniture = []);
     return furnitureCrossing(this.nav, nearby, px, py, tx, ty, person);
   }
-  vehicleAt(x, y, fromX = x, fromY = y, vehicles, allowExit = false, person) {
+  vehicleAt(x, y, fromX = x, fromY = y, vehicles, allowExit = false, person, seat, bodyHeight, ignoreCar) {
     const hx = (x - fromX) / 2, hy = (y - fromY) / 2;
     const cx = fromX + hx, cy = fromY + hy;
     const hits = car => {
-      if (!car.def) return false;
+      if (car === ignoreCar || !car.def) return false;
       const dx = cx - car.x, dy = cy - car.y;
       if (Math.abs(dx) + Math.abs(dy) > car.def.len + car.def.wid + 1 + Math.abs(hx) + Math.abs(hy)) return false;
+      if (seat) {
+        const floor = seat.z ?? 0, base = car.z ?? 0;
+        if (floor >= base + (car.def.hgt || 1.45) || floor + bodyHeight <= base) return false;
+      }
       if (!hx && !hy) return this.outBox(car, x, y, 0.3, 0);
       // Segment against the pedestrian-expanded box, projected on both car axes and the segment normal.
       const c = Math.cos(car.h), s = Math.sin(car.h);
@@ -296,14 +300,30 @@ export class CrowdSim {
     }
     // people standing on the plazas
     for (const s of this.nav.spots) {
-      const f = this.imp(s.x, s.y);
+      const f = this.fbWalls && s.dead ? 0 : this.imp(s.x, s.y);
       if (!s.who) { if (f > 0 && !this.inFront(s.x, s.y, this.keepOut + 1.5) && this.agents.length < this.cap && r() < (warm ? 1 : 0.3) * Math.min(1, this.k * 0.9) * f && (warm || this.unseen(s.x, s.y)) && !this.crowded(s.x, s.y, 0.8)) this.plazaStander(s); }
       else if (f <= 0 || (s.who.t > s.who.standT && this.unseen(s.x, s.y))) { const a = s.who; for (const q of (a.fol || []).slice()) this.remove(q); this.remove(a); }
     }
     // people sitting: a fixed share of the chairs and benches (the same seats every time one passes), more in a busier city
     if (this.sits.length) { const share = 0.62, tables = 0.17;      // about a tenth of the seats: one table in six, most of its chairs
+      const staticVersion = this.g.statics.__crowdV;
+      const refreshSeats = this.fbWalls && (this.seatNavVersion !== this.nav.ver ||
+        this.seatStaticVersion !== staticVersion);
+      this.seatStaticVersion = staticVersion;
+      this.seatNavVersion = this.nav.ver;
       for (const q of this.seats) {
-        if (q.who) { if (q.who.gone) q.who = null; else if (this.imp(q.x, q.y) <= 0 || (warm && (Math.hypot(q.x - this.cx, q.y - this.cy) < 3.5 || this.inFront(q.x, q.y, this.keepOut + 1)))) { const a = q.who; for (const f of (a.fol || []).slice()) this.remove(f); this.remove(a); q.who = null; } continue; }
+        if (q.who) {
+          const a = q.who;
+          if (a.gone) { q.who = null; continue; }
+          const retire = this.imp(q.x, q.y) <= 0 || (warm && (Math.hypot(q.x - this.cx, q.y - this.cy) < 3.5 || this.inFront(q.x, q.y, this.keepOut + 1)));
+          if (retire || (this.fbWalls && (this.seatBlocked(q, a.x, a.y, refreshSeats) ||
+            a.fol?.some(f => this.seatBlocked(q, f.x, f.y, refreshSeats) ||
+              (refreshSeats && this.g.statics.raycast(a.x, a.y, f.x, f.y) < 1))))) {
+            for (const f of (a.fol || []).slice()) this.remove(f);
+            this.remove(a); q.who = null;
+          }
+          continue;
+        }
         if (q.ut > tables || q.u > share || this.agents.length >= this.cap || this.imp(q.x, q.y) <= 0 || !(warm || this.unseen(q.x, q.y)) || Math.hypot(q.x - this.cx, q.y - this.cy) < 3.5 || this.inFront(q.x, q.y, this.keepOut + 1)) continue;
         this.sit(q);
       } }
@@ -339,11 +359,66 @@ export class CrowdSim {
     const tote = this.accNames.indexOf('tote'), shop = this.accNames.indexOf('shopping'), hb = this.accNames.indexOf('handbag'), bp = this.accNames.indexOf('backpack'); for (const i of [tote, shop, hb, bp]) if (i >= 0) a.acc &= ~(1 << i);
     this.hands(a); a.clip = clip.i; a.blend = 0; a.ph = r(); return a;
   }
+  seatBlocked(q, x, y, checkStatics = true, bodyHeight = (q.seat ?? 0.46) + 1, clearance = 0.15) {
+    if (this.vehicleAt(x, y, x, y, undefined, false, undefined, q, bodyHeight)) return true;
+    if (!checkStatics) return false;
+    const st = this.g.statics;
+    if ((q.z ?? 0) <= 1) {
+      const reach = st.maxCircleRadius + 0.3;
+      for (let i = Math.floor((x-reach)/st.cell); i <= Math.floor((x+reach)/st.cell); i++) {
+        for (let j = Math.floor((y-reach)/st.cell); j <= Math.floor((y+reach)/st.cell); j++) {
+          const circles = st.circ.get(st.key(i,j));
+          if (!circles) continue;
+          for (const o of circles) {
+            if (!o.on) continue;
+            if (o.parkSolid && o.tag === 'bench') {
+              if (q.bench && q.x === o.benchOwner?.x && q.y === o.benchOwner?.y) continue;
+            } else if (o.kind === 'bench') {
+              // Street benches register two circles half a metre along their long axis.
+              const dx = o.x - q.x, dy = o.y - q.y;
+              if (q.bench && Math.abs(dx*Math.cos(q.h) + dy*Math.sin(q.h)) < 0.001 &&
+                  Math.abs(Math.hypot(dx,dy) - 0.5) < 0.001) continue;
+            } else if (!(o.tag === 'tree' || o.tag === 'light' || o.tag === 'signal' || o.tag === 'hydrant' || (o.parkSolid && (o.tag === 'furniture' || o.tag === 'rock')))) continue;
+            if (Math.hypot(x-o.x, y-o.y) < o.r + 0.3) return true;
+          }
+        }
+      }
+    }
+    const nearby = this._seatFurniture || (this._seatFurniture = []);
+    nearby.length = 0;
+    this.nav.soft(x - clearance, y - clearance, x + clearance, y + clearance, nearby);
+    if ((q.z ?? 0) + bodyHeight > 1) this.nav.raisedTablesNear?.(x - clearance, y - clearance, x + clearance, y + clearance, nearby);
+    for (const o of nearby) if (o.seatObstacle && (q.z ?? 0) < o.seatObstacle.top && (q.z ?? 0) + bodyHeight > o.seatObstacle.base && Math.hypot(x - o.x, y - o.y) < o.h + clearance) return true;
+    const inside = q.z > 1 ? this.nav.inBuilding(x, y, q.z + bodyHeight, q.z) :
+      this.nav.inBuilding(x, y, 2.5);
+    return inside || this.g.statics.resolve(x, y, 0.3, _o, true, true) > 0;
+  }
+  seatTaken(q, x, y, leaving, height = (q.seat ?? 0.46) + 1) {
+    const floor = q.z ?? 0;
+    for (const a of this.agents) {
+      if (a === leaving || a.gone) continue;
+      const otherFloor = a.seatOf?.z ?? a.z ?? 0;
+      const otherHeight = a.seatOf ? (a.seatOf.seat ?? 0.46) + 1 : 1.78 * (a.tall ?? 1);
+      if (floor >= otherFloor + otherHeight || otherFloor >= floor + height) continue;
+      const dx = a.x - x, dy = a.y - y;
+      if (dx * dx + dy * dy < 0.4 * 0.4) return true;
+    }
+    return false;
+  }
   sit(q) {
     const r = this.rand, c = Math.cos(q.h), sn = Math.sin(q.h);
     if (q.bench && this.sitPairs.length && q.u < 0.2) { const P = this.sitPairs[Math.floor(r() * this.sitPairs.length) % this.sitPairs.length], at = P[0].partner_at || [0, -0.45, 0];
-      const ax = q.x - sn * (at[1] / 2), ay = q.y + c * (at[1] / 2) * 1, a = this.seated(q, q.x + sn * (at[1] / 2), q.y - c * (at[1] / 2), q.h, P[0]);
-      const b = this.seated(q, a.x + c * at[0] - sn * at[1], a.y + sn * at[0] + c * at[1], q.h + at[2] * Math.PI / 180, P[1]); b.ph = a.ph; b.lead = a; a.fol = [b]; q.who = a; return; }
+      const ax = q.x + sn * at[1] / 2, ay = q.y - c * at[1] / 2;
+      const bx = ax + c * at[0] - sn * at[1], by = ay + sn * at[0] + c * at[1];
+      if (!this.fbWalls || (!this.seatBlocked(q, ax, ay) && !this.seatBlocked(q, bx, by) &&
+          !this.seatTaken(q, ax, ay) && !this.seatTaken(q, bx, by) &&
+          this.g.statics.raycast(ax, ay, bx, by) === 1)) {
+        const a = this.seated(q, ax, ay, q.h, P[0]);
+        const b = this.seated(q, bx, by, q.h + at[2] * Math.PI / 180, P[1]);
+        b.ph = a.ph; b.lead = a; a.fol = [b]; q.who = a; return;
+      }
+    }
+    if (this.fbWalls && (this.seatBlocked(q, q.x, q.y) || this.seatTaken(q, q.x, q.y))) return;
     const cl = this.sits[Math.floor(r() * this.sits.length) % this.sits.length]; q.who = this.seated(q, q.x, q.y, q.h, cl);
   }
   // stop and stand for a while: alone by the wall or at the kerb, or (a pair) facing each other
@@ -386,9 +461,26 @@ export class CrowdSim {
     a.talk = this.talkA || a.idle; b.talk = this.talkB || b.idle;
   }
   // ------------------------------------------------------------------ people/crowd-walls: the body rule
-  addSeats(L) {
+  addSeats(L, refresh = false) {
     const have = this._seatK || (this._seatK = new Set());
-    for (const q0 of L) { const k = Math.round(q0.x * 20) + ',' + Math.round(q0.y * 20) + (q0.bench ? 'b' : ''); if (have.has(k)) continue; have.add(k);
+    const key = q => Math.round(q.x * 20) + ',' + Math.round(q.y * 20) +
+      (this.fbWalls ? ',' + Math.round((q.z ?? 0) * 20) : '') + (q.bench ? 'b' : '');
+    if (refresh && this.fbWalls) {
+      const listed = new Map();
+      for (const q of L) if (!listed.has(key(q))) listed.set(key(q), q);
+      this.seats = this.seats.filter(q => {
+        const k = key(q), next = listed.get(k);
+        if (next && q.x === next.x && q.y === next.y && q.h === next.h && q.z === next.z && q.seat === next.seat) return true;
+        if (q.who && !q.who.gone) {
+          for (const mate of (q.who.fol || []).slice()) this.remove(mate);
+          this.remove(q.who);
+        }
+        q.who = null;
+        have.delete(k);
+        return false;
+      });
+    }
+    for (const q0 of L) { const k = key(q0); if (have.has(k)) continue; have.add(k);
       const q = Object.assign({ who: null }, q0); q.u = Math.abs((Math.sin(q.x * 12.9898 + q.y * 78.233) * 43758.5453) % 1); q.ut = Math.abs((Math.sin(Math.round(q.x / 2.8) * 91.7 + Math.round(q.y / 2.8) * 37.3) * 43758.5453) % 1); this.seats.push(q); }
   }
   // what stands within reach of a 4 m cell: wall lines, solid circles, parked cars (as boxes), uncollided furniture. Kept until the
@@ -554,6 +646,10 @@ export class CrowdSim {
       };
       if (overlaps(x, y) && !overlaps(ox, oy)) { x = ox; y = oy; a.kc = 0; }
     }
+    if ((x !== qx || y !== qy) && this.fbWalls &&
+        (this.nav.inBuilding?.(x, y, 2.5, -Infinity, qx, qy) || this.crossesFurniture(qx, qy, x, y))) {
+      x = qx; y = qy; a.kc = 0;
+    }
     a.x = x; a.y = y; if (hit) a.kh = (a.kh || 0) + 1;
   }
   // the cars that stand or creep near the camera, each as a box in a way's own axes (s along, l across), once a frame per way that asks
@@ -579,6 +675,7 @@ export class CrowdSim {
   turnBack(a, band) { a.d = -a.d; a.gx = -a.gx; a.gy = -a.gy; a.path = null; a.noPlan = null; a.lt = clamp(band.lo + band.hi - a.lt, band.lo, Math.max(band.lo, band.hi)); a.la = 0; a.carT = 0; this.kn.turned++; }
   // is (x, y) a place a body can be, coming from (fx, fy)? (lines, solid circles, furniture, parked cars)
   freeAt(x, y, fx, fy) {
+    if (this.fbWalls && this.nav.inBuilding?.(x, y, 2.5, -Infinity, fx, fy)) return false;
     const c = this.cellAt(x, y); if (c.segs.length && this.crosses(c.segs, fx, fy, x, y)) return false;
     for (const s of c.segs) { const dx = s[2] - s[0], dy = s[3] - s[1], t = clamp(((x - s[0]) * dx + (y - s[1]) * dy) / (dx * dx + dy * dy || 1e-9), 0, 1); if (Math.hypot(x - s[0] - dx * t, y - s[1] - dy * t) < 0.27) return false; }
     for (const o of c.circ) if (o.on && (x - o.x) ** 2 + (y - o.y) ** 2 < (o.r + 0.24) ** 2) return false;
@@ -954,7 +1051,16 @@ export class CrowdSim {
     }
     let tgt = Math.min(want, a.vcap) * (ad > 1.3 ? 0.45 : ad > 0.7 ? 0.75 : 1); if (this.fbKeep && tgt > 0) { if (a.fear && a.fear.run && want > 0.9) { if (tgt < 0.9) tgt = 0.9; }      /* someone getting away is not held to a shuffle behind others (combat/scare.js turns anyone round who makes under 0.3 m in half a second, again and again) */ else if (tgt < 0.54 * a.tall) tgt = tgt < 0.3 ? 0 : 0.54 * a.tall; }      /* nobody creeps: under the slowest walk's pace one waits a moment, then steps */
     a.v += clamp(tgt - a.v, -3.2 * dt, 1.6 * dt); if (a.v < 0.02 && tgt <= 0) a.v = 0;
-    a.x += Math.cos(a.h) * a.v * dt; a.y += Math.sin(a.h) * a.v * dt;
+    const x = a.x + Math.cos(a.h) * a.v * dt;
+    const y = a.y + Math.sin(a.h) * a.v * dt;
+    const turningApproach = turnInPlace && ad > TURN * dt;
+    if (a.v && this.fbWalls && (this.nav.inBuilding?.(x, y, 2.5, -Infinity, a.x, a.y) ||
+        (turningApproach && (this.staticApproachBlocked(a.x, a.y, x, y) ||
+          this.vehicleAt(x, y, a.x, a.y, undefined, true))))) {
+      a.v = 0;
+      return;
+    }
+    a.x = x; a.y = y;
   }
   walkOn(a, dt, think) {
     const target = a.rejoinTarget;
@@ -962,7 +1068,8 @@ export class CrowdSim {
       const remaining = Math.hypot(target.x - a.x, target.y - a.y);
       if (remaining > 0) {
         const blocked = this.vehicleAt(target.x, target.y, a.x, a.y, undefined, true) ||
-          (think && this.staticApproachBlocked(a.x, a.y, target.x, target.y));
+          this.staticApproachBlocked(a.x, a.y, target.x, target.y) ||
+          (this.fbWalls && this.nav.inBuilding?.(target.x, target.y, 2.5, -Infinity, a.x, a.y));
         if (blocked) {
           a.v = 0;
           if (think) this.rejoin(a);
@@ -1067,7 +1174,8 @@ export class CrowdSim {
       a.approachNavVersion = this.nav.ver;
       a.approachStaticVersion = staticVersion;
       a.retreatingFromObstacle = false;
-      a.standingPathBlocked = this.staticApproachBlocked(a.x, a.y, x, y, a);
+      a.standingPathBlocked = this.staticApproachBlocked(a.x, a.y, x, y, a) ||
+        (this.fbWalls && this.nav.inBuilding?.(x, y, 2.5, -Infinity, a.x, a.y));
       a.retreatingFromStatic = a.retreatingFromObstacle;
     }
     a.retreatingFromObstacle = a.retreatingFromStatic;
@@ -1101,11 +1209,36 @@ export class CrowdSim {
   offCars(a, dt, think) {
     for (const q of this.still) {
       const dx = a.x - q.x, dy = a.y - q.y; if (dx > q.R || dx < -q.R || dy > q.R || dy < -q.R) continue;
+      const blockedPush = (ex, ey, relocating = false) => this.nav.inBuilding?.(ex, ey, 2.5, -Infinity, a.x, a.y) ||
+        this.staticApproachBlocked(a.x, a.y, ex, ey) ||
+        this.vehicleAt(ex, ey, a.x, a.y, undefined, relocating, undefined, undefined, undefined, relocating ? undefined : q.v);
       if (think && (a.state === 'stand' || a.state === 'wait')) { const ux = a.tx - q.x, uy = a.ty - q.y, f = ux * q.c + uy * q.s, s = -ux * q.s + uy * q.c;
         if (Math.abs(f) < q.hl + 0.12 && Math.abs(s) < q.hw + 0.12) { let sd = s >= 0 ? 1 : -1; if (sd > 0 ? !q.okL && q.okR : !q.okR && q.okL) sd = -sd; const pf = q.hl - Math.abs(f), ps = q.hw - s * sd;
-          if (q.sp < 0.3 && pf < ps * 0.7) { const m = (pf + 0.3) * (f >= 0 ? 1 : -1); a.tx += q.c * m; a.ty += q.s * m; } else { const m = (ps + 0.3) * sd; a.tx += -q.s * m; a.ty += q.c * m; }
-          // they walk there (standStill only walks in its first 12 s)
-          if (a.t > 8) { const k = a.t - 8; a.t = 8; if (a.standT < 1e8) a.standT -= k; if (a.wq && a.wq.go >= 0) a.wq.go -= k; } this.fb.carMoved++; } }
+          let tx = a.tx, ty = a.ty;
+          if (q.sp < 0.3 && pf < ps * 0.7) { const m = (pf + 0.3) * (f >= 0 ? 1 : -1); tx += q.c * m; ty += q.s * m; }
+          else { const m = (ps + 0.3) * sd; tx -= q.s * m; ty += q.c * m; }
+          let reachable = !this.fbWalls || !blockedPush(tx, ty, true);
+          const walkerSide = -dx * q.s + dy * q.c;
+          if (!reachable && Math.abs(walkerSide) > q.hw && (walkerSide > 0 ? q.okL : q.okR)) {
+            const offset = Math.sign(walkerSide) * (q.hw + 0.3);
+            tx = q.x + q.c * f - q.s * offset;
+            ty = q.y + q.s * f + q.c * offset;
+            reachable = !blockedPush(tx, ty, true);
+          }
+          const walkerAlong = dx * q.c + dy * q.s;
+          if (!reachable && q.sp < 0.3 && Math.abs(walkerAlong) > q.hl) {
+            const end = Math.sign(walkerAlong) * (q.hl + 0.3);
+            tx = q.x + q.c * end - q.s * s;
+            ty = q.y + q.s * end + q.c * s;
+            reachable = !blockedPush(tx, ty, true);
+          }
+          if (reachable) {
+            a.tx = tx; a.ty = ty;
+            if (a.t > 8) { const k = a.t - 8; a.t = 8; if (a.standT < 1e8) a.standT -= k; if (a.wq && a.wq.go >= 0) a.wq.go -= k; }
+            this.fb.carMoved++;
+          }
+        }
+      }
       const f = dx * q.c + dy * q.s, s = -dx * q.s + dy * q.c, pf = q.hl - Math.abs(f), ps0 = q.hw - Math.abs(s); if (pf <= 0 || ps0 <= 0) continue;
       let sd = s >= 0 ? 1 : -1; if (Math.abs(s) < 0.12) sd = a.id & 1 ? 1 : -1; if (sd > 0 ? !q.okL && q.okR : !q.okR && q.okL) sd = -sd;
       const rate = (1.5 + q.sp * 1.6 + (a.v || 0)) * dt, ps = q.hw - s * sd, walker = (a.state === 'walk' || a.state === 'cross') && !a.lead && a.w; let px = 0, py = 0;
@@ -1113,6 +1246,20 @@ export class CrowdSim {
         // walking on into a bumper: step across towards the nearer side as well, until past the corner
         if (walker && (Math.cos(a.h) * q.c + Math.sin(a.h) * q.s) * sg < -0.2) { const m2 = Math.min(ps, 1.2 * dt); px += -q.s * sd * m2; py += q.c * sd * m2; } }
       else { const m = Math.min(ps, rate); px = -q.s * sd * m; py = q.c * sd * m; }
+      if (this.fbWalls && blockedPush(a.x + px, a.y + py)) {
+        if (q.sp >= 0.3) continue;
+        const nearer = f >= 0 ? 1 : -1;
+        let step = 0;
+        for (const sign of [nearer, -nearer]) {
+          const distance = q.hl - sign * f;
+          const ex = a.x + q.c * sign * distance, ey = a.y + q.s * sign * distance;
+          if (blockedPush(ex, ey)) continue;
+          step = sign * Math.min(rate, distance);
+          break;
+        }
+        if (!step) continue;
+        px = q.c * step; py = q.s * step;
+      }
       a.x += px; a.y += py; this.fb.carPush++;
       if (walker) { const w = a.w, pn = px * w.nx + py * w.ny; a.carT = 0.45; a.carL = (a.x - w.ax) * w.nx + (a.y - w.ay) * w.ny + (pn > 1e-4 ? 0.15 : pn < -1e-4 ? -0.15 : 0); }
     }
@@ -1122,7 +1269,20 @@ export class CrowdSim {
   // set running; with none they walk off to the nearest way. The seat is given back (a bench partner keeps it).
   rise(a, vx, vy) {
     if (!a || a.gone || a.state !== 'sit') return false; const q = a.seatOf, mate = a.lead || (a.fol && a.fol[0]);
-    this.leaveGroup(a); if (q) { if (q.who === a) q.who = mate && !mate.gone && mate.state === 'sit' ? mate : null; a.z = q.z; a.x += Math.cos(a.h) * 0.35; a.y += Math.sin(a.h) * 0.35; } a.seatOf = null; a.t = 0; a.standT = 0;
+    if (q) {
+      const x = a.x + Math.cos(a.h) * 0.35, y = a.y + Math.sin(a.h) * 0.35;
+      const height = 1.78 * (a.tall ?? 1);
+      if (!this.fbWalls || (this.g.statics.raycast(a.x, a.y, x, y) === 1 &&
+          !this.seatBlocked(q, x, y, true, height, 0.3) && !this.seatTaken(q, x, y, a, height))) {
+        a.x = x; a.y = y;
+      } else if (this.seatBlocked(q, a.x, a.y, true, height, 0.3) || this.seatTaken(q, a.x, a.y, a, height)) {
+        return false;
+      }
+      if (q.who === a) q.who = mate && !mate.gone && mate.state === 'sit' ? mate : null;
+      a.z = q.z;
+    }
+    this.leaveGroup(a);
+    a.seatOf = null; a.t = 0; a.standT = 0;
     if (vx !== undefined) { const L = Math.hypot(vx, vy) || 1; a.dg = null; a.state = 'flee'; a.vx = vx / L; a.vy = vy / L; this.setClip(a, this.jog); } else { a.state = 'walk'; this.rejoin(a); }
     return true;
   }
@@ -1152,7 +1312,8 @@ export class CrowdSim {
       const d = Math.hypot(a.x - px, a.y - py);
       if (!(d < bd)) continue;
       if (W && (!this.g.statics.onSidewalk(px, py) || !this.freeAt(px, py, px, py))) continue;
-      if (W && d > 0 && this.staticApproachBlocked(a.x, a.y, px, py)) continue;
+      if (W && (this.nav.inBuilding?.(px, py, 2.5, -Infinity, a.x, a.y) ||
+          (d > 0 && this.staticApproachBlocked(a.x, a.y, px, py)))) continue;
       if (W && this.vehicleAt(px, py, a.x, a.y, undefined, true)) continue;
       best = w; bd = d; bestX = px; bestY = py;
     }
