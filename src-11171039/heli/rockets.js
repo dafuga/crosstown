@@ -17,15 +17,18 @@ const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3
 function podMesh(model) {
   const g = new THREE.Group(); g.name = 'rocketPods';
   const c = document.createElement('canvas'); c.width = c.height = 128; const x = c.getContext('2d');
-  x.fillStyle = '#3a3d38'; x.fillRect(0, 0, 128, 128); x.fillStyle = '#0a0a0a';
+  x.fillStyle = '#20283a'; x.fillRect(0, 0, 128, 128); x.fillStyle = '#0a0a0a';
   for (let i = 0; i < 7; i++) { const a = i * Math.PI / 3, r = i === 6 ? 0 : 36; x.beginPath(); x.arc(64 + Math.cos(a) * r, 64 + Math.sin(a) * r, 14, 0, 7); x.fill(); }
+  for (let i = 0; i < 7; i++) { const a = i * Math.PI / 3, r = i === 6 ? 0 : 36, gx = 64 + Math.cos(a) * r, gy = 64 + Math.sin(a) * r, gr = x.createRadialGradient(gx - 2, gy - 2, 1, gx, gy, 9); gr.addColorStop(0, '#74776f'); gr.addColorStop(1, '#2c2e2b'); x.fillStyle = gr; x.beginPath(); x.arc(gx, gy, 9, 0, 7); x.fill(); }     /* the rockets' noses in the tubes */
   x.strokeStyle = '#6b6e66'; x.lineWidth = 3; for (let i = 0; i < 7; i++) { const a = i * Math.PI / 3, r = i === 6 ? 0 : 36; x.beginPath(); x.arc(64 + Math.cos(a) * r, 64 + Math.sin(a) * r, 15, 0, 7); x.stroke(); }
   const face = new THREE.CanvasTexture(c); face.colorSpace = THREE.SRGBColorSpace;
-  const body = new THREE.MeshStandardMaterial({ color: 0x3d4239, roughness: 0.55, metalness: 0.55 }), front = new THREE.MeshStandardMaterial({ map: face, roughness: 0.6, metalness: 0.4 }), dark = new THREE.MeshStandardMaterial({ color: 0x1c1d1c, roughness: 0.5, metalness: 0.7 });
+  const body = new THREE.MeshStandardMaterial({ color: 0x1b2438, roughness: 0.38, metalness: 0.45 }), front = new THREE.MeshStandardMaterial({ map: face, roughness: 0.6, metalness: 0.4 }), dark = new THREE.MeshStandardMaterial({ color: 0x1c1d1c, roughness: 0.5, metalness: 0.7 });
   for (const s of [-1, 1]) {
     const tube = new THREE.Mesh(new THREE.CylinderGeometry(POD.r, POD.r, POD.len, 20, 1, true), body); tube.rotation.z = -Math.PI / 2; tube.position.set(POD.x, POD.y, s * POD.z); g.add(tube);
     const f = new THREE.Mesh(new THREE.CircleGeometry(POD.r, 20), front); f.rotation.y = Math.PI / 2; f.position.set(POD.x + POD.len / 2, POD.y, s * POD.z); g.add(f);
-    const cone = new THREE.Mesh(new THREE.ConeGeometry(POD.r, 0.3, 20, 1, true), body); cone.rotation.z = Math.PI / 2; cone.position.set(POD.x - POD.len / 2 - 0.15, POD.y, s * POD.z); g.add(cone);
+    const tail = new THREE.Mesh(new THREE.CylinderGeometry(POD.r, POD.r * 0.82, 0.16, 20, 1, true), body); tail.rotation.z = -Math.PI / 2; tail.position.set(POD.x - POD.len / 2 - 0.08, POD.y, s * POD.z); g.add(tail);     /* the rear: a short fairing and the tubes' open ends (a critic read the old cone as a solid nose) */
+    const rf = new THREE.Mesh(new THREE.CircleGeometry(POD.r * 0.82, 20), front); rf.rotation.y = -Math.PI / 2; rf.position.set(POD.x - POD.len / 2 - 0.16, POD.y, s * POD.z); g.add(rf);
+    for (const dz of [-0.07, 0.07]) { const lug = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.07, 0.03), dark); lug.position.set(POD.x + 0.2 * Math.sign(dz), POD.y + POD.r + 0.02, s * POD.z + dz); g.add(lug); }
     for (const dx of [-0.38, 0.38]) { const band = new THREE.Mesh(new THREE.CylinderGeometry(POD.r + 0.012, POD.r + 0.012, 0.06, 20, 1, true), dark); band.rotation.z = -Math.PI / 2; band.position.set(POD.x + dx, POD.y, s * POD.z); g.add(band); }
     // the pylon: a short stub wing from the belly side out to the pod, and the rack the pod hangs from
     const stub = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.07, POD.z - 0.62), body); stub.position.set(POD.x, POD.y + POD.r + 0.11, s * (0.62 + (POD.z - 0.62) / 2)); g.add(stub);
@@ -39,9 +42,9 @@ function podMesh(model) {
 export function addRockets(heli, ctx) {
   const g = heli.g, f = heli.f, W = g.world, H = heli.heights;
   const pods = podMesh(heli.model);
-  const puffs = new Puffs(W.scene);
+  const puffs = new Puffs(W.scene); puffs.sunDir(W.sunDir);
   // the rockets in flight: one instanced mesh (a grey tube with a dark nose), and a glow at each tail
-  const geo = new THREE.CylinderGeometry(0.035, 0.035, 1.05, 8); geo.rotateZ(-Math.PI / 2);
+  const geo = new THREE.CylinderGeometry(0.05, 0.05, 1.3, 8); geo.rotateZ(-Math.PI / 2);
   const mesh = new THREE.InstancedMesh(geo, new THREE.MeshStandardMaterial({ color: 0x8a8d86, roughness: 0.45, metalness: 0.6 }), MAX); mesh.frustumCulled = false; mesh.count = 0; mesh.name = 'heliRockets'; W.scene.add(mesh);
   const live = [], S = { ammo: CLIP, reload: 0, cool: 0, side: 1, held: false, fired: 0, booms: 0, aim: new THREE.Vector3(), aimOk: false, lock: null, t: 0, pods, puffs, live };
   const pressed = new Set();
@@ -58,7 +61,7 @@ export function addRockets(heli, ctx) {
   // the first solid along a ray (the height picture of the city: streets, roofs, walls), marching; null if none in reach
   const march = (o, d, reach, out) => { let t = 6, st = 4; while (t < reach) { const x = o.x + d.x * t, y = o.y + d.y * t, z = o.z + d.z * t; if (H.top(x, -z, y + 0.5) > y) { let lo = t - st, hi = t; for (let i = 0; i < 6; i++) { const m = (lo + hi) / 2; if (H.top(o.x + d.x * m, -(o.z + d.z * m), o.y + d.y * m + 0.5) > o.y + d.y * m) hi = m; else lo = m; } out.set(o.x + d.x * lo, o.y + d.y * lo, o.z + d.z * lo); return lo; } t += st; st = Math.min(12, st * 1.08); } return null; };
   // every car in the street near a point: traffic and parked (what blast.js also walks)
-  const carsNear = (x, y, r, fn) => { const T = g.traffic; if (T && T.cars) for (const v of T.cars) { if (v && !v.dead && Math.abs(v.x - x) < r && Math.abs(v.y - y) < r) fn(v); } const hv = g.combat && g.combat.heat && g.combat.heat.units; if (hv) for (const u of hv) { const v = u.car || u.v; if (v && Math.abs(v.x - x) < r && Math.abs(v.y - y) < r) fn(v); } };
+  const carsNear = (x, y, r, fn) => { const T = g.traffic; if (T && T.cars) for (const v of T.cars) { if (v && !v.dead && Math.abs(v.x - x) < r && Math.abs(v.y - y) < r) fn(v); } const hv = g.combat && g.combat.heat && g.combat.heat.units; if (Array.isArray(hv)) for (const u of hv)     /* Nov 17 hotfix: with the police out, heat.units is not a list: the loop threw ('hv is not iterable'), three throws switched the rockets off for the session */ { const v = u.car || u.v; if (v && Math.abs(v.x - x) < r && Math.abs(v.y - y) < r) fn(v); } };
 
   function aimUpdate() {
     const d = boreDir(_a); S.aimOk = false; S.lock = null;
@@ -74,11 +77,11 @@ export function addRockets(heli, ctx) {
     r.d.x += (Math.random() - 0.5) * 0.012; r.d.y += (Math.random() - 0.5) * 0.012; r.d.z += (Math.random() - 0.5) * 0.012; r.d.normalize();
     r.v.copy(f.vel).addScaledVector(r.d, V0); live.push(r); S.side = -S.side; S.ammo--; S.cool = RATE; S.fired++; if (S.ammo === 0) S.reload = RELOAD;
     // the launch: a puff of smoke thrown back from the tube, a kick on the camera, the whoosh
-    for (let i = 0; i < 5; i++) puffs.add(r.p.x, r.p.y, r.p.z, f.vel.x - r.d.x * (4 + i * 3), f.vel.y - r.d.y * (4 + i * 3) + 0.5, f.vel.z - r.d.z * (4 + i * 3), 0.25, 1.6, 0.9, 0);
+    for (let i = 0; i < 6; i++) puffs.add(r.p.x, r.p.y, r.p.z, f.vel.x - r.d.x * (4 + i * 3), f.vel.y - r.d.y * (4 + i * 3) + 0.5, f.vel.z - r.d.z * (4 + i * 3), 0.4, 1.8, 1.4, 0, 0.9); puffs.add(r.p.x, r.p.y, r.p.z, f.vel.x, f.vel.y, f.vel.z, 1.6, 0.08, 6, 1);
     heli.cam.shake = Math.min(1, heli.cam.shake + 0.12); boomAt.whoosh(g); return true;
   }
   function explode(r, p, car) {
-    S.booms++; boomAt(g, heli, puffs, p.x, p.y, p.z, { car, vx: r.v.x, vz: r.v.z });
+    S.booms++; (S.last || (S.last = new THREE.Vector3())).copy(p); const top = H.top(p.x, -p.z, p.y + 1.5); boomAt(g, heli, puffs, p.x, top > p.y - 2.5 && top <= p.y + 0.3 ? top : p.y, p.z, { car, vx: r.v.x, vz: r.v.z, ground: top > p.y - 2.5 && top <= p.y + 0.3 });
   }
   function step(dt) {
     S.t += dt; S.cool = Math.max(0, S.cool - dt);
@@ -101,7 +104,8 @@ export function addRockets(heli, ctx) {
         const top = H.top(r.p.x, -r.p.z, r.p.y + 0.5); if (top > r.p.y) { hit = r.p; if (top - r.p.y < 1.5) r.p.y = top; else r.p.addScaledVector(r.v, -h * 0.7); break; }     // a roof or the street: on it; a wall: just outside it
         if (r.p.y < 3.2 && r.t > 0.08) carsNear(r.p.x, -r.p.z, 3.4, (v) => { if (!hit && Math.hypot(v.x - r.p.x, v.y + r.p.z) < 2.6) { hit = r.p; car = v; } });
       }
-      if (!hit && r.t < BURN + 0.5 && !(g.P && g.P.get('hrkdbg') === 'nopuff')) { const sp = r.v.length() || 1; if ((r.n = (r.n || 0) + 1) % 2 === 0) puffs.add(r.p.x - r.v.x / sp * 0.6, r.p.y - r.v.y / sp * 0.6, r.p.z - r.v.z / sp * 0.6, r.v.x * 0.02, 0.6, r.v.z * 0.02, 0.5, 2.0, 1.9, 0);     /* every other step, a little bigger: half the puffs in a trail */ }
+      if (r.t < BURN + 0.6 && !(g.P && g.P.get('hrkdbg') === 'nopuff')) { const lp = r.lp || (r.lp = r.p.clone().addScaledVector(r.v, -dt)), L = lp.distanceTo(r.p), n = Math.min(110, Math.ceil(L / 0.5));
+        for (let k = 1; k <= n; k++) { const u = k / n; puffs.add(lp.x + (r.p.x - lp.x) * u, lp.y + (r.p.y - lp.y) * u, lp.z + (r.p.z - lp.z) * u, (Math.random() - 0.5) * 0.5, 0.25 + Math.random() * 0.3, (Math.random() - 0.5) * 0.5, 0.3, 1.3 + Math.random() * 0.7, 0.42, 0, 0.75); } lp.copy(r.p); }     /* a thin grey line, a puff every 0.8 m (the second critic: 'a string of separate cotton balls, far too fat and bright') */
       if (hit) { explode(r, hit, car); live.splice(i, 1); }
       else if (r.t > LIFE || Math.abs(r.p.x) > 6000 || Math.abs(r.p.z) > 6000) { if (r.p.y > 0) explode(r, r.p, null); live.splice(i, 1); }     // spent in the air: it bursts where it is
     }
