@@ -29,6 +29,7 @@ import { ragdollGround } from './ragdollGround.js';
 import * as THREE from 'three';
 import { railSleeveVertices, armVertices, trunkVertices, stairChestVertices, stairThighVertices, lowerLegVertices, handVertices, stairHeadVertices } from './trunkVertices.js';
 import { shapeOf, pushOut, topAt } from './carshape.js';
+import { install as installBodyGlass } from './bodyglass.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 
 const MAX = 7, G = 9.81, SUB = 1 / 120, LOWH = 1.0, WREST = 0.2, WFRIC = 0.8, WKEEP = 0.004;
@@ -48,6 +49,9 @@ export function install(game, opts = {}) {
   if (game.__pedhit) return game.__pedhit; const world = game.world, scene = world.scene, S = (game.__pedhit = { list: [], pool: new Map(), hits: 0, hitstop: 0, on: true });
   if (game.P && game.P.get('pedhit') === '0') { S.on = false; return S; }
 
+  try { S.glass = installBodyGlass(game); } catch (e) { S.glass = null; console.log('[pedhit] bodyglass: ' + (e && e.message)); }      // ragdoll lane, Nov 16: a body on a windscreen cracks it (sound and mark); ?bodyglass=0 off
+  // ragdoll lane, Nov 17 (merge batch 6: bodies hang 1.3-1.6 m in the air in Central Park's hollows): the sim stays flat; the figure is DRAWN on the park's ground. ?parkbody=0 off
+  const liftAt = (x, z) => { const T = game.terrain; return T && T.inBox(x, -z) && game.P?.get('parkbody') !== '0' ? T.h(x, -z) : 0; };
   const revised = game.P?.get('ragdoll2') !== '0';
   const settleArms = revised && game.P?.get('ragdollArmFit') === '1';
   const floor = (a) => revised && game.subway?.units?.size ? ragdollGround(game, a.p.x, a.p.z, a.p.y - a.r) : (game.statics.onSidewalk(a.p.x, -a.p.z) ? 0.15 : 0);
@@ -84,13 +88,14 @@ export function install(game, opts = {}) {
     root.updateMatrixWorld(true); const B = bonesOf(root); if (!B.hips || !B.head || !B.thigh_L) { if (fig.crowd) { fig.crowd.used = false; root.visible = false; } return null; }
     const R = { fig, root, B, P: {}, sticks: [], t: 0, rest: 0, frozen: false, sp }, cv = new THREE.Vector3(v.vx, 0, -v.vy), fwd = cv.clone().normalize(), right = new THREE.Vector3(-fwd.z, 0, fwd.x);
     const side = Math.sign((p.x - v.x) * -Math.sin(v.h) + (p.y - v.y) * Math.cos(v.h)) || 1, lift = Math.min(6.2, Math.max(0, (sp - 3.2) * 0.26)), sh = THREE.MathUtils.clamp(sp / 6, 0.35, 1);
-    for (const k of PTS) { const bn = B[BONE_OF[k]]; const w = bn ? bn.getWorldPosition(new THREE.Vector3()) : B.hips.getWorldPosition(new THREE.Vector3());
+    const up0 = fig.ped && game.terrain && game.P?.get('parkbody') !== '0' ? +(root.userData.__ph || 0) : 0;      /* a pedestrian's figure is drawn lifted by the park's hook: its joints enter the sim at street level */
+    for (const k of PTS) { const bn = B[BONE_OF[k]]; const w = bn ? bn.getWorldPosition(new THREE.Vector3()) : B.hips.getWorldPosition(new THREE.Vector3()); w.y -= up0;
       if (k === 'head' && B.neck) { const nk = B.neck.getWorldPosition(_v); w.add(_a.copy(w).sub(nk).setLength(0.11)); }
       // the bumper takes the legs first: low points get the car's full speed, the head lags, so the body wraps onto the bonnet
       const hgt = THREE.MathUtils.clamp(w.y / 1.7, 0, 1), k1 = (1.12 - 0.42 * hgt) * (0.9 + 0.2 * Math.random());
       const vel = cv.clone().multiplyScalar(k1 * sh).addScaledVector(right, side * (0.5 + 1.2 * Math.random()) * Math.min(1, sp / 8)); vel.y = lift * (0.75 + 0.5 * hgt) + 0.6 * Math.random();
       // A real moving panel supplies the impulse at contact. Synthetic hits supply their own velocity.
-      if (revised && !v.bullet && game.vehicles.includes(v)) vel.set(p.beforeHit?.x || 0, 0, -(p.beforeHit?.y || 0));
+      if (revised && !v.bullet && game.vehicles.includes(v)) vel.set(p.beforeHit?.x || 0, p.beforeHit?.up || 0, -(p.beforeHit?.y || 0));      /* up: a rider knocked off his bike (riders.js) */
       if (revised && v.impact) {
         const hit = v.impact, distance = w.distanceToSquared(hit);
         const kick = Math.min(5, 1.8 * hit.force) * Math.exp(-distance / 0.12);
@@ -123,7 +128,7 @@ export function install(game, opts = {}) {
       R.footPose = {L:B.foot_L?.quaternion.clone(), R:B.foot_R?.quaternion.clone()};
       R.footApplied = {L:R.footPose.L?.clone(), R:R.footPose.R?.clone()};
     }
-    R.h0 = B.hips.getWorldPosition(new THREE.Vector3()).sub(R.P.hips.p);
+    R.h0 = B.hips.getWorldPosition(new THREE.Vector3()).sub(R.P.hips.p); R.h0.y -= up0;
     if (fig.ped && fig.ped.vis.mixer) fig.ped.vis.mixer.timeScale = 0;
     S.list.push(R); while (S.list.length > MAX) release(S.list.shift());
     return R;
@@ -207,6 +212,13 @@ export function install(game, opts = {}) {
     a.p.x = px; a.p.z = -py; a.q.x = px - wx; a.q.z = -(py - wy);
   }
   // posts, trees, hydrants, chairs: the map's round things, below the height of a storey (as before, without the lines)
+  // ... and the same for the MIDDLE of a limb or of the trunk (ragdoll lane, Nov 16; a critic, merge batch 5: a body at rest "through the blue mailbox"): the points
+  // at a limb's two ends could come to rest either side of a post or a mailbox with the limb drawn through it. Both ends give way together.
+  const SEGS = [['hips', 'chest'], ['chest', 'head'], ['hpL', 'knL'], ['knL', 'ftL'], ['hpR', 'knR'], ['knR', 'ftR'], ['shL', 'elL'], ['elL', 'haL'], ['shR', 'elR'], ['elR', 'haR']];
+  function postsMid(P) { if (!st || !st.circ) return; const c = st.cell || 16;
+    for (const [ka, kb] of SEGS) { const a = P[ka], b = P[kb]; if ((a.p.y + b.p.y) / 2 > 3.2) continue; const x = (a.p.x + b.p.x) / 2, z = (a.p.z + b.p.z) / 2, y = -z, r = (a.r + b.r) / 2;
+      for (let ci = Math.floor((x - r) / c); ci <= Math.floor((x + r) / c); ci++) for (let cj = Math.floor((y - r) / c); cj <= Math.floor((y + r) / c); cj++) { const L = st.circ.get(st.key(ci, cj)); if (L) for (const o of L) { if (!o.on) continue; const ex = y - o.y, dx = x - o.x, d = Math.hypot(dx, ex), R = r + o.r;
+        if (d < R && d > 1e-6) { const k = (R - d) / d, mx = dx * k, mz = -ex * k; for (const q of [a, b]) { q.p.x += mx; q.p.z += mz; q.q.x += mx * 0.7; q.q.z += mz * 0.7; } } } } } }
   function posts(a) { if (!st || !st.circ) return; const c = st.cell || 16, x = a.p.x, y = -a.p.z, r = a.r;
     for (let ci = Math.floor((x - r) / c); ci <= Math.floor((x + r) / c); ci++) for (let cj = Math.floor((y - r) / c); cj <= Math.floor((y + r) / c); cj++) { const L = st.circ.get(st.key(ci, cj)); if (L) for (const o of L) { if (!o.on) continue; const ex = -a.p.z - o.y, dx = a.p.x - o.x, d = Math.hypot(dx, ex), R = r + o.r;
       if (d < R && d > 1e-6) { const k = (R - d) / d, mx = dx * k, mz = -ex * k; a.p.x += mx; a.p.z += mz; a.q.x += mx * 0.7; a.q.z += mz * 0.7; } } } }
@@ -351,6 +363,7 @@ export function install(game, opts = {}) {
       for (const [a, b, L] of R.apart) { _v.copy(b.p).sub(a.p); const d = _v.length() || 1e-6; if (d >= L) continue; const e = (d - L) / d / (a.im + b.im); a.p.addScaledVector(_v, e * a.im); b.p.addScaledVector(_v, -e * b.im); }
       if (R.fsg && !R.settling && (it & 1)) joints(R);
     }
+    if (revised) postsMid(P);      // before the walls are swept below, so nothing it moves ends beyond a wall
     for (const k of PTS) { const a = P[k];
       let priorPanel = false, px = 0, py = 0, pz = 0;
       // ---- CAR SHAPES block 2 of 3: our own car and the others, each as its outline, in the car's moving frame (see CAR SHAPES at the top)
@@ -364,6 +377,8 @@ export function install(game, opts = {}) {
         const X = c.bx + F * c.bch + Sd * c.bsh, Z = c.bz - F * c.bsh + Sd * c.bch, nX = nf * c.bch + ns * c.bsh, nZ = -nf * c.bsh + ns * c.bch;
         // the panel's own move in this step at that place, and the point's move against it: nothing into the panel, friction along it
         const pcx = X - (c.ax + F * c.ach + Sd * c.ash), pcz = Z - (c.az - F * c.ash + Sd * c.ach); let wx = a.p.x - a.q.x - pcx, wy = a.p.y - a.q.y, wz = a.p.z - a.q.z - pcz;      /* (its speed as it came, not counting the push back out of the panel) */ const wn = wx * nX + wy * ny + wz * nZ;
+        if (revised && ns === 0 && (nf > 0.7 || ny > 0.45)) { R.pushN = (R.pushN || 0) + 1; if (nf > 0.7) R.pushF = 1; if (k === 'hips' || k === 'chest' || !R.pushC) R.pushS = s; R.pushC = c; }      // on a car's front face (see BULLDOZE below)
+        if (wn < 0 && ns === 0 && S.glass && S.glass.on && -wn > 2.6 * h) { try { S.glass.strike(c.e, S2, F, Y, Sd, nf, ny, -wn / h, k); } catch (e) {} }
         if (wn < 0) { const j = -wn * (1 + CAR_REST); wx += nX * j; wy += ny * j; wz += nZ * j; const d = wx * nX + wy * ny + wz * nZ, tx = wx - d * nX, ty = wy - d * ny, tz = wz - d * nZ, tl = Math.hypot(tx, ty, tz); if (tl > 1e-9) { const k = Math.min(1, CAR_MU * j / tl); wx -= tx * k; wy -= ty * k; wz -= tz * k; } }
         if (revised && ny > 0.45) R.support = c.e;
         a.p.x = X; a.p.y = Y; a.p.z = Z; a.q.x = X - wx - pcx; a.q.y = Y - wy; a.q.z = Z - wz - pcz;
@@ -415,6 +430,18 @@ export function install(game, opts = {}) {
       const hips = P.hips, chest = P.chest;
       R.settling = (R.support || (hips.p.y - hips.supportHeight < 0.2 && chest.p.y - chest.supportHeight < 0.25)) &&
         Math.hypot(hips.p.x - hips.sx, hips.p.z - hips.sz, chest.p.x - chest.sx, chest.p.z - chest.sz) < 0.35 * h;
+    }
+    if (revised) {
+      // BULLDOZE (ragdoll lane, Nov 16; node: at 15 and 25 km/h with the pedal held a struck body stayed on the bumper for 58 and 95 m): a body the
+      // front of a moving car has pushed for a third of a second is shouldered off to the side it stands nearer, as a bumper does to what it cannot scoop
+      if (R.pushN) { R.pushT = (R.pushT || 0) + h; R.pushGap = 0; } else if ((R.pushGap = (R.pushGap || 0) + h) > 0.4) { R.pushT = 0; R.pushSide = 0; }
+      /* ... and one carried on the bonnet or roof of a car that keeps going (node: 95 and 99 m at 25 and 40 km/h) rolls off its side after two thirds of a second */
+      if (R.pushN && R.pushT > (R.pushF ? 0.3 : 0.65)) { const c = R.pushC; if (Math.hypot(c.x1 - c.x0, c.z1 - c.z0) > 0.004) { const sg = R.pushSide || (R.pushSide = Math.abs(R.pushS) > 0.08 ? Math.sign(R.pushS) : (Math.random() < 0.5 ? 1 : -1)), d = 7 * h * h, lx = c.bsh * sg * d, lz = c.bch * sg * d; for (const k of PTS) { P[k].q.x -= lx; P[k].q.z -= lz; } } }
+      R.pushN = 0; R.pushF = 0; R.pushC = null;
+      // CAPS (critics, merge batch 5: bodies "at awning height, 3-4 m up ... absurd for 40 km/h"; one joint read 53.7 m up; node: a joint at 38 m/s beside a car at 11):
+      // no joint moves over the ground faster than one and a half times the car that struck the body plus 6 m/s, nor rises faster than 2.6 m/s plus an eighth of that car's speed
+      const cap = (Math.max(R.sp || 0, R.capSp || 0) * 1.5 + 6) * h, up = (2.6 + 0.125 * Math.max(R.sp || 0, R.capSp || 0)) * h;
+      for (const k of PTS) { const a = P[k], vx = a.p.x - a.q.x, vy = a.p.y - a.q.y, vz = a.p.z - a.q.z, l = Math.hypot(vx, vz); if (l > cap) { const f = cap / l; a.q.x = a.p.x - vx * f; a.q.z = a.p.z - vz * f; } if (vy > up) a.q.y = a.p.y - up; }      // (level speed and rise only: a fall is never slowed)
     }
     return vmax;
   }
@@ -1197,7 +1224,7 @@ export function install(game, opts = {}) {
     const B = R.B, P = R.P, root = R.root; root.updateMatrixWorld(true);
     const Rm = torso(R, _m).multiply(R.M0i), Rq = _q2.setFromRotationMatrix(Rm);
     // hips: where the hip point is, turned as the torso has turned since the hit
-    const hq = new THREE.Quaternion().copy(Rq).multiply(R.q0.hips), hp = _v.copy(R.h0).applyQuaternion(Rq).add(P.hips.p), par = B.hips.parent;
+    const hq = new THREE.Quaternion().copy(Rq).multiply(R.q0.hips), hp = _v.copy(R.h0).applyQuaternion(Rq).add(P.hips.p), par = B.hips.parent; hp.y += liftAt(P.hips.p.x, P.hips.p.z);
     _m2.copy(par.matrixWorld).invert(); B.hips.position.copy(hp).applyMatrix4(_m2); B.hips.quaternion.copy(par.getWorldQuaternion(_q).invert()).multiply(hq); B.hips.updateMatrixWorld(true);
     let liftedShoulder = false;
     for (const [bone, a, b] of LIMBS) { const bn = B[bone]; if (!bn) continue; const d = _a.copy(P[b].p).sub(P[a].p).normalize(), d0 = _b.copy(R.d0[bone]).applyQuaternion(Rq);
@@ -1434,6 +1461,6 @@ export function install(game, opts = {}) {
       } }
     if (n) keepPoses();
   };
-  const render = world.render.bind(world); world.render = (t, f) => { const now = performance.now(), dt = game.capture ? 1 / 60 : Math.min(0.1, (now - last) / 1000);      /* was 0.05: at 15 frames a second the body ran at three quarters speed beside a car at full speed */ last = now; if (!game.paused) S.update(dt); return render(t, f); };
+  const render = world.render.bind(world); world.render = (t, f) => { const now = performance.now(), dt = game.capture ? 1 / 60 : Math.min(0.1, (now - last) / 1000);      /* was 0.05: at 15 frames a second the body ran at three quarters speed beside a car at full speed */ last = now; if (!game.paused) S.update(dt); if (S.glass && S.glass.on) { try { S.glass.update(); } catch (e) {} } return render(t, f); };
   return S;
 }

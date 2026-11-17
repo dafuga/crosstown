@@ -100,7 +100,9 @@ export class Heights {
     const q = (this.hfQ = this.hfQ || []); for (const n of list) if (!q.includes(n)) q.push(n);
     if (this.hfPump || !q.length) return; this.hfPump = true;
     const step = () => { if (!window.__ready && !window.__error) { setTimeout(step, 400); return; }     /* not during the load: the squares left for later would only be paid there after all */
-      const n = q.shift(); if (n === undefined) { this.hfPump = false; return; } try { this.bake([n]); } catch (e) {} setTimeout(() => requestAnimationFrame(step), 60); };
+      /* facades lane, Nov 17: the square NEAREST the player first (was: in the order they were asked for). On a map of many areas the list is long (71 squares waiting on the battery map after a jump to Grace Church), and the roofs where he stands were read last: until then the helicopter met the map's footprints there and the roof units (roofkit.js) were not drawn. ?hfnear=0 = before */
+      let bi = 0; const pl = this.g.player; if (pl && q.length > 1 && this.hfSq && !(this.g.P && this.g.P.get('hfnear') === '0')) { let bd = 1e18; for (let i = 0; i < q.length; i++) { const k = q[i], cx = this.hfX0 + (k % this.hfTX + 0.5) * this.hfSq, cy = this.hfY0 + (Math.floor(k / this.hfTX) + 0.5) * this.hfSq, d = (cx - pl.x) * (cx - pl.x) + (cy - pl.y) * (cy - pl.y); if (d < bd) { bd = d; bi = i; } } }
+      const n = q.splice(bi, 1)[0]; if (n === undefined) { this.hfPump = false; return; } try { this.bake([n]); } catch (e) {} setTimeout(() => requestAnimationFrame(step), 60); };
     requestAnimationFrame(step);
   }
   // a tile set came in during play: its squares are read again, one every few frames (each is one small draw and one read-back)

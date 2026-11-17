@@ -20,6 +20,9 @@ const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vecto
 const _o = {}, _mL = new THREE.Matrix4();
 const phi_fix = (L) => L.negate();
 const UP = new THREE.Vector3(0, 1, 0), sm = (u) => (u <= 0 ? 0 : u >= 1 ? 1 : u * u * (3 - 2 * u));
+// ragdoll lane, Nov 17 (merge batch 6: 'a fallen body lies at street level, 1.3-1.6 m in the air in the hollows' of Central Park): the body's own sim stays flat, as
+// the rest of the game's does; what is DRAWN (the figure, its shadow, the pool) stands on the park's ground (game.terrain, park/terrain.js). 0 outside the park. ?parkbody=0 off
+let PARKG = null; const liftAt = (x, z) => { const T = PARKG && PARKG.terrain; return T && T.inBox(x, -z) ? T.h(x, -z) : 0; };
 const tintOf = (f, out) => out.set(Math.pow(((f >> 16) & 255) / 255, 2.2), Math.pow(((f >> 8) & 255) / 255, 2.2), Math.pow((f & 255) / 255, 2.2));
 
 // ---------------------------------------------------------------------------------------------------------------- skeleton <-> doll
@@ -77,7 +80,7 @@ export class Fit {
   }
   apply(doll) {
     const B = this.B, R = this.R, q0 = this.q0, p = doll.p, hips = B.hips, par = hips.parent;
-    par.updateWorldMatrix(true, false); hips.position.copy(par.worldToLocal(_v.set(p[I.P * 3], p[I.P * 3 + 1], p[I.P * 3 + 2])));
+    par.updateWorldMatrix(true, false); hips.position.copy(par.worldToLocal(_v.set(p[I.P * 3], p[I.P * 3 + 1] + liftAt(p[I.P * 3], p[I.P * 3 + 2]), p[I.P * 3 + 2])));
     this.frame(doll, I.P, I.HL, I.HR, I.PF, R.pelvis).multiply(this.fp0); this.frame(doll, I.C, I.SL, I.SR, I.CF, R.chestB).multiply(this.fc0);
     const swing = (base, d0, a, b, out) => { _v.copy(d0).applyQuaternion(base); this.dir(doll, a, b, _v2); return out.setFromUnitVectors(_v, _v2).multiply(base); };
     R.hips.copy(R.pelvis);
@@ -326,7 +329,7 @@ export class Bodies {
     const st = game.statics;
     // walls and standing things from the map, and the cars near a falling body as boxes (a point is eased out of a box, a few cm a step)
     this.boxes = []; this.boxN = 0;
-    const revised = game.P?.get('ragdoll2') !== '0';
+    const revised = game.P?.get('ragdoll2') !== '0'; PARKG = game.P?.get('parkbody') === '0' ? null : game;
     this.env = { revised, ground: revised ? (x, z, h) => ragdollGround(game, x, z, h) : (x, z) => (st.onSidewalk(x, -z) ? 0.15 : 0), solid: true, cross: (x0, z0, x1, z1) => st.raycast(x0, -z0, x1, -z1) < 1,
       // (Nov 14) what stands within rad of a body, asked a few times a second by the doll so that each of its 22 points is tested against a handful of
       // lines of its own and not against the map's grid every step: out.segs = the collision lines (x, z, x, z ...; three.js space), out.n = how many
@@ -401,7 +404,7 @@ export class Bodies {
     const vis = p.vis; if (!vis || !vis.mixer) return false; const name = vis.name || p.kind, o = vis.object;
     let fit = vis._fit; if (!fit || fit.root !== o) fit = vis._fit = new Fit(o, name); if (!fit.ok) return false;
     const mx = vis.mixer, ts = mx.timeScale, D = 1 / 30, sp = p.state === 'walk' || p.state === 'flee' ? (p.state === 'flee' ? 4.6 : p.speed || 0) : 0;
-    mx.timeScale = 1; mx.update(-D * ts); o.updateMatrixWorld(true); const p0 = fit.points().map((q) => q.slice()); mx.update(D * ts); o.updateMatrixWorld(true); const pts = fit.points();
+    mx.timeScale = 1; mx.update(-D * ts); o.updateMatrixWorld(true); const p0 = fit.points().map((q) => q.slice()); mx.update(D * ts); o.updateMatrixWorld(true); const pts = fit.points(); { const up = PARKG && PARKG.terrain ? +(o.userData.__ph || 0) : 0; if (up) { for (const q of pts) q[1] -= up; for (const q of p0) q[1] -= up; } }      /* (the park's hook has lifted the figure by __ph) */
     const vx = Math.cos(p.h) * sp, vz = -Math.sin(p.h) * sp, vel = pts.map((q, i) => [(q[0] - p0[i][0]) / D + vx, (q[1] - p0[i][1]) / D, (q[2] - p0[i][2]) / D + vz]);
     const doll = new Doll(pts, this.env, (p.x * 31 + p.y * 17) | 0); doll.setVel(vel); fit.begin(doll); doll.hit(this.hitOf(h, force));
     let mark = null; if (force < 4 && this.blood) { try { const S = surface(o, h); if (S) mark = patch(fit, S, this.rnd()); } catch (e) {} }
@@ -588,14 +591,14 @@ export class Bodies {
   // a body's ground shadow: under the trunk, long as the body once it is down (up: how strong it is while the figure still stands)
   shade(doll, bl, up) {
     { const p = doll.p, mx = (p[I.P * 3] + p[I.C * 3]) / 2, mz = (p[I.P * 3 + 2] + p[I.C * 3 + 2]) / 2, hx = p[I.H * 3] - (p[I.FL * 3] + p[I.FR * 3]) / 2, hz = p[I.H * 3 + 2] - (p[I.FL * 3 + 2] + p[I.FR * 3 + 2]) / 2, len = Math.hypot(hx, hz), low = clamp(1.25 - p[I.C * 3 + 1] + this.env.ground(mx, mz), 0, 1);
-      bl.visible = true; bl.position.set(mx, this.env.ground(mx, mz) + 0.012, mz); bl.rotation.y = Math.atan2(-hz, hx); bl.scale.set(0.6 + Math.max(0, len * 0.62 - 0.3) * low, 1, 0.6 + 0.1 * low); bl.material.uniforms.uK.value = (0.62 - 0.12 * low) * (up + (1 - up) * low); }
+      bl.visible = true; bl.position.set(mx, this.env.ground(mx, mz) + liftAt(mx, mz) + 0.012, mz); bl.rotation.y = Math.atan2(-hz, hx); bl.scale.set(0.6 + Math.max(0, len * 0.62 - 0.3) * low, 1, 0.6 + 0.1 * low); bl.material.uniforms.uK.value = (0.62 - 0.12 * low) * (up + (1 - up) * low); }
   }
   poseRest(dt, t0) {
     // the pool: nothing until the trunk has lain for a moment; then it starts small on the ground under the wound and creeps outward
     // for ten seconds or so (it stays where it began: the ground does not follow a limb that is still settling)
     { let ex = 0; try { const f = this.g.world && this.g.world.film; ex = f && f.uniforms && f.uniforms.uExposure ? +f.uniforms.uExposure.value : 0; } catch (e) { ex = 0; } POOL_K.value = ex > 0.05 && isFinite(ex) ? clamp(1 / ex, 0.35, 1.6) : 1; try { const fu = this.g.world.film.uniforms; POOL_TEX.value = fu.tExp ? fu.tExp.value : null; POOL_TEXON.value = fu.uExpTex && fu.uExpTex.value > 0.5 && POOL_TEX.value ? 1 : 0; } catch (e) { POOL_TEXON.value = 0; } }      // (capped: in live play on a laptop the pool showed BRIGHT red under trees, out/pub/lead_over.jpg: one over a small exposure figure blew it up)
     for (const q of this.pools) { const d = q.doll; if (!q.me.visible && d.lain < 0.45 && !d.asleep) continue; q.t += dt; const r = q.r * (0.15 + 0.85 * (1 - Math.exp(-q.t / 1.8)));      // from a hand's width: half size after a second, full in about five (at 3.0 s round 19's critics saw no pool in 2.4 s)
-      if (!q.me.visible) { const P = d.p, lo = P[I.SL * 3 + 1] < P[I.SR * 3 + 1] ? I.SL : I.SR, ox = P[lo * 3] - P[I.C * 3], oz = P[lo * 3 + 2] - P[I.C * 3 + 2], ol = Math.hypot(ox, oz) || 1, x = P[q.i * 3] * 0.65 + P[q.i2 * 3] * 0.35 + (ox / ol) * 0.3, z = P[q.i * 3 + 2] * 0.65 + P[q.i2 * 3 + 2] * 0.35 + (oz / ol) * 0.3; q.me.visible = true; q.me.position.set(x, this.env.ground(x, z) + 0.03, z); }      /* (Nov 14: 3 cm, as the spots: see POOL_RO) */
+      if (!q.me.visible) { const P = d.p, lo = P[I.SL * 3 + 1] < P[I.SR * 3 + 1] ? I.SL : I.SR, ox = P[lo * 3] - P[I.C * 3], oz = P[lo * 3 + 2] - P[I.C * 3 + 2], ol = Math.hypot(ox, oz) || 1, x = P[q.i * 3] * 0.65 + P[q.i2 * 3] * 0.35 + (ox / ol) * 0.3, z = P[q.i * 3 + 2] * 0.65 + P[q.i2 * 3 + 2] * 0.35 + (oz / ol) * 0.3; q.me.visible = true; q.me.position.set(x, this.env.ground(x, z) + liftAt(x, z) + 0.03, z); }      /* (Nov 14: 3 cm, as the spots: see POOL_RO) */
       q.me.scale.set(Math.max(0.01, r * q.sx), 1, Math.max(0.01, r)); q.me.material.uniforms.uA.value = 0.96; }
     for (const p of this.afraid) { const F = p.fear; if (!F || F.kind !== 'ped' || p.state === 'down' || !p.vis || !p.vis.object) continue; const want = F.cower > 0 || F.hold > 0; F.dk = clamp((F.dk || 0) + (want ? dt * 6 : -dt * 3.5), 0, 1); if (F.dk <= 0) continue;
       try { let fit = p.vis._fit; if (!fit || fit.root !== p.vis.object) fit = p.vis._fit = new Fit(p.vis.object, p.vis.name || p.kind); if (!fit.ok) continue; p.vis.object.updateMatrixWorld(true); if (fit.flip === undefined) fit.points(); if (F.cower > 0) F.deep = true;

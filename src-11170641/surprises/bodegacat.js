@@ -320,8 +320,11 @@ export function install(game, kit) {
     if (on) { const lift = Math.max(0, cat.h - ground(cat.x, cat.y)), a = lerp(0.3, 0.2, cat.sit) * SC, b = lerp(0.15, 0.17, cat.sit) * SC; _m.makeRotationY(cat.hd); _m.scale(_s.set(a * (1 + lift), 1, b * (1 + lift))); _m.setPosition(cat.x - Math.cos(cat.hd) * 0.02, cat.h - lift + 0.012, -(cat.y - Math.sin(cat.hd) * 0.02)); sh.matrix.copy(_m); sh.matrixWorldNeedsUpdate = true; sh.material.uniforms.uO.value = lerp(0.5, 0.34, k) / (1 + lift * 5); }
   }
 
+  const CATDOOR = !(g.P && g.P.get('catdoor') === '0');
   kit.onFrame((dt, t) => {
     const pl = g.player; let sp = S.spot;
+    // the shop door stays open for the cat as it does for a person (interiors.js opens it for the player, officers and its own people within 2.2 m; a player who ran out let it shut on the cat, which then walked through the glass). Nothing of the shop's is edited: its open amount is pushed up while the cat is in the doorway. ?catdoor=0 = as before
+    if (CATDOOR && dt > 0 && S.st === 'follow' && sp && sp.sh && sp.sh.doorAt && typeof sp.sh.open === 'number') { const da = sp.sh.doorAt; if (Math.hypot(cat.x - da[0], cat.y - da[1]) < 2.2) { sp.sh.open = Math.min(1, sp.sh.open + dt * 4.2); S.doorHeld = (S.doorHeld || 0) + dt; } }
     // asleep or nowhere: one countdown and one distance, nothing else, until a deli is near
     if (S.st === 'none' || S.st === 'sleep') {
       if (--S.scan <= 0) { S.scan = 90; if (!sp || (!sp.free && Math.hypot(sp.x - pl.x, sp.y - pl.y) > 60)) { const n = findSpot(); if (n && (!sp || n.sh !== sp.sh)) { S.spot = sp = n; S.coat = Q.get('catcoat') !== null ? +Q.get('catcoat') || 0 : sp.coat; home(); } } if (S.wantShow && sp) { S.wantShow = false; stand(); } }
