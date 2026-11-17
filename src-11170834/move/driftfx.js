@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 const clamp = (x, a, b) => (x < a ? a : x > b ? b : x), lerp = (a, b, t) => a + (b - a) * t;
 
-const MAXQ = 1600, MAXP = 420, MARK_Y = 0.024, HALF_W = 0.12;
+const MAXQ = 1600, MAXP = 560, MARK_Y = 0.024, HALF_W = 0.13;
 // the smoke sprite: a soft round wisp with its own noise (the surprises kit's steam sprite, so smoke and steam sit in the picture the same way)
 const PVERT = `attribute vec4 aPos; attribute vec4 aCol; attribute float aSeed; varying vec2 vQ; varying vec4 vC; varying float vSeed;
   void main(){ vQ = position.xy * 2.0; vC = aCol; vSeed = aSeed; vec4 mv = viewMatrix * vec4(aPos.xyz, 1.0); float s = aPos.w;
@@ -52,10 +52,10 @@ export function install(g, D) {
   function kill(i) { const j = --n; if (i === j) return; for (let k = 0; k < 3; k++) { pp[i * 3 + k] = pp[j * 3 + k]; pv[i * 3 + k] = pv[j * 3 + k]; } age[i] = age[j]; life[i] = life[j]; s0[i] = s0[j]; s1[i] = s1[j]; al[i] = al[j]; sd[i] = sd[j]; sh[i] = sh[j]; }
   const light = [1, 1, 1];
   function drawSmoke(dt) {
-    for (let i = n - 1; i >= 0; i--) { age[i] += dt; if (age[i] >= life[i]) { kill(i); continue; } const o = i * 3, k = Math.max(0, 1 - 1.6 * dt); pv[o] *= k; pv[o + 1] *= k; pv[o + 2] = pv[o + 2] * k + 0.25 * dt; pp[o] += pv[o] * dt; pp[o + 1] += pv[o + 1] * dt; pp[o + 2] += pv[o + 2] * dt; }
+    for (let i = n - 1; i >= 0; i--) { age[i] += dt; if (age[i] >= life[i]) { kill(i); continue; } const o = i * 3, k = Math.max(0, 1 - 1.6 * dt); pv[o] *= k; pv[o + 1] *= k; pv[o + 2] = pv[o + 2] * Math.max(0, 1 - 0.6 * dt) + 0.75 * dt; pp[o] += pv[o] * dt; pp[o + 1] += pv[o + 1] * dt; pp[o + 2] += pv[o + 2] * dt; }
     { const f = scene.fog ? scene.fog.color : { r: 0.62, g: 0.68, b: 0.8 }, nn = g.night ? g.night.n || 0 : 0, s = (1 - nn) * 0.35; light[0] = f.r + s; light[1] = f.g + s * 0.97; light[2] = f.b + s * 0.9; }
     const P = aPos.array, C = aCol.array, S = aSeed.array;
-    for (let i = 0; i < n; i++) { const u = age[i] / life[i], fin = Math.min(1, u / 0.08), out = 1 - clamp((u - 0.4) / 0.6, 0, 1); P[i * 4] = pp[i * 3]; P[i * 4 + 1] = pp[i * 3 + 2]; P[i * 4 + 2] = -pp[i * 3 + 1]; P[i * 4 + 3] = lerp(s0[i], s1[i], Math.sqrt(u));
+    for (let i = 0; i < n; i++) { const u = age[i] / life[i], fin = Math.min(1, u / 0.08), out = 1 - clamp((u - 0.3) / 0.7, 0, 1); P[i * 4] = pp[i * 3]; P[i * 4 + 1] = pp[i * 3 + 2]; P[i * 4 + 2] = -pp[i * 3 + 1]; P[i * 4 + 3] = lerp(s0[i], s1[i], Math.sqrt(u));
       C[i * 4] = sh[i] * light[0]; C[i * 4 + 1] = sh[i] * light[1]; C[i * 4 + 2] = sh[i] * light[2]; C[i * 4 + 3] = al[i] * fin * out * out; S[i] = sd[i]; }
     pGeo.instanceCount = n; smoke.visible = n > 0; X.live = n;
     if (n) { for (const a of [aPos, aCol]) { a.clearUpdateRanges && a.clearUpdateRanges(); a.addUpdateRange && a.addUpdateRange(0, n * 4); a.needsUpdate = true; } aSeed.clearUpdateRanges && aSeed.clearUpdateRanges(); aSeed.addUpdateRange && aSeed.addUpdateRange(0, n); aSeed.needsUpdate = true; }
@@ -73,15 +73,15 @@ export function install(g, D) {
       if (k > 0.04 || W.some((s) => s.has)) { const c = Math.cos(v.h), s = Math.sin(v.h), ws = wheelsOf(v), z = (v.z || 0) + MARK_Y, ux = sp > 0.5 ? v.vx / sp : c, uy = sp > 0.5 ? v.vy / sp : s;
         for (let i = 0; i < 4; i++) { const wq = ws[i], st = W[i], x = v.x + c * wq.f + s * wq.r, y = v.y + s * wq.f - c * wq.r;
           // the rears mark whenever they slide; the fronts only in a real four-wheel slide, and fainter
-          const a = (wq.front ? (sliding && Math.abs(sig) > 0.3 ? 0.55 * clamp((Math.abs(sig) - 0.3) / 0.3, 0, 1) : 0) : 1) * (k < 0.06 ? 0 : 0.34 + 0.56 * k) * (1 - 0.65 * wet);
+          const a = (wq.front ? (sliding && Math.abs(sig) > 0.3 ? 0.55 * clamp((Math.abs(sig) - 0.3) / 0.3, 0, 1) : 0) : 1) * (k < 0.06 ? 0 : 0.52 + 0.43 * k) * (1 - 0.65 * wet);
           const lx = x - uy * HALF_W, ly = y + ux * HALF_W, rx = x + uy * HALF_W, ry = y - ux * HALF_W;
           if (!st.has) { if (a > 0) { st.has = true; st.lx = lx; st.ly = ly; st.rx = rx; st.ry = ry; st.a = 0; st.px = x; st.py = y; } }
           else { const d = Math.hypot(x - st.px, y - st.py); if (d > 3) st.has = false; else if (d > 0.16 || a <= 0) { quad(st.lx, st.ly, st.rx, st.ry, rx, ry, lx, ly, z, st.a, a); st.lx = lx; st.ly = ly; st.rx = rx; st.ry = ry; st.a = a; st.px = x; st.py = y; if (a <= 0) st.has = false; } }
           // smoke from the rears (and a little from the fronts in a big slide), more of it the harder they slide; none in the rain's spray
           if (!wq.front || (sliding && Math.abs(sig) > 0.5)) { st.acc += (wq.front ? 16 : 58) * dryK * k * k * dt * clamp(sp / 9, 0.35, 1.2); let cap = 4;
             while (st.acc >= 1 && cap-- > 0) { st.acc -= 1; const sp2 = 0.5 + Math.random() * 0.9, an = Math.random() * 6.283, big = 0.75 + 0.6 * Math.random();
-              puff(x + (Math.random() - 0.5) * 0.3, y + (Math.random() - 0.5) * 0.3, (v.z || 0) + 0.12, v.vx * 0.2 + Math.cos(an) * sp2, v.vy * 0.2 + Math.sin(an) * sp2, 0.35 + Math.random() * 0.6,
-                { life: 0.8 + 0.9 * Math.random(), s0: 0.3 * big, s1: (0.95 + 0.85 * k) * big, a: (0.07 + 0.11 * k) * (0.7 + 0.5 * Math.random()), sh: 0.7 + 0.2 * Math.random() }); } if (st.acc > 4) st.acc = 4; } } }
+              puff(x + (Math.random() - 0.5) * 0.3, y + (Math.random() - 0.5) * 0.3, (v.z || 0) + 0.12, v.vx * 0.2 + Math.cos(an) * sp2, v.vy * 0.2 + Math.sin(an) * sp2, 0.5 + Math.random() * 0.8,
+                { life: 1.3 + 1.5 * Math.random(), s0: 0.3 * big, s1: (1.15 + 1.0 * k) * big, a: (0.06 + 0.09 * k) * (0.7 + 0.5 * Math.random()), sh: 0.6 + 0.2 * Math.random() }); } if (st.acc > 4) st.acc = 4; } } }
       // a controller hums with the slide
       if (k > 0.2 && (rumT -= dt) <= 0) { rumT = 0.09; try { const pads = navigator.getGamepads ? navigator.getGamepads() : []; for (const p of pads) if (p && p.connected && p.vibrationActuator && p.vibrationActuator.playEffect) { p.vibrationActuator.playEffect('dual-rumble', { duration: 110, weakMagnitude: 0.15 + 0.45 * k, strongMagnitude: 0.25 * k }); break; } } catch (e) {} }
     }

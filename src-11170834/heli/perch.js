@@ -9,6 +9,7 @@
 // 3. The scope: on such a roof, aiming a rifle (right mouse / left trigger) looks through a telescopic sight: 6x, the wheel changes it
 //    (3x, 6x, 12x), the look slows with the power, one round at a time, heavy.
 // 4. From up there the street is alive where you look: cars, walkers and the crowd are put round the place in the street the eye rests on.
+// 5. Over the mark, the last 14 m down are helped onto it (?perchassist=0 = hands only).
 // ?perch=0: this file is never fetched: no marks, no guns on roofs. heli.js calls step(dt), sync(dt), drawHud(hud).
 import * as THREE from 'three';
 import { WEAPONS } from '../combat/combat.js';
@@ -111,7 +112,25 @@ export function addPerch(heli, ctx) {
     if (gx === null) { if (WP.set) return; gx = ox + S.hx * 180; gy = oy + S.hy * 180; }      // looking at the sky or a roof: the street life stays where it was
     const d = Math.hypot(gx - ox, gy - oy); if (d > 235) { gx = ox + (gx - ox) / d * 235; gy = oy + (gy - oy) / d * 235; }
     WP.lx = gx; WP.ly = gy;
-    if (!WP.set || Math.hypot(gx - WP.x, gy - WP.y) > (S.scoped ? 70 : 130)) { WP.x = gx; WP.y = gy; WP.set = true; WP.moves++; crowdWrap(); if (S.crowd && S.crowd.settle) { try { S.crowd.settle(3); } catch (e) {} } }
+    if (!WP.set || Math.hypot(gx - WP.x, gy - WP.y) > (S.scoped ? 70 : 130)) { WP.x = gx; WP.y = gy; WP.set = true; WP.moves++; crowdWrap(); S.extra = g.P.get('perchsettle') === '1' ? 0 : 60; if (S.crowd && S.crowd.settle && !S.extra) { try { S.crowd.settle(3); } catch (e) {} } }
+    // the crowd at a new watch point is put there by the sim itself (its centre has jumped: it fills the streets at once); then it is run forward a second, two steps a frame,
+    // so they are spread along their ways. Before (handoff-1, -2): three seconds run in one frame, a 0.24 s pause on each big swing of the look (?perchsettle=1 = that).
+    if (S.extra > 0 && S.crowd && S.crowd.sim) { try { S.crowd.sim.step(1 / 60); S.crowd.sim.step(1 / 60); } catch (e) {} S.extra -= 2; }
+  }
+
+  // ---------------------------------------------------------------- 5. the last metres onto the mark
+  // The terrace is 8 m wide: flown by keys from 14 m up, a start 1 m off the mark ended over the drop or against the tower (lanes/heli/gates/h3/land.out).
+  // So within 10 m of the mark and less than 14 m above it the controls are helped: the cyclic leans toward the mark and brakes the drift, the pedals turn the
+  // aircraft along the wall (the same rule the game's own hover holder uses), more firmly the nearer and lower it is, never more than 85 per cent: the hands still fly it.
+  const ASSIST = g.P.get('perchassist') !== '0', cl = (v) => Math.max(-1, Math.min(1, v)), wp = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+  function assist(c, dt) {
+    S.helping = 0; if (!ASSIST) return; const f = heli.f; if (f.onGround || f.engine !== 'run') return;
+    for (const p of S.pads) { const ex = p.x - f.pos.x, ey = p.y + f.pos.z, d = Math.hypot(ex, ey), h = f.pos.y - 1.25 - p.z; if (d > 10 || h < -0.5 || h > 14) continue;
+      const w = Math.max(0, 1 - d / 10) * Math.max(0.3, 1 - h / 14) * 0.85 + (d < 3 ? 0.15 * (1 - h / 14) : 0), cs = Math.cos(f.heading), sn = Math.sin(f.heading), vf = f.vel.x * cs - f.vel.z * sn, vr = f.vel.x * sn + f.vel.z * cs;
+      const a0 = wp(p.h - f.heading), hh = Math.abs(a0) < Math.PI / 2 ? p.h : p.h + Math.PI, k = Math.min(0.85, w);
+      c.pitch = c.pitch * (1 - k) + cl((ex * cs + ey * sn) * 0.25 - vf * 0.3) * k; c.roll = c.roll * (1 - k) + cl((ex * sn - ey * cs) * 0.25 - vr * 0.3) * k; c.yaw = c.yaw * (1 - k) + cl(-wp(hh - f.heading) * 2) * k;
+      S.helping = k; if (k > 0.2 && !S.told && !heli.note) { S.told = true; heli.note = { t: 0, text: 'OVER THE MARK · EASE THE COLLECTIVE DOWN' }; } return; }
+    S.told = false;
   }
 
   function step(dt) {
@@ -168,6 +187,6 @@ export function addPerch(heli, ctx) {
       hud.text('RIGHT MOUSE  scope     WHEEL  3x 6x 12x     LEFT MOUSE  fire     R  reload     F at the door  fly', Wd / 2, 199, 16, '#fff', 'center', 600, 1); c.globalAlpha = 1;
     }
   }
-  S.step = step; S.sync = sync; S.drawHud = drawHud; S.marks = marks;
+  S.step = step; S.sync = sync; S.drawHud = drawHud; S.marks = marks; S.assist = assist;
   return S;
 }

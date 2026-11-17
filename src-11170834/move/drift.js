@@ -131,7 +131,7 @@ export function install(g, Vehicle) {
     const cam0 = g.camTarget.bind(g); let sw = 0, last = -1;
     g.camTarget = function () { const t = cam0(); try { const v = g.player && g.player.vehicle, S = v && v._dr, want = D.on && S && S.on ? S.sig : 0;
       if (g.frame !== last) { const n = last < 0 ? 1 : clamp(g.frame - last, 1, 6); last = g.frame; sw += (want - sw) * (1 - Math.exp(-n / 60 * (Math.abs(want) > Math.abs(sw) ? 3.5 : 2.2))); if (Math.abs(sw) < 1e-4 && !want) sw = 0; }
-      if (sw && v) { t.yaw = wrapPi(t.yaw - sw * 0.42); t.fov += Math.min(1, Math.abs(sw) / 0.6) * 3; t.auto = Math.max(t.auto || 0, 5.5); } } catch (e) {}
+      if (sw && v) { t.yaw = wrapPi(t.yaw - sw * 0.42); t.fov += Math.min(1, Math.abs(sw) / 0.6) * 6; t.dist += Math.min(1, Math.abs(sw) / 0.6) * 0.9;     /* a little wider and further back in a slide: room to see where it is heading */ t.auto = Math.max(t.auto || 0, 5.5); } } catch (e) {}
       return t; };
   }
   // ---- smoke and skid marks (browser only; fetched once, after the first frame, so the game's start does not wait on it)

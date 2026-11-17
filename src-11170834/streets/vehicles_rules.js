@@ -278,7 +278,9 @@ export function applyTraffic(game, opts = {}) {
         const ex = R.exits(R.endNode(c.e, c.dir), c.e).filter((x) => open(x.e, x.dir, 0) >= 0); if (ex.length) { const x = ex[Math.floor(this.rand() * ex.length) % ex.length]; nx = { e: x.e, dir: x.dir, li: open(x.e, x.dir, Math.min(R.laneCount(x.e, x.dir) - 1, c.li)) }; } }
       return nx; };
     T.laneFree = function (c, l2) { return !shut(c.e, c.dir, l2) && free0(c, l2); };
-    for (const c of T.cars) if (shut(c.e, c.dir, c.li)) { const l = open(c.e, c.dir, c.li); if (l >= 0) { c.li = l; R.lanePos(c.e, c.dir, c.li, c.s, c); } else c._shut = true; }
+    for (const c of T.cars) if (shut(c.e, c.dir, c.li)) { const l = open(c.e, c.dir, c.li); if (l < 0) { c._shut = true; continue; }
+      c.li = l; R.lanePos(c.e, c.dir, c.li, c.s, c);
+      if (T.spawnOccupied(c)) c._shut = true; }
     T.cars = T.cars.filter((c) => !c._shut);
   }
   const spawn0 = T.spawn.bind(T);
@@ -289,7 +291,10 @@ export function applyTraffic(game, opts = {}) {
   T.colorFor = function (type) { const a = this.rand(), b = this.rand(), ht = this._cast === type && this._hand ? this._hand : baseOf(type); return colorFor(ht, a, b, ht === 'sedan' && this.rand() < 0.45); };
   T.spawn = function (e, dir, li, s) { this._e = e; return spawn0(e, dir, li, s); };
   // the cars already on the road are re-cast with the new mix (same places, same lanes)
-  for (const c of T.cars) { if (c.type === 'bus') continue; T._e = c.e; const type = T.pickType(); if (type === 'bus') continue; c.type = type; c.def = cars[type]; c.color = T.colorFor(type); }
+  for (const c of T.cars) { if (c.type === 'bus') continue; T._e = c.e; const type = T.pickType(); if (type === 'bus') continue;
+    const def = cars[type];
+    if ((def.len > c.def.len || def.wid > c.def.wid) && T.spawnOccupied({ ...c, def })) continue;
+    c.type = type; c.def = def; c.color = T.colorFor(type); }
   if (opts.populate !== false) { const p = game.player; T.populate(p.x, p.y); }
   return { target: T.target, cars: T.cars.length, closed: closed.size };
 }
@@ -318,6 +323,9 @@ export function applyDoubleParked(game, opts = {}) {
     near2.length = 0; for (const s of game.parked.near(q2.x, q2.y, 14, near2)) { if (s.gone) continue; const ch = Math.cos(s.h), sh = Math.sin(s.h), l2 = s.def.len / 2, w2 = s.def.wid / 2;
       for (let a = -1; a <= 1; a += 0.25) for (let b = -1; b <= 1; b += 2) { const x = s.x + ch * l2 * a - sh * w2 * b - q2.x, y = s.y + sh * l2 * a + ch * w2 * b - q2.y, f = x * fx + y * fy, r = x * rx + y * ry; if (Math.abs(f) < hl && r > 0) room = Math.min(room, r - hw - DBL_GAP); } }
     return sg * Math.max(0, room); };
+  const occupiedAtOffset = (car, lane, offset) => T.spawnOccupied({
+    def: car.def, h: lane.h, x: lane.x + Math.sin(lane.h) * offset, y: lane.y - Math.cos(lane.h) * offset
+  });
   T.step = function (dt, tt) {
     const g = this.g, px = g.focus.x, py = g.focus.y;
     this._dpT = (this._dpT || 0) - dt;
@@ -325,12 +333,26 @@ export function applyDoubleParked(game, opts = {}) {
       for (const sp of spots) {
         if (sp.car && this.cars.indexOf(sp.car) < 0) sp.car = null;
         if (sp.cool > 0) { sp.cool -= 1; continue; }
-        if (sp.car) { if (fitOn) { const n = fit(sp, sp.car); if (Math.abs(n) < Math.abs(sp.nudge)) sp.nudge = n; } continue; }
+        if (sp.car) {
+          if (fitOn) {
+            const n = fit(sp, sp.car);
+            if (Math.abs(n) < Math.abs(sp.nudge)) {
+              R.lanePos(sp.e, 1, sp.li, sp.s, t);
+              if (!occupiedAtOffset(sp.car, t, n)) sp.nudge = n;
+            }
+          }
+          continue;
+        }
         R.lanePos(sp.e, 1, sp.li, sp.s, t); const d = Math.hypot(t.x - px, t.y - py); if (d > 380 || (d < 150 && !opts.anywhere)) continue;
         if (this.cars.some((c) => Math.hypot(c.x - t.x, c.y - t.y) < 16)) continue;
         const c = spawn0(sp.e, 1, sp.li, sp.s); if (!c) continue;
         c.type = sp.type; c.def = cars[sp.type]; c.color = colorFor(sp.type, hash(sp.seed), hash(sp.seed + 1)); c.id = sp.seed; c.v = 0; c.v0 = 0; c.stun = 1e9; c.dbl = true; c.held = 99;
-        sp.car = c; sp.nudge = fit(sp, c);
+        const nudge = fit(sp, c);
+        if (c.li !== sp.li || occupiedAtOffset(c, c, nudge)) {
+          T.remove(c);
+          continue;
+        }
+        sp.car = c; sp.nudge = nudge;
       }
     }
     // the demo's autopilot waits for ever behind a standing car: when it comes up the same block, the delivery is done and the van

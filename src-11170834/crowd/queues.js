@@ -20,7 +20,8 @@
 // Switches:  ?queues=0  none of this (the game as before)     ?queueown=0  only game.queues rows (no bus stops / carts of our own)
 //            ?queuestand=1  a stand-in long line on 6th Avenue at W 49th (for looking at, before the streets lane's cart is in)
 //            ?queuen=K  every line's size times K        ?queueknot=0  nobody waits aside at the window        ?queuecut=0  no way through left in a long line
-import { bandAt } from './nav.js';
+import { staticPathBlocked } from '../geo.js';
+import { bandAt, furnitureCrossing } from './nav.js';
 
 const STEP = 0.25, R_ON = 190, R_OFF = 222, B = { lo: 0, hi: 0 };
 const wrap = (a) => { a = (a + Math.PI) % (2 * Math.PI); return (a < 0 ? a + 2 * Math.PI : a) - Math.PI; };
@@ -45,7 +46,14 @@ export function addQueues(game, crowd) {
   const wayAt = (x, y, R = 12) => { let best = null, bd = 1e9; for (const w of nav.near(x, y, R, [])) { if (w.kind === 'cross') continue; const dx = x - w.ax, dy = y - w.ay, s = dx * w.ux + dy * w.uy, l = dx * w.nx + dy * w.ny, sc = Math.max(0, Math.min(w.len, s));
     const d = Math.abs(s - sc) + (l < -0.3 ? -0.3 - l : l > 13 ? l - 13 : 0) + (w.kind === 'strip' ? 0 : 0.5); if (d < bd) { bd = d; best = w; } } return bd < R ? best : null; };
   const lineL = (w, s) => { bandAt(w, Math.max(0, Math.min(w.len, s)), B); return B.hi > 0 ? Math.min(B.lo + 0.3, B.hi - 0.2) : 1.9; };
-  const free = (x, y) => st.onSidewalk(x, y) && sim.freeAt(x, y, x, y) && !nav.blocked(x, y, 0.3) && !(st.resolve(x, y, 0.28, {}) > 0);
+  const nearbyFurniture = [];
+  const free = (x, y, fromX = x, fromY = y) => st.onSidewalk(x, y) && sim.freeAt(x, y, fromX, fromY) &&
+    !furnitureCrossing(nav, nearbyFurniture, fromX, fromY, x, y) && !nav.blocked(x, y, 0.3) && !(st.resolve(x, y, 0.28, {}) > 0);
+  // CrowdSim.freeAt checks fence crossings in the destination cell and its 1.3 m margin.
+  const clearMove = (a, x, y) => free(x, y, a.x, a.y) &&
+    ((Math.abs(a.x - x) <= 1.3 && Math.abs(a.y - y) <= 1.3) || st.raycast(a.x, a.y, x, y) >= 1) &&
+    ((a.x === x && a.y === y) || !staticPathBlocked(st, a.x, a.y, x, y, true)) &&
+    (!(game.traffic || game.vehicles || game.parked) || !sim.vehicleAt(x, y, a.x, a.y, undefined, true));
   // the points of a line: the row's own pts, then along the kerb side of the sidewalk, way after way round the block (no crossing is taken)
   function buildPath(row, need) {
     const raw = [[row.x, row.y]]; if (row.pts) for (const p of row.pts) { const q = raw[raw.length - 1]; if (Math.hypot(p[0] - q[0], p[1] - q[1]) > 0.05) raw.push([p[0], p[1]]); }
@@ -106,7 +114,7 @@ export function addQueues(game, crowd) {
   // tx, ty are kept on the body so the crowd's walk (a full stride) does not start.   a.qm: 0 there, 1 shuffling, 2 walking up
   function put(a, x, y, th, snap) {
     a.qx = x; a.qy = y; a.th = th;
-    if (snap) { a.x = a.tx = x; a.y = a.ty = y; a.h = th; a.qm = 0; return; }
+    if (snap && joinLeg(a, x, y)) { a.x = a.tx = x; a.y = a.ty = y; a.h = th; a.qm = 0; return; }
     const d = Math.hypot(x - a.x, y - a.y);
     if (a.qm === 2 || d > 0.85) { if (a.qm !== 2) a.t = 0; a.qm = 2; a.tx = x; a.ty = y; } else if (d > 0.012) a.qm = 1;
   }
@@ -115,19 +123,34 @@ export function addQueues(game, crowd) {
     if (a.qm === 2) { if (d < 0.24) { a.qm = 1; a.tx = a.x; a.ty = a.y; } return; }
     if (d < 0.012) { a.qm = 0; a.tx = a.x; a.ty = a.y; return; }
     if (d > 1.1) { a.qm = 2; a.tx = a.qx; a.ty = a.qy; a.t = 0; return; }      /* shoved off their place (a car's bumper): walk back */
-    const k = Math.min(1, Math.min(0.45, 0.1 + d * 1.2) * dt / d); a.x += dx * k; a.y += dy * k; a.tx = a.x; a.ty = a.y;
+    const k = Math.min(1, Math.min(0.45, 0.1 + d * 1.2) * dt / d); const x = a.x + dx * k, y = a.y + dy * k;
+    a.shuffleBlocked = !clearMove(a, x, y);
+    if (!a.shuffleBlocked) { a.x = x; a.y = y; }
+    a.tx = a.x; a.ty = a.y;
   }
-  function target(q, m, snap) {      // put m's place to stand (and its friend's) at its distance m.s along the line
+  function target(q, m, snap, spawning = false) {      // put m's place to stand (and its friend's) at its distance m.s along the line
     const a = m.a, b = m.b, kerb = q.kind === 'wait', head = !kerb && m === q.mem[0] && m.s < 0.3 && isFinite(q.row.face);
     at(q, m.s, _p); const h = _p.h, fx = Math.cos(h), fy = Math.sin(h), nx = -fy, ny = fx, lat = m.lat + m.lean, px = _p.x, py = _p.y;
     let x = px + nx * lat, y = py + ny * lat, th = kerb ? h + m.face * 2 + m.look + m.turn : h + m.face + m.look + (m.back ? PI : 0) - m.lean * 0.5;
     if (head) { x = px; y = py; th = q.row.face + m.look * 0.15; }
-    if (m.via && !snap) { put(a, m.via[0], m.via[1], th, false); if (b) put(b, m.viaB[0], m.viaB[1], th, false); return; }
+    // The slot center can be clear while the standing offset reaches a post.
+    if (snap && (x !== px || y !== py) && !free(x, y) && free(px, py)) { x = px; y = py; }
+    if (m.via) { put(a, m.via[0], m.via[1], th, false); if (b) put(b, m.viaB[0], m.viaB[1], th, false); return; }
     if (b) { let bx = 0, by = 0, bth = h, ok = false; m.deep = 0;
-      if (head) { const c = Math.cos(q.row.face), s = Math.sin(q.row.face); for (const [u, v] of [[0.55, 0], [0.3, 0.5], [-0.3, 0.55]]) { bx = x + fx * u - c * v; by = y + fy * u - s * v; if (free(bx, by)) { ok = true; break; } } bth = Math.atan2(y + s * 0.8 - by, x + c * 0.8 - bx); }
-      else for (const sd of [m.sd, -m.sd]) { bx = x + nx * 0.5 * sd + fx * m.stag; by = y + ny * 0.5 * sd + fy * m.stag; if (free(bx, by)) { ok = true; th = h + sd * m.pair + m.look * 0.3; bth = h - sd * m.pair; break; } }
+      const fitsCompanion = (bx, by) => joinLeg(b, bx, by);
+      if (head) { const c = Math.cos(q.row.face), s = Math.sin(q.row.face); for (const [u, v] of [[0.55, 0], [0.3, 0.5], [-0.3, 0.55]]) { bx = x + fx * u - c * v; by = y + fy * u - s * v; if (fitsCompanion(bx, by)) { ok = true; break; } } bth = Math.atan2(y + s * 0.8 - by, x + c * 0.8 - bx); }
+      else for (const sd of [m.sd, -m.sd]) { bx = x + nx * 0.5 * sd + fx * m.stag; by = y + ny * 0.5 * sd + fy * m.stag; if (fitsCompanion(bx, by)) { ok = true; th = h + sd * m.pair + m.look * 0.3; bth = h - sd * m.pair; break; } }
       if (!ok) { bx = x - fx * 0.46; by = y - fy * 0.46; bth = h + 0.1; if (!head) th = h + PI - 0.25; m.deep = 0.46; }      /* no room beside: one behind the other, the front one turned round */
-      put(b, bx, by, bth, snap); }
+      if (!ok && !fitsCompanion(bx, by)) {
+        m.deep = 0;
+        if (spawning) {
+          sim.remove(b); m.b = null; a.fol = null; a.talk = null;
+          dress(q, m);
+        } else {
+          b.qx = b.tx = b.x; b.qy = b.ty = b.y; b.qm = 0;
+          m.retryCompanionAt = game.t + 1;
+        }
+      } else { m.retryCompanionAt = 0; put(b, bx, by, bth, snap); } }
     put(a, x, y, th, snap);
   }
   const member = (q, a, b) => { const k = ((q.row.gap || 0.6) / 0.6) * (q.kind === 'wait' ? 1.5 : 1), r = rand(), last = q.mem[q.mem.length - 1];
@@ -137,19 +160,30 @@ export function addQueues(game, crowd) {
     a.inLine = q.id; a.qm = 0; if (b) { b.inLine = q.id; b.qm = 0; } dress(q, m); m.gap = m.g0 + (m.arm ? 0.08 : 0); return m; };
   const still = (a, x, y) => { if (a.w) { const j = a.w.agents.indexOf(a); if (j >= 0) a.w.agents.splice(j, 1); } if (a.home) { a.home.pop--; a.home = null; } a.w = null; a.path = null; a.door = 0; if (a.state !== 'stand') sim.nStand++; a.state = 'stand'; a.standT = 1e9; a.t = 0; a.lost = false; a.talk = null; a.onRoad = false; a.carT = 0; };
   function spawn(q, s) {      // someone already standing in the line (only where the camera cannot see, or before it looks)
-    if (sim.agents.length >= sim.cap + 70) return null; at(q, s, _p2); const w0 = nav.ways[0], mk = () => { const a = sim.make(w0, 0, 0, 1, false, { x: _p2.x, y: _p2.y }); w0.agents.pop(); w0.pop--; a.home = null; a.w = null; a.z = 0.15; a.v = 0; a.state = 'stand'; sim.nStand++; a.standT = 1e9; a.t = 20; return a; };
+    if (sim.agents.length >= sim.cap + 70) return null; at(q, s, _p2);
+    if (!free(_p2.x, _p2.y) || sim.vehicleAt(_p2.x, _p2.y)) return null;
+    const w0 = nav.ways[0], mk = () => { const a = sim.make(w0, 0, 0, 1, false, { x: _p2.x, y: _p2.y }); w0.agents.pop(); w0.pop--; a.home = null; a.w = null; a.z = 0.15; a.v = 0; a.state = 'stand'; sim.nStand++; a.standT = 1e9; a.t = 20; return a; };
     const other = (p, ch) => { if (sim.adults.length > 2) for (let k = 0; k < 4 && ch.includes(p.char); k++) sim.recast(p, sim.adults[Math.floor(rand() * sim.adults.length) % sim.adults.length]); };
     const last = q.mem[q.mem.length - 1], near = last ? each(last).map((p) => p.char) : [];
     const a = mk(); other(a, near); let b = null; if (rand() < 0.2 && s > 0.5 && q.kind !== 'wait') { b = mk(); other(b, near.concat([a.char])); pairUp(a, b); }
-    const m = member(q, a, b); m.s = s; q.mem.push(m); target(q, m, true); for (const p of each(m)) { sim.setClip(p, p.talk || p.idle, true); p.ph = rand(); } if (b) b.ph = a.ph; Q.kn.made += b ? 2 : 1; return m;
+    const m = member(q, a, b); m.s = s; q.mem.push(m); target(q, m, true, true); for (const p of each(m)) { sim.setClip(p, p.talk || p.idle, true); p.ph = rand(); } if (m.b) m.b.ph = a.ph; Q.kn.made += m.b ? 2 : 1; return m;
   }
   function pairUp(a, b) { a.fol = [b]; b.lead = a; b.fol = null; if (rand() < 0.6 && sim.talkA && sim.talkB) { a.talk = sim.talkA; b.talk = sim.talkB; } else { a.talk = null; b.talk = null; } }
   // a passer-by to join the end of the line (fled: one of those who ran from it, coming back); never someone whose straight way there leaves the sidewalk
+  function sidewalkLeg(x0, y0, x1, y1) {
+    for (let k = 1; k < 6; k++) {
+      if (!st.onSidewalk(x0 + (x1-x0)*k/6, y0 + (y1-y0)*k/6)) return false;
+    }
+    return true;
+  }
+  function joinLeg(person, x, y) {
+    return clearMove(person, x, y) && sidewalkLeg(person.x, person.y, x, y);
+  }
   function pick(q, s, R, fled) {
     at(q, s, _p2); let best = null, bd = R * R; const now = game.t, tx = _p2.x, ty = _p2.y;
-    for (const a of fled ? q.fled : sim.agents) { const dx = a.x - tx, dy = a.y - ty, d2 = dx * dx + dy * dy; if (d2 > bd || a.state !== 'walk' || a.lead || a.fear || a.door || a.inLine || !a.w || a.w.kind === 'cross' || a.gone || a.kid || a.qno > now || (!fled && a.wasIn > now - 150 && a.wasIn <= now)) continue;
+    for (const a of fled ? q.fled : sim.agents) { const dx = a.x - tx, dy = a.y - ty, d2 = dx * dx + dy * dy; if (d2 > bd || a.state !== 'walk' || a.lead || a.fear || a.door || a.inLine || !a.w || a.w.kind === 'cross' || a.gone || a.kid || q.retryAfter?.get(a) > now || (!fled && a.wasIn > now - 150 && a.wasIn <= now)) continue;
       if (a.fol && a.fol.length && (a.fol.length !== 1 || a.fol[0].kid || a.fol[0].state !== 'walk' || a.fol[0].fear)) continue; if (st.raycast(a.x, a.y, tx, ty) < 1) continue;
-      let ok = true; for (let k = 1; k < 6 && ok; k++) ok = st.onSidewalk(tx + dx * k / 6, ty + dy * k / 6); if (!ok) continue; bd = d2; best = a; }
+      if (!sidewalkLeg(tx, ty, a.x, a.y)) continue; bd = d2; best = a; }
     return best;
   }
   // nobody of the line (standing place or body) within r of the straight walk from x0,y0 to x1,y1 (the crowd's walk to a place is straight)
@@ -163,11 +197,16 @@ export function addQueues(game, crowd) {
     // the way in is not through the people already standing: straight to the end only when that walk is clear of them all, else first to a point
     // out beside the end (a friend to a point further out and back from it); with no clear way at all this one is left to walk on
     at(q, s, _p2); const ex = _p2.x, ey = _p2.y, fx = Math.cos(_p2.h), fy = Math.sin(_p2.h), u = (a.x - ex) * fx + (a.y - ey) * fy, l = -(a.x - ex) * fy + (a.y - ey) * fx, sd = l >= 0 ? 1 : -1;
-    let via = null, viaB = null, vk = 0, ok = !q.mem.length || (u <= 0.4 && clear(q, a.x, a.y, ex, ey, 0.55, a, b) && (!b || clear(q, b.x, b.y, ex, ey, 0.55, a, b)));
-    if (!ok) for (const [k, lat, back] of [[sd, 0.95, 0.3], [sd, 1.5, 0.5], [sd, 1.2, 1.3], [-sd, 0.95, 0.3], [-sd, 1.5, 0.5], [-sd, 1.2, 1.3]]) { const vx = ex - fy * lat * k - fx * back, vy = ey + fx * lat * k - fy * back; if (!free(vx, vy) || !clear(q, a.x, a.y, vx, vy, 0.55, a, b)) continue;
-      if (b) { let w = null; for (const [o, bk] of [[0.5, 0.55], [0, 0.75], [0.3, 1.1]]) { const wx = vx - fy * o * k - fx * bk, wy = vy + fx * o * k - fy * bk; if (free(wx, wy) && clear(q, b.x, b.y, wx, wy, 0.55, a, b)) { w = [wx, wy]; break; } } if (!w) continue; viaB = w; }
+    const detourFits = (person, x, y) => joinLeg(person, x, y) &&
+      clear(q, person.x, person.y, x, y, 0.55, a, b) &&
+      joinLeg({x, y}, ex, ey) && clear(q, x, y, ex, ey, 0.55, a, b);
+    let via = null, viaB = null, vk = 0, ok = (!q.mem.length || u <= 0.4) &&
+      clearMove(a, ex, ey) && clear(q, a.x, a.y, ex, ey, 0.55, a, b) &&
+      (!b || (joinLeg(b, ex, ey) && clear(q, b.x, b.y, ex, ey, 0.55, a, b)));
+    if (!ok) for (const [k, lat, back] of [[sd, 0.95, 0.3], [sd, 1.5, 0.5], [sd, 1.2, 1.3], [-sd, 0.95, 0.3], [-sd, 1.5, 0.5], [-sd, 1.2, 1.3]]) { const vx = ex - fy * lat * k - fx * back, vy = ey + fx * lat * k - fy * back; if (!detourFits(a, vx, vy)) continue;
+      if (b) { let w = null; for (const [o, bk] of [[0.5, 0.55], [0, 0.75], [0.3, 1.1]]) { const wx = vx - fy * o * k - fx * bk, wy = vy + fx * o * k - fy * bk; if (detourFits(b, wx, wy)) { w = [wx, wy]; break; } } if (!w) continue; viaB = w; }
       via = [vx, vy]; vk = k; ok = true; break; }
-    if (!ok) { a.qno = game.t + 12; Q.kn.noway = (Q.kn.noway || 0) + 1; return null; }
+    if (!ok) { (q.retryAfter ||= new WeakMap()).set(a, game.t + 12); Q.kn.noway = (Q.kn.noway || 0) + 1; return null; }
     still(a); if (b) { still(b); pairUp(a, b); }
     const m = member(q, a, b); m.s = s; if (via) { m.via = via; m.viaB = viaB; m.sd = vk; }
     q.mem.push(m); target(q, m, false); Q.kn.joined += b ? 2 : 1; return m;
@@ -182,9 +221,10 @@ export function addQueues(game, crowd) {
   }
   const drop = (q, i) => { const m = q.mem[i]; q.mem.splice(i, 1); for (const a of each(m)) { a.inLine = null; a.wasIn = game.t; } return m; };
   // the knot at the window: where someone who has ordered stands aside to wait for the food (k = 0, 1): past the window along the cart, or back from it
-  function spotK(q, k) {
+  function spotK(q, k, member) {
+    const walker = member.a;
     at(q, 0, _p); const fx = Math.cos(_p.h), fy = Math.sin(_p.h), f = q.row.face, c = Math.cos(f), s = Math.sin(f), hx = _p.x, hy = _p.y;
-    for (const [u, v] of k ? [[1.75, 0.2], [1.2, 0.95], [0.3, 1.3], [2.4, 0.3]] : [[1.0, 0.05], [0.75, 0.85], [-0.35, 1.25], [1.7, 0.4]]) { const x = hx + fx * u - c * v, y = hy + fy * u - s * v; if (!free(x, y)) continue;
+    for (const [u, v] of k ? [[1.75, 0.2], [1.2, 0.95], [0.3, 1.3], [2.4, 0.3]] : [[1.0, 0.05], [0.75, 0.85], [-0.35, 1.25], [1.7, 0.4]]) { const x = hx + fx * u - c * v, y = hy + fy * u - s * v; if (!joinLeg(walker, x, y) || !clear(q, walker.x, walker.y, x, y, 0.55, walker, member.b)) continue;
       let ok = true; for (const o of q.knot) for (const p of each(o.m)) if (Math.hypot(p.qx - x, p.qy - y) < 0.55) ok = false; for (const m of q.mem) if (m.s < 3 && Math.hypot(m.a.qx - x, m.a.qy - y) < 0.55) ok = false;
       if (ok) return { x, y, th: Math.atan2(hy + s * 1.0 + fy * 0.3 - y, hx + c * 1.0 + fx * 0.3 - x) }; }
     return null;
@@ -214,10 +254,10 @@ export function addQueues(game, crowd) {
     if (q.fled.length) { let fear = false; for (let i = q.fled.length - 1; i >= 0; i--) { const a = q.fled[i]; if (a.gone || a.state === 'down' || now - a.qf > 150 || a.inLine) q.fled.splice(i, 1); else if (a.fear || a.state === 'flee') fear = true; } if (fear && q.cool < 3) q.cool = 3; }
     if (q.cool > 0) q.cool -= dt;
     // the head orders, then steps aside to wait (two at most wait: with both places taken the next order waits); at a bus stop people give up one by one
-    if (q.kind === 'serve' && M.length && !M[0].a.fear) { const hd = M[0]; if (hd.s < 0.3 && !hd.a.qm) { q.serve -= dt;
-      if (q.serve <= 0 && q.knot.length < 2) { const k = q.knot.some((o) => o.k === 0) ? 1 : 0, sp = KNOT && isFinite(q.row.face) ? spotK(q, k) : null, m = drop(q, 0);
+    if (q.kind === 'serve' && M.length && !M[0].a.fear) { const hd = M[0]; if (hd.s < 0.3 && !hd.via && !hd.a.qm) { q.serve -= dt;
+      if (q.serve <= 0 && q.knot.length < 2) { const k = q.knot.some((o) => o.k === 0) ? 1 : 0, sp = KNOT && isFinite(q.row.face) ? spotK(q, k, hd) : null, m = drop(q, 0);
         if (sp) { m.a.inLine = q.id; put(m.a, sp.x, sp.y, sp.th + (rand() - 0.5) * 0.5, false);
-          if (m.b) { const c = Math.cos(q.row.face), s = Math.sin(q.row.face), bx = sp.x - c * 0.52, by = sp.y - s * 0.52; if (free(bx, by)) { m.b.inLine = q.id; put(m.b, bx, by, sp.th, false); } else { const b = m.b; m.b = null; walkOff(q, { a: b }, false); m.a.talk = null; } }
+          if (m.b) { const c = Math.cos(q.row.face), s = Math.sin(q.row.face), bx = sp.x - c * 0.52, by = sp.y - s * 0.52; if (joinLeg(m.b, bx, by) && clear(q, m.b.x, m.b.y, bx, by, 0.55, m.a, m.b)) { m.b.inLine = q.id; put(m.b, bx, by, sp.th, false); } else { const b = m.b; m.b = null; walkOff(q, { a: b }, false); m.a.talk = null; } }
           q.knot.push({ m, k, t: q.sv[0] * 0.6 + rand() * q.sv[1] * 0.6 }); }
         else walkOff(q, m, true);
         q.serve = (q.sv[0] + rand() * (q.sv[1] - q.sv[0])) * (sp ? 0.85 : 1); Q.kn.served++; } } }
@@ -226,8 +266,14 @@ export function addQueues(game, crowd) {
     let s = 0, prevSet = true;
     for (let i = 0; i < M.length; i++) { const m = M[i], a = m.a; s = place(q, i ? s + m.gap + (M[i - 1].deep || 0) : 0); if (s < 0) { for (let k = M.length - 1; k >= i; k--) { walkOff(q, drop(q, k), false); Q.kn.out_full = (Q.kn.out_full || 0) + 1; } break; }
       if (a.fear || (m.b && m.b.fear)) { prevSet = false; continue; }
+      if (m.b && m.retryCompanionAt && now >= m.retryCompanionAt) target(q, m, false);
       if (m.chat && !(i && M[i - 1].back)) { m.chat = false; dress(q, m); }
-      if (m.via && (warm || ((a.qm !== 2 || Math.hypot(a.x - m.via[0], a.y - m.via[1]) < 0.45) && (!m.b || m.b.qm !== 2 || Math.hypot(m.b.x - m.viaB[0], m.b.y - m.viaB[1]) < 0.6)))) { m.via = null; target(q, m, warm); }
+      if (m.via && (warm || ((a.qm !== 2 || Math.hypot(a.x - m.via[0], a.y - m.via[1]) < 0.45) && (!m.b || m.b.qm !== 2 || Math.hypot(m.b.x - m.viaB[0], m.b.y - m.viaB[1]) < 0.6)))) {
+        at(q, s, _p2);
+        const endX = _p2.x, endY = _p2.y;
+        const canFinish = p => joinLeg(p, endX, endY) && clear(q, p.x, p.y, endX, endY, 0.55, a, m.b);
+        if (canFinish(a) && (!m.b || canFinish(m.b))) { m.s = s; m.at = 0; m.via = null; target(q, m, warm); }
+      }
       if (m.s > s + 0.1) { if (warm) { m.s = s; target(q, m, true); } else if (prevSet) { if (!m.at) m.at = now + m.slow * (0.5 + rand()) * (m.s - s > 1.6 ? 0.4 : 1); else if (now >= m.at) { m.s = s; m.at = 0; target(q, m, false); } } prevSet = false; }
       else { if (m.s < s - 0.1) { m.s = s; target(q, m, warm); }
         prevSet = warm || a.qm !== 2;      /* the next one may start once this one has (each a moment later, at the same pace: nobody runs into a back) */
@@ -237,7 +283,7 @@ export function addQueues(game, crowd) {
         else if (!m.b && !m.back && !m.via && i > 1 && q.kind === 'serve' && !a.qm && rand() < dt / 100) { at(q, m.s, _p); const nx = -Math.sin(_p.h), ny = Math.cos(_p.h), sd = pm(); for (const k of [sd, -sd]) if (free(_p.x + nx * 0.36 * k, _p.y + ny * 0.36 * k) && free(_p.x + nx * 0.95 * k, _p.y + ny * 0.95 * k)) { m.lean = 0.36 * k; m.leanT = now + 4 + rand() * 7; m.look = 0; target(q, m, false); break; } }
         if ((m.habit -= dt) <= 0 && !m.b) { m.habit = 25 + rand() * 70; dress(q, m); } }
       // still walking up to the line from where they were: keep walking (the crowd's stand state gives up after 12 s); after 40 s they give it up
-      if (a.qm === 2) { if (!m.walkT) m.walkT = now; if (now - m.walkT > 40 && !warm) { walkOff(q, drop(q, i), false); Q.kn.out_far = (Q.kn.out_far || 0) + 1; i--; continue; } if (a.t > 9) a.t = 0; } else m.walkT = 0;
+      if (m.via || a.qm === 2 || (a.qm === 1 && a.shuffleBlocked)) { if (!m.walkT) m.walkT = now; if (now - m.walkT > 40 && !warm) { walkOff(q, drop(q, i), false); Q.kn.out_far = (Q.kn.out_far || 0) + 1; i--; continue; } if (a.t > 9) a.t = 0; } else m.walkT = 0;
       if (m.b && m.b.qm === 2 && m.b.t > 9) m.b.t = 0; }
     // new people at the end (after a scare: those who ran come back first, and passers-by fill it quickly)
     const n = M.reduce((k, m) => k + (m.b ? 2 : 1), 0), W = want(q);
@@ -273,7 +319,7 @@ export function addQueues(game, crowd) {
     for (const q of Q.list) if (q.live) { for (const m of q.mem) { slide(m.a, dt); if (m.b) slide(m.b, dt); } for (const o of q.knot) { slide(o.m.a, dt); if (o.m.b) slide(o.m.b, dt); } }
     // someone walking up to their place is never inside someone who stands (a lean-out begun after the walk was chosen, a late move up): pushed out to 0.38 m
     for (const q of Q.list) if (q.live) { const M = q.mem; for (let i = M.length - 1; i >= 0; i--) for (const w of each(M[i])) { if (w.qm !== 2 || w.state !== 'stand' || w.fear) continue;
-      for (let j = 0; j < M.length; j++) { if (j === i) continue; for (const o of each(M[j])) { if (o.qm === 2 && j > i) continue; const dx = w.x - o.x, dy = w.y - o.y, d = Math.hypot(dx, dy); if (d >= 0.38 || d < 1e-4) continue; const k = (0.38 - d) / d, x = w.x + dx * k, y = w.y + dy * k; if (free(x, y)) { w.x = x; w.y = y; } } } } }
+      for (let j = 0; j < M.length; j++) { if (j === i) continue; for (const o of each(M[j])) { if (o.qm === 2 && j > i) continue; const dx = w.x - o.x, dy = w.y - o.y, d = Math.hypot(dx, dy); if (d >= 0.38 || d < 1e-4) continue; const k = (0.38 - d) / d, x = w.x + dx * k, y = w.y + dy * k; if (joinLeg(w, x, y)) { w.x = x; w.y = y; } } } } }
     acc += dt; if (acc < 0.1) return; const d = Math.min(acc, 0.5); acc = 0;
     const jump = Math.hypot(sim.cx - lastX, sim.cy - lastY) > 60; lastX = sim.cx; lastY = sim.cy;
     for (const q of Q.list) { const dist = Math.hypot(q.row.x - sim.cx, q.row.y - sim.cy);

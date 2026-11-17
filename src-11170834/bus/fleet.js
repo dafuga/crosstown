@@ -96,14 +96,17 @@ export class Fleet {
         if (!this.first && d < 300 && g.statics.raycast(fx, fy, p.x, p.y) >= 1) continue;
         let ok = true; for (const c of T.cars) if (Math.abs(c.x - p.x) < 20 && Math.abs(c.y - p.y) < 20 && Math.hypot(c.x - p.x, c.y - p.y) < (c.bus ? 60 : 16)) { ok = false; break; } if (!ok) continue;
         for (const B of this.buses) if (B.line === L && Math.abs(B.S - S) < 140) { ok = false; break; } if (!ok) { L.used.add(i); continue; }
-        if (this.spawn(L, o.k, li, o.s)) { L.used.add(i); live++; } break;
+        if (!this.spawn(L, o.k, li, o.s)) continue;
+        L.used.add(i); live++; break;
       }
     }
     this.first = false;
   }
   spawn(L, k, li, s) {
     const g = this.g, T = g.traffic, q = L.seq[k]; let c = null; for (let tr = 0; tr < 4 && !c; tr++) c = T.spawn(q.e, q.dir, li, s); if (!c) return null;
-    c.type = 'citybus'; c.def = DEF; c.color = 0xf4f5f6; c.dbl = false; c._vv = null; c.v0 = this.cruise(q.e, L); c.v = c.v0 * 0.7; g.roads.lanePos(q.e, q.dir, li, s, c);
+    c.type = 'citybus'; c.def = DEF; c.color = 0xf4f5f6; c.dbl = false; c._vv = null; c.v0 = this.cruise(q.e, L); c.v = c.v0 * 0.7; g.roads.lanePos(q.e, q.dir, c.li, s, c);
+    // The traffic slot was checked with the seed car's dimensions.
+    if (T.spawnOccupied(c)) { T.remove(c); return null; }
     const B = { id: ++this.kn.spawned, no: 4000 + Math.floor(this.rand() * 5800), c, v: null, line: L, k, ni: 0, state: 'run', t: 0, gap: 1e9, will: null, stopReq: false, kneel: 0, doorF: 0, doorR: 0, riders: 6 + Math.floor(this.rand() * 26), on: 0, off: 0, roll: 0, pitch: 0, vPrev: c.v, hPrev: c.h, S: q.s0 + s, x: c.x, y: c.y, h: c.h, z: 0, sign: L.signI === undefined ? -1 : L.signI, blink: 0, stopAt: null, last: null, hold: 0, slow: 0, acc: 0, yawV: 0 };
     while (B.ni < L.stops.length && L.stops[B.ni].S < B.S + 20) B.ni++;
     c.bus = B; this.buses.push(B); return B;
