@@ -625,7 +625,7 @@ export class Peds {
   furnitureGrid() {
     const g = this.g;
     if (g.crowd?.nav) return g.crowd.nav;
-    if (g.streets?.parts?.furniture)
+    if (g.streets?.parts?.furniture || g.streets?.parts?.storefronts)
       return this.furniture || (this.furniture = pedestrianFurniture(g));
   }
   spawn(px, py, anywhere) {
@@ -655,6 +655,8 @@ export class Peds {
   step(dt) {
     const g = this.g, px = g.focus.x, py = g.focus.y;
     this.spawnT -= dt; if (this.spawnT <= 0 && this.list.length < this.target) { this.spawnT = 0.15; this.spawn(px, py, false); }
+    const checkWalls = this.list.length && g.P?.get('crowdwalls') !== '0' && g.P?.get('crowdfb') !== '0';
+    const inside = checkWalls && (this.inBuilding ||= buildingQuery(g.city, 2.5));
     const furniture = this.list.length ? this.furnitureGrid() : null;
     const car = g.player.vehicle; const cars = g.vehicles;
     for (let i = this.list.length - 1; i >= 0; i--) {
@@ -698,7 +700,7 @@ export class Peds {
             if (g.statics.raycast(p.x, p.y, tmp2.x, tmp2.y) < 1 ||
                 g.statics.resolvePedestrian(tmp2.x, tmp2.y, 0.3, tmp)) { tmp2.x = p.x; tmp2.y = p.y; }
           }
-          if (!insideVehicle(g, tmp2.x, tmp2.y, 0.3, 2.2)) {
+          if (!(inside && inside(tmp2.x, tmp2.y, 2.5, -Infinity, p.x, p.y)) && !insideVehicle(g, tmp2.x, tmp2.y, 0.3, 2.2)) {
             p.x = tmp2.x; p.y = tmp2.y;
           }
           p.h = Math.atan2(p.fy, p.fx);
@@ -730,7 +732,7 @@ export class Peds {
           // A prescribed sidewalk loop can cross a facade or a fence. Turn
           // back on the same side and ease onto the return lane from here.
           // Traffic stopped at a light has no parked-car circles.
-          if (insideVehicle(g, p.x, p.y, 0.25, 2.2) || furniture?.push(p.x, p.y, 0.25, tmp2) || g.statics.resolvePedestrian(p.x, p.y, 0.25, tmp2) ||
+          if ((inside && inside(p.x, p.y, 2.5, -Infinity, oldX, oldY)) || insideVehicle(g, p.x, p.y, 0.25, 2.2) || furniture?.push(p.x, p.y, 0.25, tmp2) || g.statics.resolvePedestrian(p.x, p.y, 0.25, tmp2) ||
               g.statics.raycast(oldX, oldY, p.x, p.y) < 1) {
             p.x = oldX; p.y = oldY; p.s = p.rejoinStart ?? oldS; p.rejoinStart = undefined;
             p.dir = -p.dir; p.off = -p.off; p.back = 1;
@@ -744,7 +746,7 @@ export class Peds {
                 g.statics.resolvePedestrian(fromX, fromY, 0.25, tmp2);
               }
               const x = tmp2.x, y = tmp2.y;
-              if (!furniture?.push(x, y, 0.25 - 1e-6, tmp) &&
+              if (!(inside && inside(x, y, 2.5, -Infinity, oldX, oldY)) && !furniture?.push(x, y, 0.25 - 1e-6, tmp) &&
                   g.statics.raycast(fromX, fromY, x, y) >= 1 &&
                   !g.statics.resolvePedestrian(x, y, 0.25, tmp) &&
                   !insideVehicle(g, x, y, 0.25)) {
@@ -758,7 +760,7 @@ export class Peds {
         const contact = g.traffic?.pushPlayer && overlapsVehicle(g.traffic.cars, p.x, p.y, 0.25, Infinity);
         if (contact) {
           const x = p.x, y = p.y;
-          const clear = () => g.statics.raycast(x, y, p.x, p.y) >= 1 &&
+          const clear = () => !(inside && inside(p.x, p.y, 2.5, -Infinity, x, y)) && g.statics.raycast(x, y, p.x, p.y) >= 1 &&
             !staticPathBlocked(g.statics, x, y, p.x, p.y, true) &&
             !g.statics.resolvePedestrian(p.x, p.y, 0.25, tmp2) &&
             !furniture?.push(p.x, p.y, 0.25, tmp2) &&

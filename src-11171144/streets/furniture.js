@@ -43,7 +43,7 @@ function shortName(n) {
   const last = w.length - 1, isT = (i) => i >= 0 && Object.prototype.hasOwnProperty.call(STYPE, w[i]);
   if (last >= 2 && SDIR[w[last]] && isT(last - 1)) w[last] = SDIR[w[last]];                       // Park Avenue South -> Park Av S; Central Park West stays
   if (w[0] === 'Avenue' && w.length > 1) w[0] = 'Av';                                               // Avenue A -> Av A
-  if (SDIR[w[0]] && w.length > 1 && !(w.length === 2 && isT(1))) w[0] = SDIR[w[0]];                 // West 23rd Street -> W 23 St; West Street stays
+  if (SDIR[w[0]] && w.length > 1 && !(w.length === 2 && isT(1)) && w[1] !== 'End') w[0] = SDIR[w[0]];     /* handoff-endav: West End Av, North End Av: 'End' makes the first word part of the name */                 // West 23rd Street -> W 23 St; West Street stays
   for (let i = 1; i < w.length; i++) { if (SDIR[w[i]] && /^\d/.test(w[i + 1] || '')) w[i] = SDIR[w[i]]; if (isT(i)) w[i] = STYPE[w[i]]; }   // Little West 12th Street; 20th Street Loop -> 20 St Loop
   return w.join(' ');
 }

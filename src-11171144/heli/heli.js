@@ -357,7 +357,7 @@ class Heli {
       C.clip = C.clip === undefined || !C.init ? ok : C.clip + (ok - C.clip) * Math.min(1, dt * (ok < C.clip ? 20 : 2)); d = Math.min(d, C.clip);
       const sh = (C.shake * C.shake * 0.35 + buzz * 0.04), n = g.frame;
       cam.position.set(C.tgt.x + bx * d + Math.sin(n * 1.7) * sh, Math.max(C.tgt.y + by * d + Math.sin(n * 2.3) * sh, 0.6), C.tgt.z + bz * d + Math.cos(n * 1.3) * sh);
-      _v.set(C.tgt.x, C.tgt.y + (far ? 0.5 : 0.2) + (this.rockets && !this.rockets.dead && this.piloted ? 1.5 : 0), C.tgt.z);     // the aircraft sits just below the middle of the frame, always (with rockets a little lower still: the aim ring shows over the rotor head, not on the cabin)
+      _v.set(C.tgt.x, C.tgt.y + (far ? 0.5 : 0.2) + (this.rockets && !this.rockets.dead && this.piloted ? 2.3 : 0), C.tgt.z);     // the aircraft sits just below the middle of the frame, always (with rockets a little lower still: the aim ring shows over the rotor head, not on the cabin)
       cam.up.set(0, 1, 0); cam.lookAt(_v);
       // a little of the bank reaches the horizon
       C.bank = (C.bank || 0) + (clamp(-f.roll * 0.1 * Math.cos(wrapPi(C.yaw - hd)), -0.07, 0.07) - (C.bank || 0)) * Math.min(1, dt * 2.5); cam.rotateZ(C.bank);

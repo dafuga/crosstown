@@ -6,19 +6,19 @@
 // over, the aircraft itself hurt and shaken if it is close, and a crime for the police.
 import * as THREE from 'three';
 
-const N = 640;
+const N = 3000;      // puffs alive at once in each of the two pools (a trail is a puff every metre and a half)
 const VERT = /* glsl */`
   attribute vec3 aPos; attribute vec3 aVel; attribute vec4 aLife;      // aLife: birth, life (s), size at birth (m), growth (m/s)
-  attribute float aSeed; uniform float uT; uniform float uRise; varying float vA; varying vec2 vUv; varying float vSeed; varying float vAge;
+  attribute float aSeed; uniform float uT; uniform float uRise; uniform vec3 uSunW; varying float vA; varying vec2 vUv; varying float vSeed; varying float vAge; varying vec3 vL; varying vec2 vRot;
   void main() {
     float age = uT - aLife.x, u = clamp(age / max(aLife.y, 0.001), 0.0, 1.0);
     float drag = (1.0 - exp(-age * 2.2)) / 2.2;
     vec3 p = aPos + aVel * drag + vec3(0.0, uRise * age * age * 0.5 + uRise * age * 0.6, 0.0);
     float size = (aLife.z + aLife.w * (1.0 - exp(-age * 1.6)) / 1.6) * step(0.0, age) * step(age, aLife.y);
-    float rot = aSeed * 6.283 + age * (aSeed - 0.5) * 1.4, c = cos(rot), s = sin(rot);
+    float sd0 = fract(aSeed); float rot = sd0 * 6.283 + age * (sd0 - 0.5) * 1.4, c = cos(rot), s = sin(rot);
     vec2 q = vec2(position.x * c - position.y * s, position.x * s + position.y * c);
     vec4 mv = viewMatrix * vec4(p, 1.0); mv.xy += q * size;
-    gl_Position = projectionMatrix * mv; vUv = uv; vA = u; vSeed = aSeed; vAge = age;
+    gl_Position = projectionMatrix * mv; vUv = uv; vA = u; vSeed = aSeed; vAge = age; vL = normalize(mat3(viewMatrix) * uSunW); vRot = vec2(c, s);
   }`;
 // the billow: one read of a small repeating cloud picture (made once, below) instead of value noise worked out in every pixel
 // (heli lane, Nov 17: sustained rocket fire cost 8 fps on an M2 Max, CHIEF 04:47; the puffs are big and lie over each other)
@@ -32,38 +32,48 @@ function cloudTex() {
       v += w * ((at(x0, y0) * (1 - sx) + at(x0 + 1, y0) * sx) * (1 - sy) + (at(x0, y0 + 1) * (1 - sx) + at(x0 + 1, y0 + 1) * sx) * sy); t += w; w *= 0.5; } const c = Math.round(v / t * 255); d.set([c, c, c, 255], (y * n + x) * 4); }
   const tex = new THREE.DataTexture(d, n, n, THREE.RGBAFormat); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.minFilter = THREE.LinearMipmapLinearFilter; tex.magFilter = THREE.LinearFilter; tex.generateMipmaps = true; tex.needsUpdate = true; return tex;
 }
+// smoke as a lit billow (second critic, Nov 17: "flat, unlit, uniformly dark and see-through ... a Photoshop airbrush"): each puff is shaded as a lumpy ball
+// (a normal made from its own shape and the cloud picture, turned with the puff), lit by the sun on one side and the sky from above, solid in its middle,
+// broken at its edge; black-brown when young, grey as it ages; pale for dust and exhaust; glowing underneath for the first moments over the fire
 const FRAG_SMOKE = /* glsl */`
-  varying float vA; varying vec2 vUv; varying float vSeed; varying float vAge; uniform vec3 uSun;
+  varying float vA; varying vec2 vUv; varying float vSeed; varying float vAge; varying vec3 vL; varying vec2 vRot; uniform vec3 uSun;
   ${NOISE}
   void main() {
-    vec2 d = vUv - 0.5; float r = length(d) * 2.0; float n = fbm(vUv * 3.2 + vSeed * 40.0 + vec2(0.0, -vAge * 0.15));
-    float a = smoothstep(1.0, 0.25, r + (n - 0.5) * 0.9) * (1.0 - smoothstep(0.55, 1.0, vA)) * smoothstep(0.0, 0.06, vA) * 0.78;
+    float sh = floor(vSeed) / 8.0, sd = fract(vSeed);
+    vec2 d = vUv - 0.5; float r = length(d) * 2.0;
+    float n = fbm(vUv * 2.6 + sd * 40.0 + vec2(0.0, -vAge * 0.12)), n2 = fbm(vUv * 2.6 + sd * 17.0 + vec2(0.37, vAge * 0.1));
+    float shape = 0.86 - r + (n - 0.5) * 0.8;
+    float a = smoothstep(0.0, 0.2, shape) * (1.0 - smoothstep(0.62, 1.0, vA)) * smoothstep(0.0, 0.04, vA) * mix(1.0, 0.42, sh) * smoothstep(1.0, 0.8, max(abs(d.x), abs(d.y)) * 2.0);      /* and out before the card's own straight edge */
     if (a < 0.01) discard;
-    float lit = 0.55 + 0.45 * clamp(d.y * 2.0 + 0.4, 0.0, 1.0);
-    vec3 col = mix(vec3(0.035), vec3(0.2, 0.19, 0.18), smoothstep(0.0, 0.5, vA) * (0.5 + vSeed * 0.5)) * lit * uSun;
+    vec2 q = d * 2.0 + (vec2(n, n2) - 0.5) * 1.3; q = vec2(q.x * vRot.x + q.y * vRot.y, -q.x * vRot.y + q.y * vRot.x);      // back from the puff's own turn to the screen's axes
+    vec3 N = normalize(vec3(q, sqrt(max(0.06, 1.0 - min(r * r, 0.94)))));
+    float dif = max(dot(N, vL), 0.0), sky = 0.5 + 0.5 * N.y, hollow = smoothstep(0.0, 0.5, shape);
+    vec3 young = vec3(0.022, 0.016, 0.012), old = vec3(0.105, 0.1, 0.097), base = mix(mix(young, old, smoothstep(0.1, 0.9, vA) * (0.35 + 0.65 * sd)), vec3(0.46, 0.44, 0.41), sh);
+    vec3 col = base * (0.3 + 0.45 * sky + 1.25 * dif) * (0.55 + 0.45 * hollow) * uSun;
+    col += vec3(1.0, 0.33, 0.06) * (1.0 - sh) * exp(-vAge * 4.0) * (0.5 - 0.5 * N.y) * 1.6;      // the fire under it
     gl_FragColor = vec4(col, a);
   }`;
 const FRAG_FIRE = /* glsl */`
   varying float vA; varying vec2 vUv; varying float vSeed; varying float vAge;
   ${NOISE}
   void main() {
-    vec2 d = vUv - 0.5; float r = length(d) * 2.0; float n = fbm(vUv * 4.0 + vSeed * 30.0 + vec2(0.0, -vAge * 1.2));
+    vec2 d = vUv - 0.5; float r = length(d) * 2.0; float n = fbm(vUv * 4.0 + fract(vSeed) * 30.0 + vec2(0.0, -vAge * 1.2));
     float core = smoothstep(1.0, 0.0, r + (n - 0.5) * 1.1); float k = 1.0 - vA;
-    float a = core * k * k; if (a < 0.004) discard;
-    vec3 col = mix(vec3(1.0, 0.16, 0.02), vec3(1.0, 0.72, 0.28), core * k) * (1.5 + 9.0 * k * k * core);
+    float a = core * k * k / (1.0 + floor(vSeed) * 3.0); if (a < 0.002) discard;      // the whole part of the seed dims it: the wide glow that stands in for light on the walls
+    vec3 col = mix(mix(vec3(0.55, 0.05, 0.0), vec3(1.0, 0.3, 0.04), k), vec3(1.0, 0.86, 0.6), core * k * k) * (1.2 + 9.0 * k * k * k * core);
     gl_FragColor = vec4(col * a, 1.0);
   }`;
 
 export class Puffs {
   constructor(scene) {
-    this.t = 0; this.heads = [0, 0]; this.sets = []; const uN = { value: cloudTex() };
+    this.uSunW = { value: new THREE.Vector3(0.45, 0.75, 0.48).normalize() }; this.src = []; this.scene = scene; this.t = 0; this.heads = [0, 0]; this.sets = []; const uN = { value: cloudTex() };
     for (let kind = 0; kind < 2; kind++) {
       const g = new THREE.InstancedBufferGeometry(); const q = new THREE.PlaneGeometry(1, 1); g.index = q.index; g.setAttribute('position', q.getAttribute('position')); g.setAttribute('uv', q.getAttribute('uv'));
       const A = { pos: new THREE.InstancedBufferAttribute(new Float32Array(N * 3), 3), vel: new THREE.InstancedBufferAttribute(new Float32Array(N * 3), 3), life: new THREE.InstancedBufferAttribute(new Float32Array(N * 4), 4), seed: new THREE.InstancedBufferAttribute(new Float32Array(N), 1) };
       for (let i = 0; i < N; i++) A.life.array[i * 4] = -1e6;
       for (const a of Object.values(A)) a.setUsage(THREE.DynamicDrawUsage);
       g.setAttribute('aPos', A.pos); g.setAttribute('aVel', A.vel); g.setAttribute('aLife', A.life); g.setAttribute('aSeed', A.seed); g.instanceCount = N;
-      const m = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: kind ? FRAG_FIRE : FRAG_SMOKE, uniforms: { uN, uT: { value: 0 }, uRise: { value: kind ? 0.6 : 1.1 }, uSun: { value: new THREE.Vector3(1, 1, 1) } }, transparent: true, depthWrite: false,
+      const m = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: kind ? FRAG_FIRE : FRAG_SMOKE, uniforms: { uN, uSunW: this.uSunW, uT: { value: 0 }, uRise: { value: kind ? 0.6 : 1.1 }, uSun: { value: new THREE.Vector3(1, 1, 1) } }, transparent: true, depthWrite: false,
         blending: kind ? THREE.CustomBlending : THREE.NormalBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor });
       const mesh = new THREE.Mesh(g, m); mesh.frustumCulled = false; mesh.renderOrder = kind ? 9 : 8; mesh.name = kind ? 'heliFire' : 'heliSmoke'; mesh.visible = false; scene.add(mesh);
       this.sets.push({ A, m, mesh, dirty: false, last: -1e6 });
@@ -71,14 +81,26 @@ export class Puffs {
     this.fl = [];
   }
   // one puff: place, speed (m/s, slowed by drag), size at birth, life, growth (m/s), kind 0 smoke / 1 fire
-  add(x, y, z, vx, vy, vz, size, life, grow, kind) {
+  add(x, y, z, vx, vy, vz, size, life, grow, kind, shade = 0) {
     const S = this.sets[kind], i = this.heads[kind]; this.heads[kind] = (i + 1) % N; const A = S.A;
     A.pos.array[i * 3] = x; A.pos.array[i * 3 + 1] = y; A.pos.array[i * 3 + 2] = z; A.vel.array[i * 3] = vx; A.vel.array[i * 3 + 1] = vy; A.vel.array[i * 3 + 2] = vz;
-    A.life.array[i * 4] = this.t; A.life.array[i * 4 + 1] = life; A.life.array[i * 4 + 2] = size; A.life.array[i * 4 + 3] = grow; A.seed.array[i] = Math.random();
+    A.life.array[i * 4] = this.t; A.life.array[i * 4 + 1] = life; A.life.array[i * 4 + 2] = size; A.life.array[i * 4 + 3] = grow; A.seed.array[i] = Math.random() * 0.999 + Math.round(shade * 8);
     S.dirty = true; S.last = Math.max(S.last, this.t + life);
   }
-  flare(x, y, z) { this.add(x, y, z, 0, 0, 0, 0.55, 0.06, 0, 1); }      // the motor's glow, a frame long
-  step(dt) { this.t += dt; }
+  flare(x, y, z) { this.add(x, y, z, 0, 0, 0, 1.5, 0.05, 0, 1); }      // the motor's glow, a frame long
+  // a column: smoke fed from a spot on the ground for `secs`, so it stands on the street and climbs (not one cloud let go at once)
+  column(x, y, z, secs) { this.src.push({ x, y, z, until: this.t + secs, next: this.t, k: 0 }); if (this.src.length > 6) this.src.shift(); }
+  // a scorch mark: a flat dark disc on the surface (a pool of 24, the oldest taken again)
+  scorch(x, y, z) {
+    if (!this.sc) { const cv = document.createElement('canvas'); cv.width = cv.height = 128; const c = cv.getContext('2d'), gr = c.createRadialGradient(64, 64, 3, 64, 64, 64); gr.addColorStop(0, 'rgba(6,5,5,0.94)'); gr.addColorStop(0.4, 'rgba(9,8,7,0.8)'); gr.addColorStop(0.75, 'rgba(14,12,10,0.34)'); gr.addColorStop(1, 'rgba(14,12,10,0)'); c.fillStyle = gr; c.fillRect(0, 0, 128, 128);
+      c.globalCompositeOperation = 'destination-out'; for (let i = 0; i < 26; i++) { const a = i / 26 * 6.283 + Math.random() * 0.3, r0 = 40 + Math.random() * 14; c.globalAlpha = 0.5; c.beginPath(); c.moveTo(64 + Math.cos(a - 0.05) * r0, 64 + Math.sin(a - 0.05) * r0); c.lineTo(64 + Math.cos(a) * 66, 64 + Math.sin(a) * 66); c.lineTo(64 + Math.cos(a + 0.09) * r0, 64 + Math.sin(a + 0.09) * r0); c.fill(); }
+      const t = new THREE.CanvasTexture(cv), geo = new THREE.PlaneGeometry(1, 1); geo.rotateX(-Math.PI / 2);
+      this.sc = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({ map: t, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6 }), 24); this.sc.count = 0; this.sc.frustumCulled = false; this.sc.renderOrder = 2; this.sc.name = 'heliScorch'; this.scN = 0; this.scene.add(this.sc); }
+    const i = this.scN++ % 24, sz = 9 + Math.random() * 4; this.sc.setMatrixAt(i, new THREE.Matrix4().compose(new THREE.Vector3(x, y + 0.05, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.random() * 6.283), new THREE.Vector3(sz, 1, sz))); this.sc.count = Math.min(24, this.scN); this.sc.instanceMatrix.needsUpdate = true;
+  }
+  step(dt) { this.t += dt;
+    for (let i = this.src.length - 1; i >= 0; i--) { const q = this.src[i]; if (this.t > q.until) { this.src.splice(i, 1); continue; }
+      while (q.next <= this.t) { q.next += 0.11; const R = () => Math.random() - 0.5, w = 1 - (q.until - this.t) / 3.2; this.add(q.x + R() * 2.2, q.y + 0.8 + Math.random(), q.z + R() * 2.2, R() * 2.5, 7 + Math.random() * 4, R() * 2.5, 2.4 + Math.random() * 1.2, 5.5 + Math.random() * 2.5, 2.8, 0, Math.max(0, w) * 0.25); } } }
   sync(cam, dt) {
     for (const S of this.sets) {
       S.mesh.visible = this.t < S.last + 0.1; if (!S.mesh.visible) continue; S.m.uniforms.uT.value = this.t;
@@ -86,6 +108,7 @@ export class Puffs {
     }
   }
   sun(r, g, b) { this.sets[0].m.uniforms.uSun.value.set(r, g, b); }
+  sunDir(v) { if (v && v.isVector3) this.uSunW.value.copy(v).normalize(); }
 }
 
 // ---------------------------------------------------------------- sound: made here, from noise (no file)
@@ -114,11 +137,23 @@ export function boomAt(g, heli, puffs, x, y, z, o = {}) {
   const cam = g.world.camera, dist = cam.position.distanceTo(_v.set(x, y, z)), R = () => Math.random() - 0.5;
   // ---- seen: a flash, a ball of fire that rolls up into smoke, a low ring of dust, sparks thrown out
   if (DBG !== 'nopuff') {
-  puffs.add(x, y + 0.6, z, 0, 0, 0, 9, 0.11, 30, 1);
-  for (let i = 0; i < 9; i++) { const a = Math.random() * 6.283, e = Math.random() * 1.3, s = 4 + Math.random() * 9; puffs.add(x + R() * 1.5, y + 0.5 + Math.random(), z + R() * 1.5, Math.cos(a) * Math.cos(e) * s, Math.sin(e) * s + 3, Math.sin(a) * Math.cos(e) * s, 2.0 + Math.random() * 1.8, 0.55 + Math.random() * 0.5, 3.4, 1); }
-  for (let i = 0; i < 11; i++) { const a = Math.random() * 6.283, e = Math.random() * 1.2, s = 3 + Math.random() * 8; puffs.add(x + R() * 2, y + 0.6 + Math.random() * 1.5, z + R() * 2, Math.cos(a) * Math.cos(e) * s, Math.sin(e) * s + 2.5, Math.sin(a) * Math.cos(e) * s, 2.3 + Math.random() * 1.7, 2.6 + Math.random() * 1.8, 2.9, 0); }
-  for (let i = 0; i < 8; i++) { const a = i / 8 * 6.283 + Math.random() * 0.4, s = 11 + Math.random() * 6; puffs.add(x, y + 0.4, z, Math.cos(a) * s, 0.4, Math.sin(a) * s, 1.5, 1.3 + Math.random() * 0.8, 2.6, 0); }
-  for (let i = 0; i < 10; i++) { const a = Math.random() * 6.283, e = 0.2 + Math.random() * 1.2, s = 22 + Math.random() * 30; puffs.add(x, y + 0.5, z, Math.cos(a) * Math.cos(e) * s, Math.sin(e) * s, Math.sin(a) * Math.cos(e) * s, 0.22, 0.5 + Math.random() * 0.5, 0, 1); }
+  // (critic, Nov 17: "a few metres across ... no light on the surroundings ... pale, flat smoke ... no aftermath". So: a strike the width of the street.)
+  // the flash and its glow on everything near (two frames of white, then a wide soft orange that stands in for light on the walls and the road)
+  puffs.add(x, y + 1.5, z, 0, 0, 0, 16, 0.09, 60, 1); puffs.add(x, y + 2, z, 0, 0, 0, 34, 0.32, 20, 1, 0.5); puffs.add(x, y + 0.6, z, 0, 0, 0, 22, 0.6, 6, 1, 1);
+  // the ball: fire seated on the ground that rolls up and out
+  for (let i = 0; i < 12; i++) { const a = Math.random() * 6.283, e = 0.15 + Math.random() * 1.25, sp = 5 + Math.random() * 11; puffs.add(x + R() * 2.5, y + 0.8 + Math.random() * 1.5, z + R() * 2.5, Math.cos(a) * Math.cos(e) * sp, Math.sin(e) * sp + 4, Math.sin(a) * Math.cos(e) * sp, 3.6 + Math.random() * 2.6, 0.7 + Math.random() * 0.6, 5.5, 1);
+    /* and soot behind each tongue of fire (third critic: 'architecture shows straight through the fireball'): the fire is light added on top, so it needs a body under it */
+    puffs.add(x + R() * 2.5, y + 0.8 + Math.random() * 1.5, z + R() * 2.5, Math.cos(a) * Math.cos(e) * sp, Math.sin(e) * sp + 4, Math.sin(a) * Math.cos(e) * sp, 3.2 + Math.random() * 2.0, 1.6 + Math.random() * 1.2, 5.0, 0, 0); }
+  // the black smoke it turns into, rising in a column past the fourth floor and hanging there
+  for (let i = 0; i < 9; i++) { const a = Math.random() * 6.283, e = 0.5 + Math.random() * 0.9, sp = 3 + Math.random() * 6; puffs.add(x + R() * 3, y + 1.2 + Math.random() * 2.5, z + R() * 3, Math.cos(a) * Math.cos(e) * sp, Math.sin(e) * sp + 5 + i * 0.5, Math.sin(a) * Math.cos(e) * sp, 3.6 + Math.random() * 2.6, 4.5 + Math.random() * 3.0, 3.6, 0, 0); }
+  puffs.column(x, y, z, 3.2); if (o.ground) puffs.scorch(x, y, z);
+  // the skirt: pale dust thrown out along the ground
+  for (let i = 0; i < 10; i++) { const a = i / 10 * 6.283 + Math.random() * 0.4, sp = 16 + Math.random() * 9; puffs.add(x, y + 0.7, z, Math.cos(a) * sp, 0.5, Math.sin(a) * sp, 2.2, 1.6 + Math.random() * 0.9, 4.2, 0, 0.8); }
+  // sparks and burning bits thrown high
+  for (let i = 0; i < 14; i++) { const a = Math.random() * 6.283, e = 0.25 + Math.random() * 1.2, sp = 26 + Math.random() * 34; puffs.add(x, y + 0.6, z, Math.cos(a) * Math.cos(e) * sp, Math.sin(e) * sp, Math.sin(a) * Math.cos(e) * sp, 0.3, 0.6 + Math.random() * 0.7, 0, 1); }
+  // what is left: the game's own fire and smoke burning on the spot for a while
+  { const fx = g.combat && g.combat.fx, now = puffs.t, L = boomAt.left || (boomAt.left = []); while (L.length && L[0] < now) L.shift();      /* at most three such fires burning at once: under sustained fire they were the new cost (31.8 fps against 35 before them, laptop 2) */
+    if (fx && fx.emitter && y < 6 && L.length < 3) { L.push(now + 8); try { const P3 = new THREE.Vector3(x, y + 0.2, z); fx.emitter({ pos: P3, kind: 'fire', life: 7 + Math.random() * 4 }); fx.emitter({ pos: P3.clone().setY(y + 0.8), kind: 'smoke', life: 12 + Math.random() * 5 }); } catch (e) {} } }
   }
   // ---- heard: the crack and the rumble, later and duller with distance (340 m/s)
   const dl = Math.min(2.5, dist / 340), near = Math.max(0.06, Math.min(1, 40 / Math.max(dist, 20)));

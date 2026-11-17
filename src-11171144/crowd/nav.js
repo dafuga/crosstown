@@ -22,18 +22,30 @@ const RAD = [[/^cafe$/, 0.95, 0.83], [/^ptable$/, 0.5, 0.42], [/^pchair$/, 0.33,
 // the street layer's furniture that stands on the ground but is not in the game's collision world (the walk goes round it), and where
 // one can sit: plaza chairs (seat 0.45 m up, the chair faces its own +X) and park benches (two places each). Every area's.
 export function furnitureOf(game) {
-  const extra = [], seats = [], F = game.streets && game.streets.parts && game.streets.parts.furniture; if (!F) return { extra, seats };
+  const extra = [], seats = [], raisedTables = [], F = game.streets?.parts?.furniture || {};
   const all = []; if (F.sets) { for (const n in F.sets) if (F.sets[n] && F.sets[n].kinds && !all.includes(F.sets[n].kinds)) all.push(F.sets[n].kinds); } if (F.kinds && !all.includes(F.kinds)) all.push(F.kinds);
   for (const K of all) {
-    for (const name in K) { const m = RAD.find((q) => q[0].test(name)); if (!m || !K[name].list) continue; for (const it of K[name].list) { if (it[2] > 1) continue; const sc = it[4] && typeof it[4].s === 'number' ? it[4].s : 1, r = m[1] * sc, h = m[2] * sc; extra.push({ x: it[0], y: it[1], r, h });
+    for (const name in K) { const m = RAD.find((q) => q[0].test(name)); if (!m || !K[name].list) continue; for (const it of K[name].list) { const raised = it[2] > 1;
+      if (raised && name !== 'ptable' && name !== 'cafe') continue;
+      const sc = it[4] && typeof it[4].s === 'number' ? it[4].s : 1, r = m[1] * sc, h = m[2] * sc; (raised ? raisedTables : extra).push({ x: it[0], y: it[1], r, h, seatObstacle: name === 'ptable' || name === 'cafe' ? { base: it[2], top: it[2] + (name === 'ptable' ? 0.73 : 1) * sc } : null });
       if (/^(bike|bikeB|bikeShare|benchP|shelter|cart)$/.test(name)) { const c = Math.cos(it[3]), sn = Math.sin(it[3]), L = /shelter/.test(name) ? 1.4 : 0.55; extra.push({ x: it[0] + c * L, y: it[1] + sn * L, r, h }, { x: it[0] - c * L, y: it[1] - sn * L, r, h }); } } }
     if (K.pchair && K.pchair.list) for (const it of K.pchair.list) { const o = it[4]; if (o && o.tilt && (Math.abs(o.tilt[0]) > 0.3 || Math.abs(o.tilt[1]) > 0.3)) continue; seats.push({ x: it[0], y: it[1], z: it[2], h: it[3], seat: 0.452 * (o && typeof o.s === 'number' ? o.s : 1) }); }
     if (K.benchP && K.benchP.list) for (const it of K.benchP.list) seats.push({ x: it[0], y: it[1], z: it[2], h: it[3] - Math.PI / 2, seat: 0.465, bench: true });
   }
   // people lane, Nov 17 (Matt: 'A woman just walked through the fruit stand'): the goods shops set out on the sidewalk (produce crates, flower
   // tiers: streets/storefronts.js, a strip about a metre deep and up to 3.3 m long) as a row of circles the walk goes round
-  try { const G = game.streets.parts.storefronts && game.streets.parts.storefronts.goods; if (G) for (const q of G) { if (!q.solid) continue; const L = Math.hypot(q.bx - q.ax, q.by - q.ay), n = Math.max(1, Math.ceil(L / 0.5)); for (let k = 0; k <= n; k++) extra.push({ x: q.ax + (q.bx - q.ax) * k / n, y: q.ay + (q.by - q.ay) * k / n, r: 0.85, h: 0.56 }); } } catch (e) {}
-  return { extra, seats };
+  const shops = game.streets?.parts?.storefronts;
+  for (const area of shops?.sets ? Object.values(shops.sets) : [shops]) {
+    for (const q of area?.goods || []) {
+      if (!q.solid) continue;
+      const n = Math.max(1, Math.ceil(Math.hypot(q.bx - q.ax, q.by - q.ay) / 0.5));
+      for (let k = 0; k <= n; k++) extra.push({
+        x: q.ax + (q.bx - q.ax) * k / n, y: q.ay + (q.by - q.ay) * k / n, r: 0.85, h: 0.56,
+        seatObstacle: { base: 0.15, top: q.kind === 'flowers' ? 1.48 : 1.17 }
+      });
+    }
+  }
+  return { extra, seats, raisedTables };
 }
 
 // people/crowd-perf, Nov 14: statics.onSidewalk's answer, from each block polygon's edges sorted into bands of y (same edges, same arithmetic,
@@ -88,19 +100,68 @@ export function pedestrianFurniture(game) {
   return { push: furniturePush(cells, cell, key), soft: furnitureQuery(cells, cell, key) };
 }
 
+// Called only for a movement endpoint already inside a building.
+function footprintDepthSquared(building, x, y) {
+  let best = Infinity;
+  function visit(ring) {
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [ax, ay] = ring[j], dx = ring[i][0] - ax, dy = ring[i][1] - ay;
+      const t = Math.max(0, Math.min(1, ((x-ax)*dx + (y-ay)*dy) / (dx*dx + dy*dy || 1)));
+      best = Math.min(best, (x-ax-t*dx)**2 + (y-ay-t*dy)**2);
+    }
+  }
+  visit(building.poly);
+  for (const hole of building.holes || []) visit(hole);
+  return best;
+}
+
+// Test the open intervals between boundary hits. Touching a corner from outside is clear.
+function entersFootprint(b, ax, ay, bx, by) {
+  const dx = bx-ax, dy = by-ay;
+  let hits;
+  function intersect(ring) {
+    for (let i=0, j=ring.length-1; i<ring.length; j=i++) {
+      const [x,y] = ring[j], ex = ring[i][0]-x, ey = ring[i][1]-y;
+      const det = dx*ey-dy*ex;
+      if (!det) continue;
+      const t = ((x-ax)*ey-(y-ay)*ex)/det, u = ((x-ax)*dy-(y-ay)*dx)/det;
+      if (t >= 0 && t < 1 && u >= 0 && u <= 1) (hits ||= []).push(t);
+    }
+  }
+  intersect(b.poly);
+  for (const hole of b.holes || []) intersect(hole);
+  if (!hits) return false;
+  hits.push(0,1);
+  hits.sort((a,b)=>a-b);
+  let outside = !contains(ax,ay);
+  function contains(x,y) {
+    return pointInPoly(x,y,b.poly) && !b.holes?.some(hole=>pointInPoly(x,y,hole)) && footprintDepthSquared(b,x,y)>1e-20;
+  }
+  for (let i=1; i<hits.length; i++) {
+    if (hits[i] === hits[i-1]) continue;
+    const t = (hits[i]+hits[i-1])/2;
+    if (contains(ax+dx*t, ay+dy*t)) {
+      if (outside) return true;
+    } else outside = true;
+  }
+  return false;
+}
+
 // Build the footprint index on the first query. Open courtyards are walkable.
-export function buildingQuery(city, maxBaseHeight) {
+export function buildingQuery(city, maxBaseHeight, indexLimit = maxBaseHeight) {
   let cells;
-  return (x, y, baseHeight = maxBaseHeight) => {
+  const bounds = new WeakMap();
+  return (x, y, baseHeight = maxBaseHeight, floor = -Infinity, fromX, fromY) => {
     if (!cells) {
       cells = new Map();
       for (const b of city?.buildings || []) {
-        if ((b.minh || 0) >= maxBaseHeight || !b.poly?.length) continue;
+        if ((b.minh || 0) >= indexLimit || !b.poly?.length) continue;
         let left = Infinity, right = -Infinity, bottom = Infinity, top = -Infinity;
         for (const [px, py] of b.poly) {
           left = Math.min(left, px); right = Math.max(right, px);
           bottom = Math.min(bottom, py); top = Math.max(top, py);
         }
+        bounds.set(b, [left,bottom,right,top]);
         for (let i = Math.floor(left/32); i <= Math.floor(right/32); i++)
           for (let j = Math.floor(bottom/32); j <= Math.floor(top/32); j++) {
             const key = i*8192+j;
@@ -109,13 +170,35 @@ export function buildingQuery(city, maxBaseHeight) {
           }
       }
     }
+    if (fromX !== undefined) {
+      const left=Math.min(x,fromX), right=Math.max(x,fromX);
+      const bottom=Math.min(y,fromY), top=Math.max(y,fromY);
+      for (let i=Math.floor(left/32); i<=Math.floor(right/32); i++) {
+        for (let j=Math.floor(bottom/32); j<=Math.floor(top/32); j++) {
+          const nearby=cells.get(i*8192+j);
+          if (!nearby) continue;
+          for (const b of nearby) {
+            const box=bounds.get(b);
+            if (right<box[0] || left>box[2] || top<box[1] || bottom>box[3] ||
+                (b.minh || 0)>=baseHeight || (b.h ?? Infinity)<=floor) continue;
+            if (entersFootprint(b,fromX,fromY,x,y)) return true;
+            if (!pointInPoly(x,y,b.poly) || b.holes?.some(h=>pointInPoly(x,y,h))) continue;
+            const depth = footprintDepthSquared(b,x,y);
+            if (depth <= 1e-20) continue;
+            if (!pointInPoly(fromX,fromY,b.poly) || b.holes?.some(h=>pointInPoly(fromX,fromY,h)) ||
+                depth >= footprintDepthSquared(b,fromX,fromY)) return true;
+          }
+        }
+      }
+      return false;
+    }
     const candidates = cells.get(Math.floor(x/32)*8192 + Math.floor(y/32));
-    return !!candidates?.some(b => (b.minh || 0) < baseHeight && pointInPoly(x, y, b.poly) &&
+    return !!candidates?.some(b => (b.minh || 0) < baseHeight && (b.h ?? Infinity) > floor && pointInPoly(x, y, b.poly) &&
       !b.holes?.some(hole => pointInPoly(x, y, hole)));
   };
 }
 
-export function buildNav(game, plazas = [], extraObs = []) {
+export function buildNav(game, plazas = [], extraObs = [], raisedTables = []) {
   const R = game.roads, st = game.statics, city = game.city, nodes = R.nodes, edges = R.edges;
   // (crowd.js hands over the furniture as { x, y, r }: the walking room only. The things' own half widths are read here, so crowd.js stays as it is.)
   if (extraObs.length && extraObs[0].h === undefined) { try { const f = furnitureOf(game).extra; if (f.length) extraObs = f; } catch (e) {} }
@@ -132,7 +215,7 @@ export function buildNav(game, plazas = [], extraObs = []) {
   /* and the parks whose box reaches a point come from a 64 m grid of the boxes instead of every park of the city for every point asked (that walk was the cost: 263 ms on nine areas with the slabs alone). Same parks tried, same answer. */
   const PG = PSLAB ? new Map() : null; if (PG) for (const p of parks) for (let i = Math.floor(p.x0 / 64); i <= Math.floor(p.x1 / 64); i++) for (let j = Math.floor(p.y0 / 64); j <= Math.floor(p.y1 / 64); j++) { const k = i * 65536 + j; let a = PG.get(k); if (!a) PG.set(k, (a = [])); a.push(p); }
   const inPark = (x, y) => { const L = PG ? PG.get(Math.floor(x / 64) * 65536 + Math.floor(y / 64)) : parks; if (L) for (const p of L) if (x > p.x0 && x < p.x1 && y > p.y0 && y < p.y1 && pin(x, y, p)) return true; return false; };
-  const inBuilding = buildingQuery(city, 3);
+  const inBuilding = buildingQuery(city, 3, Infinity);
   const swQ = game.P && game.P.get && (game.P.get('crowdnav') === '0' || game.P.get('crowdperf') === '0') ? null : swIndex(st), onSw = swQ || ((x, y) => st.onSidewalk(x, y));      /* people/crowd-perf */
   const walkable = (x, y) => Math.abs(x - bcx) < bx && Math.abs(y - bcy) < by && onSw(x, y);
   const pz = plazas.map((p) => { let x = 0, y = 0; for (const q of p.poly) { x += q[0]; y += q[1]; } return { x: x / p.poly.length, y: y / p.poly.length, r: Math.sqrt(p.area / Math.PI) + 30, poly: p.poly, area: p.area }; });
@@ -288,11 +371,20 @@ export function buildNav(game, plazas = [], extraObs = []) {
 
   // ---- what stands on the ground: the game's collision circles (poles, trees, hydrants, solid furniture; not parked cars) and what
   // the caller adds (the street layer's chairs, tables, planters, racks, which do not collide in the game), in one grid
-  const OC = 6, og = new Map(), fg = new Map(), ok_ = (i, j) => i * 8192 + j, allObs = [];
-  const addObs = (x, y, r, soft, h) => { const o = { x, y, r, h: h || r }; allObs.push(o); const k = ok_(Math.floor(x / OC), Math.floor(y / OC)); let a = og.get(k); if (!a) og.set(k, (a = [])); a.push(o); if (soft) { let b = fg.get(k); if (!b) fg.set(k, (b = [])); b.push(o); } };
+  const OC = 6, og = new Map(), fg = new Map(), raisedGrid = new Map(), ok_ = (i, j) => i * 8192 + j, allObs = [];
+  const addObs = (x, y, r, soft, h, seatObstacle) => { const o = { x, y, r, h: h || r, seatObstacle }; allObs.push(o); const k = ok_(Math.floor(x / OC), Math.floor(y / OC)); let a = og.get(k); if (!a) og.set(k, (a = [])); a.push(o); if (soft) { let b = fg.get(k); if (!b) fg.set(k, (b = [])); b.push(o); } };
   const readObs = (extra) => { og.clear(); fg.clear(); allObs.length = 0;
     for (const a of st.circ.values()) for (const o of a) if (o.on && !(o.tag && typeof o.tag === 'object')) addObs(o.x, o.y, Math.min(o.r, 1.2), false);
-    for (const o of extra) addObs(o.x, o.y, o.r, true, o.h); };
+    for (const o of extra) addObs(o.x, o.y, o.r, true, o.h, o.seatObstacle); };
+  function indexRaised(tables) {
+    raisedGrid.clear();
+    for (const o of tables) {
+      const k = ok_(Math.floor(o.x / OC), Math.floor(o.y / OC));
+      if (!raisedGrid.has(k)) raisedGrid.set(k, []);
+      raisedGrid.get(k).push(o);
+    }
+  }
+  indexRaised(raisedTables);
   readObs(extraObs);
   // a body of radius r out of the furniture the game does not collide (fg): out.x, out.y; returns how many things it touched
   const push = furniturePush(fg, OC, ok_);
@@ -422,20 +514,26 @@ export function buildNav(game, plazas = [], extraObs = []) {
   }
   // the ways pred picks, again, against the collision world as it is NOW: a few at a time (more(ms) until it returns true). A way that
   // can no longer be walked anywhere keeps its place in the network and gets no people; a plaza place that is now in something is given up.
-  function refresh(extra, pred) {
+  function refresh(extra, pred, raised) {
+    if (raised) indexRaised(raised);
     if (extra) readObs(extra); nav.ver++; const todo = ways.filter((w) => w.kind !== 'cross' && (!pred || pred(w))); let k = 0, done = false; rep.refreshed = (rep.refreshed || 0) + todo.length;
     for (const w of todo) w.refreshingObstacles = true;
     return function more(ms = 2) {
       if (done) return true; const t0 = typeof performance !== 'undefined' ? performance.now() : 0;
       while (k < todo.length) { const w = todo[k++], ok = profile(w); carve(w); w.refreshingObstacles = false; dense(w); if (w.shut) w.rho = 0; if (!ok) { w.rho = 0; rep.closed = (rep.closed || 0) + 1; } if (t0 && performance.now() - t0 > ms) return false; }
-      for (const s of spots) if (!s.dead && (!pred || pred({ mx: s.x, my: s.y, ax: s.x, ay: s.y })) && (st.resolve(s.x, s.y, 1.0, o) > 0 || blocked(s.x, s.y, 0.75))) { s.dead = true; rep.spotsDead = (rep.spotsDead || 0) + 1; }
+      for (const s of spots) {
+        if (pred && !pred({ mx: s.x, my: s.y, ax: s.x, ay: s.y })) continue;
+        const dead = st.resolve(s.x, s.y, 1.0, o) > 0 || blocked(s.x, s.y, 0.75);
+        if (dead && !s.dead) rep.spotsDead = (rep.spotsDead || 0) + 1;
+        s.dead = dead;
+      }
       done = true; return true;
     };
   }
   for (const nd of nodes) { delete nd._arms; delete nd._corners; }
   rep.ways = ways.length; rep.verts = verts.length; rep.km = +(ways.reduce((s, w) => s + (w.kind === 'cross' ? 0 : w.len), 0) / 1000).toFixed(1); rep.spots = spots.length;
   rep.obstacles = allObs.length;
-  const nav = { ways, verts, spots, near, inBuilding, blocked, push, gapTo, soft, obstaclesNear, refresh, ver: 1, report: rep, STEP, weight: total };
+  const nav = { ways, verts, spots, near, inBuilding, blocked, push, gapTo, soft, raisedTablesNear: furnitureQuery(raisedGrid, OC, ok_), obstaclesNear, refresh, ver: 1, report: rep, STEP, weight: total };
   return nav;
 }
 // the band at distance s along a way
