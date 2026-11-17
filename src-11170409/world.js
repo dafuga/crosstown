@@ -55,6 +55,17 @@ export const LIGHT = {
 const Q = new URLSearchParams(location.search);
 for (const k of Object.keys(LIGHT)) if (Q.has('L' + k)) LIGHT[k] = isNaN(+Q.get('L' + k)) ? Q.get('L' + k) : +Q.get('L' + k);
 
+// light lane, Nov 16 (Matt, playing the public build: 'weird lines on the screen like wrong shadows when flying'). Two faults, both in where the
+// 300 m sun-shadow box sits. (1) Every material fades from the live shadow to the baked sun map by the distance ON THE MAP (xz) from
+// uShadowCenter, which is right only when the box is centred on a point of the street: the helicopter handed in its own position, at its own
+// height, and the box then covered ground 0.9 x altitude away along the sun's bearing while the fade still sat under the aircraft: inside the
+// fade circle but off the map nothing was shadowed, with the map's straight edge drawn across streets and roofs. The box is now always placed
+// from a point on the ground: the nearest street the picture shows once the eye is high, the given point (dropped to the street) when it is low.
+// (2) The box was as tall as it was wide, so a roof or wall SH_TALL metres up fell off its upper edge well inside the fade circle (a point h up
+// sits h x cos(sun elevation) further along the box's 'up' axis). ?shtall=<metres> makes the box reach that much further on that side; it is
+// OFF by default for its frame-rate cost. ?shfix=0 = as before.
+const SH_FIX = new URLSearchParams(location.search).get('shfix') !== '0', SH_TALL = SH_FIX ? +(new URLSearchParams(location.search).get('shtall') || 0) : 0;      // SH_TALL: off by default (it cost 1.2 fps of 32.6 at 222 m on the M2 Pro: 45 % more ground in the shadow pass); ?shtall=200 to try it
+const SH_EXT = SH_TALL * Math.cos(LIGHT.sunEl * Math.PI / 180);      // metres added to the top of the box (the box's 'up' axis has y = cos(sun elevation))
 // Sun shadows the way the sun makes them: sharp where the caster touches, wider the farther the caster is (a blocker search, then a
 // filter as wide as that penumbra), with the compare plane tilted to the receiving surface so wide filters do not self-shadow.
 function installSunShadows() {
@@ -71,14 +82,15 @@ function installSunShadows() {
   vec2 lightVogel(int i, float n, float a){ float r = sqrt((float(i) + 0.5) / n), t = float(i) * 2.3999632 + a; return r * vec2(cos(t), sin(t)); }
   float pcssShadow(sampler2D sm, vec4 sc, float turn){
     const float WORLD = ${f(2 * LIGHT.shadowR)}, RANGE = ${f(LIGHT.shadowFar - LIGHT.shadowNear)}, SUN = ${f(LIGHT.sunSize)}, SEARCH = ${f(LIGHT.shSearch)}, MINW = ${f(1.6 * 2 * LIGHT.shadowR / LIGHT.shadowMap)};
+    const vec2 ASP = vec2(1.0, ${f(2 * LIGHT.shadowR / (2 * LIGHT.shadowR + SH_EXT))});   /* light, Nov 16: the box reaches further up the sun's 'up' axis for tall roofs; offsets stay round on the ground */
     vec3 ax = dFdx(sc.xyz), ay = dFdy(sc.xyz); float det = ax.x * ay.y - ax.y * ay.x;
     vec2 grad = abs(det) > 1e-14 ? vec2(ay.y * ax.z - ax.y * ay.z, ax.x * ay.z - ay.x * ax.z) / det : vec2(0.0);
     grad = clamp(grad, vec2(-2.5), vec2(2.5));
     float a = (lightIgn(gl_FragCoord.xy) + turn) * 6.2831853, zb = 0.0, nb = 0.0;
-    for (int i = 0; i < ${NB}; i++) { vec2 o = lightVogel(i, ${NB}.0, a) * (SEARCH / WORLD); float d = unpackRGBAToDepth(textureLod(sm, sc.xy + o, 0.0)); if (d < sc.z + dot(grad, o)) { zb += d; nb += 1.0; } }
+    for (int i = 0; i < ${NB}; i++) { vec2 o = lightVogel(i, ${NB}.0, a) * (SEARCH / WORLD) * ASP; float d = unpackRGBAToDepth(textureLod(sm, sc.xy + o, 0.0)); if (d < sc.z + dot(grad, o)) { zb += d; nb += 1.0; } }
     if (nb < 0.5) return 1.0;
     float pen = clamp((sc.z - zb / nb) * RANGE * SUN, MINW, SEARCH * 2.0), s = 0.0;
-    for (int i = 0; i < ${NF}; i++) { vec2 o = lightVogel(i, ${NF}.0, a + 1.7) * (0.5 * pen / WORLD); s += step(sc.z + dot(grad, o), unpackRGBAToDepth(textureLod(sm, sc.xy + o, 0.0))); }
+    for (int i = 0; i < ${NF}; i++) { vec2 o = lightVogel(i, ${NF}.0, a + 1.7) * (0.5 * pen / WORLD) * ASP; s += step(sc.z + dot(grad, o), unpackRGBAToDepth(textureLod(sm, sc.xy + o, 0.0))); }
     return s / ${NF}.0;
   }
   float getShadow(`;
@@ -290,7 +302,7 @@ export class World {
     const sun = new THREE.DirectionalLight(sunCol, I);
     sun.castShadow = true; sun.shadow.mapSize.set(this.q.shadow, this.q.shadow);
     const R = this.shared.uShadowFar.value;
-    Object.assign(sun.shadow.camera, { left: -R, right: R, top: R, bottom: -R, near: LIGHT.shadowNear, far: LIGHT.shadowFar }); sun.shadow.camera.updateProjectionMatrix();
+    Object.assign(sun.shadow.camera, { left: -R, right: R, top: R + SH_EXT, bottom: -R, near: LIGHT.shadowNear, far: LIGHT.shadowFar }); sun.shadow.camera.updateProjectionMatrix();     /* light, Nov 16: SH_EXT = room for tall roofs on the side height pushes them to */
     sun.shadow.bias = -0.00002; sun.shadow.normalBias = 0.05; sun.shadow.radius = 1.0;
     this.scene.add(sun); this.scene.add(sun.target); this.sun = sun;
     this.shared.uSunColor.value.copy(sunCol).multiplyScalar(I / Math.PI);
@@ -298,10 +310,21 @@ export class World {
 
   // keep the shadow box around the point of interest, snapped to whole texels so the shadow edges do not crawl
   updateShadow(center) {
+    if (SH_FIX) {      // light, Nov 16: always a point of the street (see the note above installSunShadows)
+      const g = this._shG || (this._shG = new THREE.Vector3()), d = this._shD || (this._shD = new THREE.Vector3()), cam = this.camera, h = cam.position.y; g.set(center.x, 0, center.z);
+      // once the eye is high: the nearest ground the picture shows (where the bottom edge of the frame meets the street) plus most of a box
+      // half-width, and never past where the middle of the view meets the street. Looking level from 150 m that is about 380 m ahead, not the
+      // 900 m the old free-flight rule gave; looking straight down it is the point below the eye.
+      if (h > 30) { cam.getWorldDirection(d); const hl = Math.hypot(d.x, d.z), down = Math.atan2(-d.y, hl), edge = Math.min(Math.PI / 2, Math.max(0.2, down + cam.fov * Math.PI / 360));
+        const mid = down > 0.03 ? h / Math.tan(down) : 1e9, t = Math.min(h / Math.tan(edge) + 0.8 * this.shared.uShadowFar.value, mid, 900), k = Math.min(1, (h - 30) / 60), ux = hl > 1e-4 ? d.x / hl : 0, uz = hl > 1e-4 ? d.z / hl : 0;
+        g.x += (cam.position.x + ux * t - g.x) * k; g.z += (cam.position.z + uz * t - g.z) * k; }
+      center = g; }
     const R = this.shared.uShadowFar.value, texel = (2 * R) / this.q.shadow;
     const cam = this.sun.shadow.camera; const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), this.sunDir);
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(q), up = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
-    const x = Math.round(center.dot(right) / texel) * texel, y = Math.round(center.dot(up) / texel) * texel, z = center.dot(this.sunDir);
+    if (SH_FIX) { right.set(0, 1, 0).cross(this.sunDir).normalize(); up.copy(this.sunDir).cross(right); }      // the axes the light's camera really has (lookAt with y up): the texel grid lies along these
+    const texelY = (2 * R + SH_EXT) / this.q.shadow;
+    const x = Math.round(center.dot(right) / texel) * texel, y = Math.round(center.dot(up) / texelY) * texelY, z = center.dot(this.sunDir);
     const c = right.clone().multiplyScalar(x).addScaledVector(up, y).addScaledVector(this.sunDir, z);
     this.sun.target.position.copy(c); this.sun.position.copy(c).addScaledVector(this.sunDir, 1300); this.sun.target.updateMatrixWorld(); this.sun.updateMatrixWorld();
     this.shared.uShadowCenter.value.copy(c);

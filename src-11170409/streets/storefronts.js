@@ -196,7 +196,7 @@ export function layout(C, opts = {}) {
   const solOut = (P, a, b2, z) => { let g = 1e9; for (const u of b2 - a > 0.8 ? [a + 0.35, (a + b2) / 2, b2 - 0.35] : [(a + b2) / 2]) { const ox = P.x + P.dx * u + P.nx * 0.03, oy = P.y + P.dy * u + P.ny * 0.03; if (inBuilding(ox, oy)) continue;     /* buried in the next building: nothing to keep open */
       const h = bgrid.ray(ox, oy, P.nx, P.ny, z + 0.9); if (h && h[0] < g) g = h[0]; }
     if (g > 1e8) return z; stats.solidCut++; return Math.min(z, g + 0.03 - 0.9); };
-  const tiles = new Map(), frames = [], shops = [], solid = [], doors = [], gars = [];     /* interiors: doors */     /* garages */
+  const tiles = new Map(), frames = [], shops = [], solid = [], doors = [], gars = [], goods = [], GOODS_SOLID = !(typeof location !== 'undefined' && /[?&]sfgoods=0\b/.test(location.search));     /* interiors: doors */     /* garages */
   const stats = { buildings: 0, bays: 0, shops: 0, kinds: {}, signs: {}, samples: {}, solidCut: 0 };
   let tile = null, fi = 0;
   const bx = (major, x0, x1, y0, y1, z0, z1, kind, col, p0 = 0, p1 = 0, p2 = 0, p3 = 0) => bc(major, (x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2, x1 - x0, y1 - y0, z1 - z0, 0, 0, kind, col, p0, p1, p2, p3);
@@ -489,6 +489,10 @@ export function layout(C, opts = {}) {
       if (TY.out && P.role === 'shop' && P.kd - zF > 3.3 && r(59) < 0.75) {
         const left = r(60) < 0.5; let sa = left ? x0 + 0.1 : Math.max(x0 + 0.1, x1 - 3.4), sb = Math.min(sa + 3.3, x1 - 0.1);
         if (sb - sa > 1.4) { const cxs = (sa + sb) / 2, len = sb - sa, green = [0.02, 0.07, 0.035];
+          // people lane, Nov 17 (Matt: 'A woman just walked through the fruit stand'): the goods stand a metre out on the sidewalk and nothing knew it.
+          // Its front joins this wall's solid line, its two ends are closed, and the crowd is told where it is (crowd/nav.js furnitureOf). ?sfgoods=0 = as before.
+          { const zg = zF + 1.06, wx = (u, z) => P.x + P.dx * u + P.nx * z, wy = (u, z) => P.y + P.dy * u + P.ny * z; if (GOODS_SOLID) { so(sa, sb, zg);
+            solid.push(wx(sa, 0), wy(sa, 0), wx(sa, zg), wy(sa, zg), wx(sb, 0), wy(sb, 0), wx(sb, zg), wy(sb, zg)); } goods.push({ solid: GOODS_SOLID, ax: +wx(sa, zF + 0.55).toFixed(2), ay: +wy(sa, zF + 0.55).toFixed(2), bx: +wx(sb, zF + 0.55).toFixed(2), by: +wy(sb, zF + 0.55).toFixed(2), kind: TY.out }); }
           if (TY.out === 'produce') { bx(0, sa, sb, 0, 0.42, zF + 0.08, zF + 1.02, K.WOOD, green, 0, 0, 0, seed); for (let t = 0; t < 2; t++) bc(0, cxs, 0.86 - 0.3 * t, zF + 0.36 + 0.46 * t, len, 0.13, 0.52, 0, 0.36, K.PRODUCE, [0.28, 0.18, 0.09], 0, 0, 0, seed + t); bx(0, sa, sb, 0.42, 0.52, zF + 0.08, zF + 0.5, K.WOOD, green, 0, 0, 0, seed); }
           else for (let t = 0; t < 3; t++) { const yt = 0.12 + 0.2 * (2 - t), z0 = zF + 0.1 + 0.3 * t; bx(0, sa, sb, 0, yt, z0 - 0.02, z0 + 0.3, K.PLAIN, [0.025, 0.03, 0.025], 0.6, 0, 1, seed);
             for (let xq = sa + 0.04, q = 0; xq + 0.26 < sb; xq += 0.3, q++) { const rq = rnd(bid, P.key + 3000 + t, q); if (rq < 0.12) continue; const hb = 0.26 + 0.1 * rq, wf = 0.3 + 0.14 * rnd(bid, P.key + 3100 + t, q);
@@ -506,7 +510,7 @@ export function layout(C, opts = {}) {
     }
   });
   stats.shopsJson = shHit;
-  return { tiles, frames, stats, shops, solid, doors, gars };     /* interiors: doors */     /* garages */
+  return { tiles, frames, stats, shops, solid, doors, gars, goods };     /* interiors: doors */     /* garages */
 }
 
 // ------------------------------------------------------------------------------------------------ meshes
@@ -589,7 +593,7 @@ export async function add(game, ctx) {
     const row = hidden ? FAC.SHOP_NAMES.indexOf(hidden.label) : -1;
     shared.uHiddenShopSign.value.set(hidden?.x ?? 0, -(hidden?.y ?? 0), hidden?.radius ?? 0, row);
   }
-  const { tiles, frames, stats, shops, solid, doors, gars } = layout(     /* interiors: doors */     /* garages */
+  const { tiles, frames, stats, shops, solid, doors, gars, goods } = layout(     /* interiors: doors */     /* garages */
  C, { noDressing: !hasDressing, shops: shopsJ, core: new URLSearchParams(location.search).get('sfcore') === '1' });
   const tex = { mask: makeMask(THREE, shopsJ && shopsJ.names), rooms: makeRooms(THREE), props: makeProps(THREE) };
   const tune = { value: new THREE.Vector4(0.15, 2.8, 0.55, 0.6) };
@@ -653,5 +657,5 @@ export async function add(game, ctx) {
   }
   if (doors && doors.length) try { game.interiors = await (await import('../interiors/interiors.js')).addInteriors(game, { doors, meshes, ctx }); } catch (e) { console.log('[interiors] not loaded: ' + (e && (e.stack || e.message))); }     /* interiors */
   if (gars && gars.length) try { game.garages = await (await import('../garages/garages.js')).addGarages(game, { gars, meshes, ctx }); } catch (e) { console.log('[garages] not loaded: ' + (e && (e.stack || e.message))); }     /* garages */
-  return { group, meshes, tune, stats, shops, solidSegs, report: { instances: inst, ktris: Math.round(tris / 1000), shopsJson: stats.shopsJson || 0, bays: stats.bays, shops: stats.shops, kinds: stats.kinds, signs: stats.signs, hid, solid: Object.assign(sol, { cornersHeldBack: stats.solidCut }) } };
+  return { group, meshes, tune, stats, shops, goods, solidSegs, report: { goods: goods.length, instances: inst, ktris: Math.round(tris / 1000), shopsJson: stats.shopsJson || 0, bays: stats.bays, shops: stats.shops, kinds: stats.kinds, signs: stats.signs, hid, solid: Object.assign(sol, { cornersHeldBack: stats.solidCut }) } };
 }
