@@ -1,0 +1,99 @@
+// park/park.js (park lane, Nov 15): CENTRAL PARK as its own layer. Data: assets/park/ (lanes/park/SCHEMA.md): index.json + 256 m chunks.
+//   init(game)   early, before the street layers are built: reads the index, sets game.park (owns(x, y) = inside the park's outline, so the
+//                lawn, tree, furniture and crowd layers stand down there) and game.terrain (terrain.js). No index = no park layer, game as before.
+//   start(game)  when the game is built: lifts what is drawn onto the relief (terrain.hook) and starts the chunk loader.
+// The loader keeps chunks round the camera: FAR form (ground at 8 m, crown shells, water) within FAR_D, NEAR form (ground at 2 m with the
+// painted mask, tree wood, lamps and benches, bridges, collision) within NEAR_D. One step at a time, yielding between pieces; everything a chunk
+// draws hangs under its own group 'park:<id>', its collision entries carry that name as owner and go with it.
+// Switches: ?park=0 the game without any of this; ?parkdata=test a made-up park (testdata.js); ?parknear= / ?parkfar= distances; ?parktrees=0.
+import * as THREE from 'three';
+import { makeTerrain, hook, CELL, N } from './terrain.js';
+import { breathe, disposeGroup } from './mat.js';
+
+export async function init(game) {
+  const Q = game.P; if (Q && Q.get('park') === '0') return null;
+  if (!(Q && (Q.get('park') === '1' || Q.get('parkdata') === 'test')) && !((game.city && game.city.parks) || []).some((p) => p.name === 'Central Park')) return null;      /* Nov 16: a map without Central Park (DUMBO, the core map) never fetches or hooks any of this; ?park=1 forces it */
+  const park = { on: false, chunks: new Map(), features: new Map(), report: { loads: 0, near: 0, drops: 0, maxStepMs: 0 } };
+  let src = null;
+  if (Q && Q.get('parkdata') === 'test') { const pk = (game.city.parks || []).filter((p) => p.name === 'Central Park').sort((a, b) => b.ext.length - a.ext.length)[0]; if (!pk) return null; game.terrain = makeTerrain(pk.ext); src = (await import('./testdata.js')).make(game); }
+  else { const A = (Q && Q.get('parkdir')) || 'assets/park/'; let index = null; try { const r = await fetch(A + 'index.json'); if (r.ok) index = await r.json(); } catch (e) {}
+    if (!index || !index.outline || !index.chunks) { console.log('[game] park: no park data (' + A + 'index.json): the park layer is off'); return null; }
+    game.terrain = makeTerrain(index.outline);
+    const bin = async (f) => { const r = await fetch(A + f); if (!r.ok) throw new Error(f + ' ' + r.status); return r.arrayBuffer(); };
+    src = { index, chunk: async (c) => { const F = c.files || {}, [data, hb, tb] = await Promise.all([fetch(A + (F.json || 'c_' + c.id + '.json')).then((r) => r.json()), bin(F.h || 'c_' + c.id + '.h.bin'), bin(F.trees || 'c_' + c.id + '.trees.bin').catch(() => new ArrayBuffer(0))]); return { data, cm: new Int16Array(hb.slice(0, N * N * 2)), trees: tb }; } }; }
+  if (!src) return null;
+  Object.assign(park, { on: true, src, index: src.index, outline: src.index.outline, owns: game.terrain.owns, terrain: game.terrain });
+  for (const c of src.index.chunks) park.chunks.set(c.id, { c, id: c.id, i: c.i, j: c.j, state: 0, busy: false });
+  game.park = park; console.log('[game] park: ' + src.index.chunks.length + ' chunks' + (src.index.test ? ' (TEST data)' : ''));
+  return park;
+}
+
+export async function start(game) {
+  const park = game.park; if (!park || park.started) return park; park.started = true;
+  const Q = game.P, T = game.terrain, world = game.world, st = game.statics, num = (k, d) => (Q && Q.has(k) ? +Q.get(k) : d);
+  const NEAR_D = num('parknear', 260), FAR_D = num('parkfar', 1900), treesOn = !(Q && Q.get('parktrees') === '0');
+  hook(game);
+  // lamp posts (Nov 16): assets/park/lamps.json = every post of the park (the few OpenStreetMap maps + posts placed by rule along the ways it tags lit:
+  // lanes/park/tools/mklamps.py). They take the place of the chunk's own OSM lamps and glow at night (night.js). ?parklamps=0 or no file: OSM's lamps only, no glow.
+  let LAMPS = null; if (!(Q && Q.get('parklamps') === '0') && !park.index.test) try { const r = await fetch(((Q && Q.get('parkdir')) || 'assets/park/') + 'lamps.json'); if (r.ok) { const L = (await r.json()).lamps; if (L && L.length) { LAMPS = new Map(); for (const l of L) { const k = Math.floor(l[0] / CELL) + '_' + Math.floor(l[1] / CELL); (LAMPS.get(k) || LAMPS.set(k, []).get(k)).push({ kind: 'lamp', x: l[0], y: l[1] }); } park.lamps = L; } } } catch (e) { console.log('[game] park: lamps.json not read: ' + (e && e.message)); }
+  if (park.lamps) try { (await import('./night.js')).install(game, park); } catch (e) { console.log('[game] park: night lamps not loaded: ' + (e && e.message)); }
+  const G = await import('./ground.js'), Tr = await import('./trees.js'), Wa = await import('./water.js'), Br = await import('./bridge.js'), Pr = await import('./props.js'), St = await import('./structs.js'), Sh = await import('./shore.js'), shoreOn = !(Q && Q.get('parkshore') === '0');
+  const Cu = await import('./cut.js'), cut = Q && Q.get('parkcut') === '0' ? null : Cu.makeCut(game, park); park.cut = cut;      /* ?parkcut=0: the street's flat ground is left whole (hollows hidden under it) */
+  const S = { ...(await G.shared(game)), ...(cut ? cut.U : Cu.noCut()) }, root = new THREE.Group(); root.name = 'park'; world.scene.add(root); park.root = root;
+  Tr.setSpecies(park.index.species_info); const pool = treesOn ? Tr.nearPool(game, root) : null;
+  const fid = (o, k) => String(o.id !== undefined ? o.id : (o.name || k) + ':' + ((o.ring || o.line)[0] || []).join(','));
+  const corridors = () => { const a = []; for (const f of park.features.values()) if (f.corridors) a.push(...f.corridors); return a; };
+  const pipR = (x, y, r) => { let c = false; for (let i = 0, j = r.length - 1; i < r.length; j = i++) { const a = r[i], b = r[j]; if ((a[1] > y) !== (b[1] > y) && x < (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0]) c = !c; } return c; };
+  // features: things listed whole in every chunk they touch (water, bridges) are built once and counted
+  const owned = (name, fn) => { const was = st.owner; st.owner = name; try { return fn(); } finally { st.owner = was; } };      // never across an await: another layer may be building an area meanwhile
+  const hold = (C, id, make) => { let f = park.features.get(id); if (!f) { f = owned('park:f:' + id, make); f.refs = 0; f.id = id; park.features.set(id, f); if (f.group) root.add(f.group); } f.refs++; C.feat.push(f); return f; };
+  const release = (C, keep) => { C.feat = C.feat.filter((f) => { if (keep && keep(f)) return true; if (--f.refs > 0) return false; park.features.delete(f.id); st.removeSet('park:f:' + f.id); if (f.group) { root.remove(f.group); disposeGroup(f.group); } for (const d of f.decks || []) T.removeDeck(d); return false; }); };
+  const rewall = () => { const C = corridors(); for (const f of park.features.values()) if (f.area) { st.removeSet('park:f:' + f.id); owned('park:f:' + f.id, () => disposeGroup(Wa.build(game, f.area, C).group)); } };
+
+  const toFar = async (C) => { const t0 = performance.now(); const d = await park.src.chunk(C.c); C.data = d.data; C.cm = d.cm; C.F = G.prepHeights(C.cm, C.i, C.j, C.data, park.outline, cut ? Cu.INSET : 0); T.set(C.i, C.j, C.cm);
+    const wet = (C.data.areas || []).filter((a) => (a.kind === 'water' || a.kind === 'ice' || a.kind === 'building') && a.ring && a.ring.length > 2);      // no tree stands in water, on the rink or through a roof
+    C.trees = treesOn ? Tr.parse(d.trees, C.data.paths, park.index.test ? 6 : 8).filter((t) => t.x >= C.i * CELL && t.x < C.i * CELL + CELL && t.y >= C.j * CELL && t.y < C.j * CELL + CELL && T.owns(t.x, t.y) && !wet.some((a) => pipR(t.x, t.y, a.ring))) : [];
+    C.data.__trees = C.trees;      /* the mask painter drifts fallen leaves under them (ground.js) */
+    C.group = new THREE.Group(); C.group.name = 'park:' + C.id; C.feat = []; C.farG = G.build(game, S, C.i, C.j, C.cm, C.F, C.data, park.outline, true); C.group.add(C.farG); root.add(C.group); await breathe();
+    (C.data.areas || []).forEach((a, k) => { if (a.kind === 'water' && a.ring && a.ring.length > 2) hold(C, 'w' + fid(a, k), () => { const w = Object.assign(Wa.build(game, a, corridors()), { area: a });
+      if (shoreOn && !/fountain/i.test(a.name || '') && a.ring.length >= 12) try {      /* a basin has no reeds */ const bp = []; for (const s of C.data.structures || []) if (s.kind === 'bridge' || s.kind === 'arch') for (const d of s.decks || []) for (const p of d.pts || []) bp.push(p); for (const s of C.data.structures || []) if ((s.kind === 'bridge' || s.kind === 'arch') && s.line) for (const p of s.line) bp.push(p);
+        const sh = Sh.build(game, S, a, w.level, (x, y) => bp.some((p) => Math.hypot(p[0] - x, p[1] - y) < 7)); w.group.add(sh); console.log('[game] park: shore ' + (a.name || '') + ' ' + JSON.stringify(sh.userData.counts)); } catch (e) { console.log('[game] park: shore failed: ' + (e && e.message)); }
+      return w; }); });
+    if (C.trees.length) { await breathe(); C.crowns = await Tr.crowns(game, C.trees); C.group.add(C.crowns); }
+    C.state = 1; if (cut) cut.redraw(); park.report.loads++; park.report.maxStepMs = Math.max(park.report.maxStepMs, Math.round(performance.now() - t0)); };
+  const toNear = async (C) => { const own = 'park:' + C.id; C.nearG = new THREE.Group(); C.nearG.name = 'near';
+    const gm = G.build(game, S, C.i, C.j, C.cm, C.F, C.data, park.outline, false); C.nearG.add(gm); await breathe();
+    let nb = 0; (C.data.structures || []).forEach((s, k) => { if ((s.kind !== 'bridge' && s.kind !== 'arch') || !((s.decks && s.decks.length) || (s.line && s.line.length > 1))) return; const id = 'b' + fid(s, k); if (!park.features.has(id)) nb++;
+      hold(C, id, () => { const r = s.ring || s.line; let mx = 0, my = 0; for (const p of r) { mx += p[0] / r.length; my += p[1] / r.length; } let wl; if (s.kind === 'bridge') for (const f of park.features.values()) if (f.area && pipR(mx, my, f.area.ring)) wl = f.level; const b = Br.build(game, S, s, wl); console.log('[game] park: bridge ' + (s.name || id) + ' ' + JSON.stringify(b.info)); return b; }); });
+    if (nb) rewall();
+    const inC = (x, y) => x >= C.i * CELL && x < C.i * CELL + CELL && y >= C.j * CELL && y < C.j * CELL + CELL; C.nearG.add(owned(own, () => St.build(game, S, C.data.structures, inC)));
+    C.nearG.add(owned(own, () => Pr.build(game, (C.data.props || []).filter((p) => p.x >= C.i * CELL && p.x < C.i * CELL + CELL && p.y >= C.j * CELL && p.y < C.j * CELL + CELL && !(LAMPS && p.kind === 'lamp')).concat((LAMPS && LAMPS.get(C.i + '_' + C.j)) || []))));
+    if (C.trees.length) { await breathe(); C.nearG.add(await Tr.mid(game, C.trees)); owned(own, () => { for (const t of C.trees) st.addCircle(t.x, t.y, Math.min(0.5, Math.max(0.16, t.h * 0.022)), 'tree'); }); }
+    C.farG.visible = false; C.group.add(C.nearG); C.state = 2; park.report.near++; };
+  const toFarAgain = (C) => { st.removeSet('park:' + C.id); if (pool) pool.forget(C.trees); for (const t of C.trees) t.wi = null; C.group.remove(C.nearG); disposeGroup(C.nearG); C.nearG = null; C.farG.visible = true; release(C, (f) => !!f.area); C.state = 1; };
+  const drop = (C) => { if (C.state === 2) toFarAgain(C); release(C); root.remove(C.group); disposeGroup(C.group); T.drop(C.i, C.j); C.group = C.farG = C.crowns = C.data = C.cm = C.F = null; C.trees = []; C.state = 0; if (cut) cut.redraw(); park.report.drops++; };
+
+  const distTo = (C, x, y) => Math.hypot(Math.max(C.i * CELL - x, 0, x - C.i * CELL - CELL), Math.max(C.j * CELL - y, 0, y - C.j * CELL - CELL));
+  // one step: the most urgent change. Returns false when there is nothing to do.
+  let busy = false;
+  const step = async () => { if (busy) return true; const cam = world.camera.position, x = cam.x, y = -cam.z; let best = null, bd = 1e9, act = 0;
+    for (const C of park.chunks.values()) { const d = distTo(C, x, y), want = d < NEAR_D ? 2 : d < FAR_D ? 1 : 0;
+      if (C.state < want) { const pr = d - (C.state === 0 ? 0 : 0); if (pr < bd) { bd = pr; best = C; act = C.state + 1; } }
+      else if (C.state === 2 && d > NEAR_D + 50) { if (best === null) { best = C; act = -1; bd = 1e8; } }
+      else if (C.state >= 1 && d > FAR_D + 150) { if (best === null) { best = C; act = -2; bd = 1e8; } } }
+    if (!best) return false; busy = true; const t0 = performance.now();
+    try { if (act === 1) await toFar(best); else if (act === 2) await toNear(best); else if (act === -1) toFarAgain(best); else drop(best); }
+    catch (e) { best.state = best.state || 0; best.fail = (best.fail || 0) + 1; if (best.fail > 2) { best.c = best.c; park.chunks.delete(best.id); } console.log('[game] park: chunk ' + best.id + ' step ' + act + ' failed: ' + (e && (e.stack || e.message))); }
+    finally { busy = false; } park.report.lastMs = Math.round(performance.now() - t0); return true; };
+  let poolT = 0, scanT = 0;
+  const tick = async () => { await step(); if (cut && performance.now() - scanT > 2000) { scanT = performance.now(); cut.scan(); } if (pool && !busy && performance.now() - poolT > 350) { poolT = performance.now(); const cam = world.camera.position, L = []; for (const C of park.chunks.values()) if (C.state === 2 && C.trees.length) L.push(C.trees); try { await pool.update(cam.x, -cam.z, L); } catch (e) { console.log('[game] park: near trees: ' + (e && e.message)); } } };
+  park.timer = setInterval(() => { tick(); }, 120);
+  // settle(): everything the camera's place asks for is built (stills and tests wait on this)
+  park.settle = async () => { for (let k = 0; k < 400; k++) { while (busy) await breathe(); if (!(await step())) break; } if (cut) cut.scan(); if (pool) { const cam = world.camera.position, L = []; for (const C of park.chunks.values()) if (C.state === 2 && C.trees.length) L.push(C.trees); await pool.update(cam.x, -cam.z, L); } return park.report; };
+  park.mirrorNow = () => Wa.mirrorNow();
+  park.dispose = () => { clearInterval(park.timer); for (const C of park.chunks.values()) if (C.state) drop(C); world.scene.remove(root); };
+  park.count = () => { const n = [0, 0, 0]; for (const C of park.chunks.values()) n[C.state]++; return { none: n[0], far: n[1], near: n[2], features: park.features.size, nearTrees: pool ? pool.n : 0 }; };
+  // the first chunks before the game shows: the player may start in or beside the park
+  try { const pl = game.player; if (pl && T.inBox(pl.x, pl.y)) await park.settle(); } catch (e) {}
+  return park;
+}
