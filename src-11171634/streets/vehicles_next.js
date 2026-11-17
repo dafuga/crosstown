@@ -39,6 +39,7 @@ function groupOf(name, lod) {
 }
 // roughness, metalness, glow, plate flag carried per vertex in the merged groups
 const OVER = { drl: [0.2, 0, 0.35, 0], light_head: [0.06, 0.0, 0.0, 0], lamp_housing: [0.14, 1.0, 0.0, 0], plate: [0.4, 0, 0, 1], taxi_light: [0.35, 0, 0.55, 0], amber: [0.1, 0, 0.0, 0], light_white: [0.15, 0.6, 0.05, 0], glass: [0.04, 0, 0, 0], glass_dark: [0.04, 0, 0, 0], tire: [0.86, 0, 0, 0], trim_gloss: [0.3, 0, 0, 0] };
+const FARTAIL = new URLSearchParams(typeof location !== 'undefined' ? location.search : '').get('fartail') !== '0';
 function prepGeo(mesh, inv, group) {
   const g = mesh.geometry.clone(); g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, mesh.matrixWorld));
   const vc = mesh.userData.m2vc ? mesh.geometry.attributes.color : null;      // models2: a body that carries its colours per vertex keeps them
@@ -51,7 +52,12 @@ function prepGeo(mesh, inv, group) {
     g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   }
   const n = g.attributes.position.count, m = mesh.material, col = new Float32Array(n * 3), am = new Float32Array(n * 4);
-  const o = OVER[m.name] || [m.roughness, m.metalness, 0, 0]; let c = m.color;
+  let o = OVER[m.name] || [m.roughness, m.metalness, 0, 0]; let c = m.color;
+  // A negative glow value marks brake-responsive lamp vertices in the distant misc batch.
+  if (group === 'misc' && m.name === 'light_tail' && FARTAIL) {     /* merge2: ?fartail=0 = far tail lamps as before (no brake response at distance) */
+    o = [0.16, 0, -1, 0];
+    c = new THREE.Color(0.30, 0.004, 0.004);
+  }
   if (m.name === 'light_head') c = new THREE.Color(0.035, 0.037, 0.04);      // projector lenses: dark glass with the sky in them, not grey balls
   if (m.name === 'amber') c = new THREE.Color(0.2, 0.065, 0.01); if (m.name === 'lamp_housing') c = new THREE.Color(0.62, 0.63, 0.66);
   if (m.name === 'glass' || m.name === 'glass_dark') c = new THREE.Color(0.012, 0.016, 0.018);
@@ -242,8 +248,9 @@ export async function add(game, ctx) {
             material.clearcoat *= (1.0 - vehDirt) * (1.0 - 0.6 * step(0.82, fract(vVar.y * 3.71)));
           #endif`)
         .replace('#include <aomap_fragment>', BAKE_LIGHT_GLSL + (o.glass ? '\n reflectedLight.indirectSpecular *= 0.0;' : ''));
-      if (o.misc) f = f.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance += diffuseColor.rgb * vMat.z * 2.0;');
-      if (o.tail) f = f.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance = vec3(1.0, 0.03, 0.01) * mix(0.10, 5.5, clamp(vVar.w, 0.0, 1.0));');
+      const brakeEmission = 'vec3(1.0, 0.03, 0.01) * mix(0.10, 5.5, clamp(vVar.w, 0.0, 1.0))';
+      if (o.misc) f = f.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance += vMat.z < 0.0 ? ' + brakeEmission + ' : diffuseColor.rgb * vMat.z * 2.0;');
+      if (o.tail) f = f.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance = ' + brakeEmission + ';');
       // lettering: read close up; from far off the lines of text close up into clean solid bars instead of breaking into speckle
       if (o.livery) f = f.replace('#include <map_fragment>', '#ifdef USE_MAP\n { float la = texture2D(map, vMapUv).a; float tpp = fwidth(vMapUv.y) * 2048.0; diffuseColor.a *= mix(la, smoothstep(0.07, 0.16, la), clamp((tpp - 1.2) / 1.5, 0.0, 1.0)); }\n#endif');
       if (o.paint || o.glass) f = f.replace('#include <opaque_fragment>', `{
