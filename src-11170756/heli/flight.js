@@ -278,7 +278,7 @@ export class Flight {
       _p.set(rw.y * fz - rw.z * fy, rw.z * fx - rw.x * fz, rw.x * fy - rw.y * fx).applyQuaternion(_qi); M.add(_p);
     };
     if (S.agl < 4 || S.onGround) for (const c of S.contacts) contact(c, 'skid');
-    for (const hp of S.hull) { if (hp.mast && !S.sweep) continue; contact(hp.p, hp.rotor ? 'rotor' : 'hull'); }
+    for (const hp of S.hull) { if (hp.mast && !S.sweep) continue; if (hp.rotor && S.rotorFree) continue;     /* heli lane, Nov 17: perch.js sets rotorFree over the Empire State Building's landing mark (the terrace is 8 m wide under a 10.7 m disc: the blade tips are let pass the tower wall there, the airframe is not) */ contact(hp.p, hp.rotor ? 'rotor' : 'hull'); }
     S.onGround = skidsDown >= 2;
     if (lift > 0) { S.pos.y += lift; if (S.vel.y < 0) S.vel.y = 0; }     /* gameplay/heli: the ground does not give more than a metre: what is left of the fall ends here (the hit that did it is already in S.hits, at its speed) */
     let worst = 0; for (const hit of S.hits) { if (hit.done) continue; hit.done = true; if (hit.kind === 'rotor') { S.nr = Math.max(0, S.nr - 0.02 * Math.min(hit.speed + 2, 10)); worst = Math.max(worst, 0.02 + hit.speed * 0.01); } else if (hit.speed > 2.6) worst = Math.max(worst, (hit.speed - 2.6) ** 1.5 * (hit.kind === 'skid' ? 0.035 : 0.06)); }

@@ -7,7 +7,7 @@
 //   ?surshow=<name>   stand the player where that surprise is and set it off (for a look; each file's show())
 import { makeKit } from './kit.js';
 
-export const LIST = ['pigeons', 'steam', 'hydrant', 'jingle', 'slice', 'pizzarat', 'shedrattle', 'bodegacat'];      // what has shipped (surprises lane hand-overs 1 to 6); the lane's other surprises join as they ship
+export const LIST = ['pigeons', 'steam', 'hydrant', 'jingle', 'slice', 'pizzarat', 'shedrattle', 'bodegacat', 'showtime'];      // what has shipped (surprises lane hand-overs 1 to 7); puddle splash was dropped (lanes/surprises/STATE.md)
 
 export async function install(game) {
   if (game.surprises) return game.surprises;
