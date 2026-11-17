@@ -30,6 +30,9 @@ export function furnitureOf(game) {
     if (K.pchair && K.pchair.list) for (const it of K.pchair.list) { const o = it[4]; if (o && o.tilt && (Math.abs(o.tilt[0]) > 0.3 || Math.abs(o.tilt[1]) > 0.3)) continue; seats.push({ x: it[0], y: it[1], z: it[2], h: it[3], seat: 0.452 * (o && typeof o.s === 'number' ? o.s : 1) }); }
     if (K.benchP && K.benchP.list) for (const it of K.benchP.list) seats.push({ x: it[0], y: it[1], z: it[2], h: it[3] - Math.PI / 2, seat: 0.465, bench: true });
   }
+  // people lane, Nov 17 (Matt: 'A woman just walked through the fruit stand'): the goods shops set out on the sidewalk (produce crates, flower
+  // tiers: streets/storefronts.js, a strip about a metre deep and up to 3.3 m long) as a row of circles the walk goes round
+  try { const G = game.streets.parts.storefronts && game.streets.parts.storefronts.goods; if (G) for (const q of G) { if (!q.solid) continue; const L = Math.hypot(q.bx - q.ax, q.by - q.ay), n = Math.max(1, Math.ceil(L / 0.5)); for (let k = 0; k <= n; k++) extra.push({ x: q.ax + (q.bx - q.ax) * k / n, y: q.ay + (q.by - q.ay) * k / n, r: 0.85, h: 0.56 }); } } catch (e) {}
   return { extra, seats };
 }
 
@@ -45,7 +48,7 @@ function swIndex(st) {
   const inside = (x, y, poly) => { if (poly.length < 12) return pointInPoly(x, y, poly); const R = idx.get(poly) || ring(poly); if (!(y >= R.y0 && y <= R.y1)) return false;
     const a = R.slabs[R.at(y)]; let inn = false; for (let o = 0; o < a.length; o += 4) { const xi = a[o], yi = a[o + 1], xj = a[o + 2], yj = a[o + 3]; if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inn = !inn; } return inn; };
   return (x, y) => { const a = st.blocks.get(st.key(Math.floor(x / 64), Math.floor(y / 64))); if (!a) return false;
-    for (const b of a) { if (x < b.x0 || x > b.x1 || y < b.y0 || y > b.y1) continue;
+    for (const b of a) { if (x < b.x0 || x > b.x1 || y < b.y0 || y > b.y1 || (b.pv && !b.pv(x, y))) continue;     /* b.pv: streets handoff-paved2 (geo.js addBlock) */
       if (inside(x, y, b.poly.ext)) { let hole = false; for (const h of b.poly.holes) if (inside(x, y, h)) { hole = true; break; } if (!hole) return true; } }
     return false; };
 }

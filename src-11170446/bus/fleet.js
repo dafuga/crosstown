@@ -31,7 +31,8 @@ export class Fleet {
   // is (x, y) on a sidewalk? As game.statics.onSidewalk, but the data's few giant outlines (whole districts drawn as one "block", which make the
   // roadway inside them read as sidewalk: 6th Avenue at 42nd, W 26th Street) are left out: a real block is no more than 300 m by 950 m
   walk(x, y) { const st = this.g.statics, a = st.blocks.get(st.key(Math.floor(x / 64), Math.floor(y / 64))); if (!a) return false;
-    for (const b of a) { if (x < b.x0 || x > b.x1 || y < b.y0 || y > b.y1 || (b.x1 - b.x0) * (b.y1 - b.y0) > 1.2e6) continue; if (pip(x, y, b.poly.ext)) { let hole = false; for (const h of b.poly.holes || []) if (pip(x, y, h)) { hole = true; break; } if (!hole) return true; } } return false; }
+    for (const b of a) { if (x < b.x0 || x > b.x1 || y < b.y0 || y > b.y1 || (b.x1 - b.x0) * (b.y1 - b.y0) > 1.2e6 || (b.pv && !b.pv(x, y))) continue;     /* b.pv: streets handoff-paved2 (geo.js addBlock): an area's fill polygon is sidewalk only off the streets and inside its area */
+      if (pip(x, y, b.poly.ext)) { let hole = false; for (const h of b.poly.holes || []) if (pip(x, y, h)) { hole = true; break; } if (!hole) return true; } } return false; }
   // metres from the middle of lane li to the kerb on its right, at s along a block (max when there is none within reach)
   kerbAt(e, dir, s, max = 9, li = -1) { const R = this.g.roads, p = this._kp || (this._kp = {}); R.lanePos(e, dir, li < 0 ? this.kerbLane(e, dir).li : li, s, p); const rx = Math.sin(p.h), ry = -Math.cos(p.h); for (let d = 0; d <= max; d += 0.1) if (this.walk(p.x + rx * d, p.y + ry * d)) return d; return max; }
   // the lane a bus runs in on a block, and how far it keeps to the left in it. The data's kerb lane is drawn for a car, and under a plaza (7th Avenue

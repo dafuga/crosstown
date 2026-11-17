@@ -77,9 +77,9 @@ export class StaticWorld {
     }
     return circle;
   }
-  addBlock(poly) {   // sidewalk polygons, for "am I on the kerb"
+  addBlock(poly, pv) {   // sidewalk polygons, for "am I on the kerb" (pv: streets handoff-paved2, a test (x, y) that a point of an area-sized polygon must also pass)
     let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9; for (const p of poly.ext) { x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1]); }
-    const c = 64, b = { poly, x0, y0, x1, y1 }; if (this.owner) b.set = this.owner;
+    const c = 64, b = { poly, x0, y0, x1, y1 }; if (this.owner) b.set = this.owner; if (pv) b.pv = pv;
     for (let i = Math.floor(x0 / c); i <= Math.floor(x1 / c); i++) for (let j = Math.floor(y0 / c); j <= Math.floor(y1 / c); j++) { const k = this.key(i, j); let a = this.blocks.get(k); if (!a) this.blocks.set(k, (a = [])); a.push(b); }
   }
   // Conservative broad phase for a group of nearby pavement probes.
@@ -114,7 +114,7 @@ export class StaticWorld {
   onSidewalk(x, y) {
     const a = this.blocks.get(this.key(Math.floor(x / 64), Math.floor(y / 64))); if (!a) return false;
     for (const b of a) {
-      if (x < b.x0 || x > b.x1 || y < b.y0 || y > b.y1) continue;
+      if (x < b.x0 || x > b.x1 || y < b.y0 || y > b.y1 || (b.pv && !b.pv(x, y))) continue;
       if (pointInPoly(x, y, b.poly.ext)) { let hole = false; for (const h of b.poly.holes) if (pointInPoly(x, y, h)) { hole = true; break; } if (!hole) return true; }
     }
     return false;

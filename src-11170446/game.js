@@ -1,6 +1,7 @@
 // game.js: the game itself. Sim in map metres at a fixed 60 Hz step; three.js draws it.
 import * as THREE from 'three';
 import { StaticWorld, Roads, clamp, lerp, wrapPi, rng, TAU } from './geo.js';
+import { setsOf } from './sets.js';
 import { Kit, CarBatch, FigureBatch, bakeFigure, addProps, CAR_TYPES, PAINTS } from './models.js';
 import { Traffic, Parked, Peds } from './traffic.js';
 import { Hud } from './hud.js';
@@ -138,7 +139,19 @@ export class Game {
     const st = (this.statics = new StaticWorld(16));
     { const i = city.buildings.findIndex((b) => b.id === 100079 && b.kind === 'train_station'); if (i >= 0) city.buildings.splice(i, 1); }      /* gameplay/north, Nov 14, stop-gap: the outline of the underground Times Square subway station came in as an 80 m building across 7th Ave, 8th Ave, Broadway and W 40th-42nd St (lanes/gameplay/north-state/STATE.md); tiles to take it out of the data */
     for (const b of city.buildings) if (b.minh < 2.5) { st.addPoly(b.poly, 0, 'building'); for (const h of b.holes || []) st.addPoly(h, 0, 'building'); }
-    for (const b of city.blocks) st.addBlock(b);
+    // streets handoff-paved2 (with handoff-paved in streets/ground.js): a sidewalk polygon over 250,000 m2 is an area's fill, not a block. It counts as sidewalk only inside
+    // its own area's region and off every street of the data (kerb to kerb), the way ground.js now draws it. ?pavedfix=0 = as before.
+    { const pvOn = !(this.P && this.P.get('pavedfix') === '0'), sets = pvOn && city.meta && city.meta.sets && !(this.P && this.P.get('persets') === '0') ? setsOf(city) : null; let G = null;
+      const area = (r) => { let s = 0; for (let i = 0; i < r.length; i++) { const p = r[i], q = r[(i + 1) % r.length]; s += p[0] * q[1] - q[0] * p[1]; } return Math.abs(s) / 2; };
+      const grid = () => { if (G) return G; G = new Map(); for (const e of city.edges) { const h = (e.width || 9.6) / 2 - 0.05; for (let i = 1; i < e.pts.length; i++) { const A = e.pts[i - 1], B = e.pts[i], s = [A[0], A[1], B[0] - A[0], B[1] - A[1], h * h];
+        for (let cx = Math.floor((Math.min(A[0], B[0]) - h) / 64); cx <= Math.floor((Math.max(A[0], B[0]) + h) / 64); cx++) for (let cy = Math.floor((Math.min(A[1], B[1]) - h) / 64); cy <= Math.floor((Math.max(A[1], B[1]) + h) / 64); cy++) { const k = cx * 100003 + cy; let a = G.get(k); if (!a) G.set(k, (a = [])); a.push(s); } } } return G; };
+      let nBig = 0;
+      for (const b of city.blocks) { let pv = null;
+        if (pvOn && b.ext && b.ext.length > 2 && area(b.ext) > 2.5e5) { const S = sets && sets.find((q) => q.city.blocks.includes(b)), R = S ? S.region : null, g = grid(); nBig++;
+          pv = (x, y) => { if (R && (x < R[0] || x > R[2] || y < R[1] || y > R[3])) return false; const a = g.get(Math.floor(x / 64) * 100003 + Math.floor(y / 64));
+            if (a) for (const s of a) { const dx = x - s[0], dy = y - s[1], t = Math.max(0, Math.min(1, (dx * s[2] + dy * s[3]) / (s[2] * s[2] + s[3] * s[3] || 1e-9))), ex = dx - s[2] * t, ey = dy - s[3] * t; if (ex * ex + ey * ey < s[4]) return false; } return true; }; }
+        st.addBlock(b, pv); }
+      this.pavedStatics = { on: pvOn, big: nBig }; }
     // the edge of the map: an invisible wall
     const bx = this.bounds.x + 6, by = this.bounds.y + 6, ox = this.bounds.cx, oy = this.bounds.cy; st.addPoly([[ox - bx, oy - by], [ox + bx, oy - by], [ox + bx, oy + by], [ox - bx, oy + by]], 0, 'edge'); for (const h of this.bounds.holes || []) st.addPoly([[h[0], h[1]], [h[2], h[1]], [h[2], h[3]], [h[0], h[3]]], 0, 'edge');     /* downtown lane (helper game19): and round each part of the box that is no area's (above) */     /* 'edge': never low, the map edge stays closed (tags: geo.js addSeg) */
     // rooftop kit: water tanks and plant on mid-rise roofs
@@ -208,6 +221,7 @@ export class Game {
     if (this.P.get('unwedge') !== '0') try { (await import('./combat/unwedge.js')).install(this); } catch (e) { console.log('[unwedge] not loaded: ' + (e && e.message)); }     /* gameplay lane, Nov 13 (public report 1b7ddd, car held by the invisible wall at the map's edge): the edge says so and turns the car round; a wedged car is set on the nearest clear lane; ?unwedge=0 off */
     if (this.P.get('edgeclose') !== '0') try { (await import('./edgeclose.js')).install(this); } catch (e) { console.log('[edgeclose] not loaded: ' + (e && e.message)); }     /* lead, Nov 13 (CHIEF 23:3xZ): road-closed barricades where roads meet the invisible wall at the map's edge; ?edgeclose=0 off */
     if (this.P.get('rain') !== 'off') try { (await import('./sky/rain.js')).install(this); } catch (e) { console.log('[rain] not loaded: ' + (e && e.message)); }     // progress lane: rain and wet roads (src/sky/rain.js); Y or ?rain=1 rains; ?rain=off never fetched
+    if (this.P.get('flashlight') !== '0') try { (await import('./flashlight.js')).install(this); } catch (e) { console.log('[flashlight] not loaded: ' + (e && e.message)); }     /* light lane hand-off 25 (23 re-cut): a phone torch on foot, Z (src/flashlight.js); nothing is built before the first press; ?flashlight=0 never fetched */
     if (this.P.get('night') !== '0') try { (await import('./sky/night.js')).install(this); } catch (e) { console.log('[night] not loaded: ' + (e && e.message)); }     // progress lane: time of day and night (src/sky/); N steps the clock, ?tod=22 sets it; ?night=0 off
     if (this.P.get('radio') !== '0') try { (await import('./radio/radio.js')).install(this); } catch (e) { console.log('[radio] not loaded: ' + (e && e.message)); }     // progress lane: car radio, invented stations, music made by code (src/radio/); . and , change station in a car; ?radio=0 off
     if (this.park) try { await (await import('./park/park.js')).start(this); } catch (e) { console.log('[game] park not started: ' + (e && (e.stack || e.message))); }     /* park lane: relief hook and chunk loader */
