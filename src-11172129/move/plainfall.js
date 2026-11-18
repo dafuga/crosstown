@@ -30,15 +30,25 @@ function first(st, ax, ay, bx, by) {
   _h.t = best; _h.s = bs; return bs !== null;
 }
 // the cars standing near (x, y)
+let sweepBody, proneFurniture, proneFootZ, poseProgress, poseSlope;
+let nextRestPhase = 0;
 function standing(g, x, y, travel) {
+  sweepBody = travel !== undefined;
   _cars.length = 0;
   const reach = halfDiagonal => travel === undefined ? 9 : Math.max(9, travel + R*Math.SQRT2 + halfDiagonal);
   const add = e => {
     if (!e?.def || e.gone) return;
-    const range = reach(Math.hypot(e.def.len, e.def.wid)/2);
-    if (Math.abs(e.x-x) < range && Math.abs(e.y-y) < range) _cars.push(e);
+    const distance = Math.max(Math.abs(e.x-x), Math.abs(e.y-y));
+    if (distance < 9) { _cars.push(e); return; }
+    if (travel === undefined) return;
+    // Compare the remaining gap with the vehicle half-diagonal without a square root.
+    const gap = 2*(distance - travel - R*Math.SQRT2);
+    if (gap < 0 || gap*gap < e.def.len*e.def.len + e.def.wid*e.def.wid) _cars.push(e);
   };
-  if (g.vehicles) for (const e of g.vehicles) if (Math.abs(e.vx || 0) + Math.abs(e.vy || 0) < 0.5) add(e);
+  if (g.vehicles) for (const e of g.vehicles) {
+    const speed = travel === undefined ? Math.abs(e.vx || 0) + Math.abs(e.vy || 0) : Math.hypot(e.vx || 0, e.vy || 0);
+    if (speed < 0.5) add(e);
+  }
   if (g.traffic && g.traffic.cars) for (const e of g.traffic.cars) if (Math.abs(e.v || 0) < 0.5) add(e);
   if (g.parked && g.parked.near) for (const e of g.parked.near(x, y, reach(g.parked.bodyReach || 0), _near)) add(e);
 }
@@ -48,7 +58,12 @@ function inCars(x, y, m) { for (const e of _cars) if (inBox(e, x, y, m)) return 
 // may he lie from (x, y) towards h with his head `reach` metres off?
 function clear(st, x, y, h, reach, noCars) {
   const c = Math.cos(h), s = Math.sin(h); if (first(st, x, y, x + c * (reach + TIP), y + s * (reach + TIP))) return false;
-  if (!noCars) for (let k = 1; k <= 4; k++) if (inCars(x + c * reach * k / 4, y + s * reach * k / 4, 0.1)) return false;
+  if (proneFurniture) {
+    const z = proneFootZ ?? ((st.onSidewalk(x, y) ? 0.15 : 0) + TIP * poseProgress);
+    if (furnitureCrossing(proneFurniture, nearbyFurniture, x, y, x+c*reach, y+s*reach, undefined, 0.1, z, z, reach * poseSlope)) return false;
+  }
+  if (!noCars && sweepBody && crossesStandingCar(x, y, x+c*reach, y+s*reach, 0.1)) return false;
+  if (!noCars && (!sweepBody || inCars(x, y, 0.1))) for (let k = 1; k <= 4; k++) if (inCars(x + c * reach * k / 4, y + s * reach * k / 4, 0.1)) return false;
   return true;
 }
 // the nearest heading to p.h that is clear at (x, y): at his full length if there is one, else at `reach`; p.h is left alone if none is
@@ -58,12 +73,12 @@ function turn(st, p, x, y, full, reach, noCars) {
   return false;
 }
 
-function crossesStandingCar(x, y, nx, ny) {
+function crossesStandingCar(x, y, nx, ny, radius = R) {
   const dx = (nx-x)/2, dy = (ny-y)/2;
   for (const car of _cars) {
     const c = Math.cos(car.h), s = Math.sin(car.h), mx = x-car.x+dx, my = y-car.y+dy;
     const u = mx*c+my*s, v = -mx*s+my*c, du = dx*c+dy*s, dv = -dx*s+dy*c;
-    const length = car.def.len/2+R, width = car.def.wid/2+R;
+    const length = car.def.len/2+radius, width = car.def.wid/2+radius;
     if (!segmentHitsBox(u, v, du, dv, length, width)) continue;
     const epsilon = 8*Number.EPSILON*Math.max(1, Math.abs(x), Math.abs(y), Math.abs(nx), Math.abs(ny));
     if (!exitsNearestBoxFace(u-du, v-dv, u+du, v+dv, length, width, epsilon)) return true;
@@ -73,8 +88,20 @@ function crossesStandingCar(x, y, nx, ny) {
 
 export function plainSlide(g, p, dt, checkWalls, furniture) {
   const st = g.statics, fall = p.fall || 0; let vx = p.vx || 0, vy = p.vy || 0; const sp = Math.hypot(vx, vy), moving = sp >= 0.05;
-  if (!moving) { p.vx = p.vy = 0; if (p.pf === 2 || fall < 0.25) return; }       // at rest (or held by a ragdoll, which keeps fall at 0): nothing to do
+  if (!moving) {
+    p.vx = p.vy = 0;
+    if (fall < 0.25 || (p.pf === 2 && !checkWalls)) return;
+    if (p.pf === 2) {
+      // A vehicle can park beside a fallen pedestrian after their pose settles.
+      p.poseCheckIn = (p.poseCheckIn || 0) - dt;
+      if (p.poseCheckIn > 0) return;
+    }
+  }
   if (!st || !st.segs) { p.x += vx * dt; p.y += vy * dt; return; }
+  poseProgress = Math.min(1, fall + dt * 4);
+  proneFurniture = checkWalls && furniture;
+  poseSlope = proneFurniture && poseProgress > 0 && poseProgress < 1 ? 1 / Math.tan(1.5 * poseProgress) : 0;
+  proneFootZ = p.z;
   const full = LEN * (p.scale || 1); standing(g, p.x, p.y, checkWalls ? sp*dt + full : undefined);
   if (moving) {
     const ox = p.x, oy = p.y, ml = sp * dt, ux = vx / sp, uy = vy / sp; let nx = ox + vx * dt, ny = oy + vy * dt;
@@ -110,5 +137,14 @@ export function plainSlide(g, p, dt, checkWalls, furniture) {
   // the way he lies now
   const reach = full * Math.sin(1.5 * Math.min(1, fall + dt * 4));
   if (!clear(st, p.x, p.y, p.h, reach) && !turn(st, p, p.x, p.y, full, reach)) turn(st, p, p.x, p.y, full, reach, true);      // a nook with no room among the cars: clear of the walls at least
-  if (!moving && fall >= 1) p.pf = 2; else if (p.pf === 2) p.pf = 1;
+  if (!moving && fall >= 1) {
+    if (checkWalls && p.pf !== 2) {
+      // Spread pedestrians settling on the same frame across the first quarter second.
+      nextRestPhase = (nextRestPhase + 1) % 8;
+      p.poseCheckIn = (nextRestPhase + 1) / 32;
+    } else {
+      p.poseCheckIn = Math.max(0, 0.25 + (p.poseCheckIn || 0));
+    }
+    p.pf = 2;
+  } else if (p.pf === 2) p.pf = 1;
 }

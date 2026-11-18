@@ -164,7 +164,9 @@ export function addPerch(heli, ctx) {
       const cs = Math.cos(f.heading), sn = Math.sin(f.heading), vf = f.vel.x * cs - f.vel.z * sn, vr = f.vel.x * sn + f.vel.z * cs, a0 = wp(p.h - f.heading), hh = Math.abs(a0) < Math.PI / 2 ? p.h : p.h + Math.PI;
       /* it is flown toward the deck at a speed that falls with the distance (9 m/s at most, a walk at the end), not leaned at it as hard as the distance is long: from 46 m that built 20 m/s and went straight past (the landing clip, fix1 and fix2) */
       const vd = Math.min(9, d * 0.35), ux = ex / (d || 1), uy = ey / (d || 1); c.pitch = c.pitch * (1 - k) + cl(((ux * cs + uy * sn) * vd - vf) * 0.33) * k; c.roll = c.roll * (1 - k) + cl(((ux * sn - uy * cs) * vd - vr) * 0.33) * k; if (d < 25) c.yaw = c.yaw * (1 - k) + cl(-wp(hh - f.heading) * 2) * k;
-      if (d > 4.5 && h < 3.5 && k > 0.3) c.lift = Math.max(c.lift, 0.25 + (3.5 - h) * 0.2);      // low, and not over the deck yet: up a little, then across
+      /* Not over the deck yet: it may come down gently to 9 m above the deck's level and no lower, however hard S is held; over the deck S takes it down. (The whole trip by real keys, Nov 17:
+         flown from the park, S held from 55 m out as the line on the screen says: it sank at 8 m/s and went down beside the tower, 6.7 m short and 17 m under the deck: lanes/heli/bugs/trip1.) */
+      if (d > 4.5 && k > 0.3) { const vdv = h > 11 ? -3 : (9 - h) * 0.6; c.lift = Math.max(c.lift, cl((vdv - f.vs) * 0.45)); }
       S.helping = k; if (k > 0.25 && !S.told) { S.told = true; heli.note = { t: 0, text: 'EMPIRE STATE HELIDECK · HOLD S TO SET IT DOWN' }; } return; }
     S.told = false;
   }

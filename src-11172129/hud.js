@@ -19,7 +19,7 @@ export class Hud {
     x.fillStyle = '#272a2f'; for (const b of city.buildings) { if (b.minh > 0) continue; x.beginPath(); b.poly.forEach((p, i) => { const q = P(p); i ? x.lineTo(q[0], q[1]) : x.moveTo(q[0], q[1]); }); x.closePath(); x.fill(); }
     this.hx = hx; this.hy = hy;
     // tiles lane: the city map (citymap.js: names, landmarks, several blocks in view, full map on Tab) takes over the round map as soon as it is in; ?citymap=0 keeps the old one
-    this.cmap = null; if (!(game.P && game.P.get('citymap') === '0')) import('./citymap.js').then((m) => { this.cmap = new m.CityMap(game, this); this.mapR = 126; }).catch((e) => console.log('[hud] city map not loaded, the old map stays: ' + (e && e.message)));
+    this.cmap = null; if (!(game.P && game.P.get('citymap') === '0')) import(game.P && game.P.get('map2') === '0' ? './citymap.js' : './citymap2.js' /* gameplay lane (map helper): the styled map; ?map2=0 = the map as it was */).then((m) => { this.cmap = new m.CityMap(game, this); this.mapR = 126; }).catch((e) => console.log('[hud] city map not loaded, the old map stays: ' + (e && e.message)));
   }
   fit() {
     // the HUD is drawn at the screen's own resolution, not the 3D picture's (which the game shrinks to hold frame rate: text came out soft and blocky)

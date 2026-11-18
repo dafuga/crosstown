@@ -2,6 +2,8 @@
 // style/seed, the masonry, the windows (recessed, with rooms behind the glass), storefronts with signs, cornices and roofs.
 // Lighting uses the Cycles bake carried in the vertex colour: r = sky light, g = sun visibility (far field), b = bounced sunlight.
 import * as THREE from 'three';
+/* facades lane, Nov 17 (gauntlet2 round 2; the critic at 5th Ave and 21st: 'big windows alternate with tiny slot windows'): the photographed fronts with mixed window widths (panels.js uPanelMix) are for low houses; on a building over PMIXH metres the next panel of its style is taken instead. ?panelmix=0 = before. */
+const PMIXH = (() => { try { const v = new URLSearchParams(location.search).get('panelmix'); return v === null ? 24 : (+v > 0 ? +v : 1e6); } catch (e) { return 24; } })();
 const REALREFL = (() => { try { const v = new URLSearchParams(location.search).get('realrefl'); return v === null ? 0 : +v; } catch (e) { return 0; } })();     // off until a blind round says it wins: ?realrefl=0.8 to see it
 
 export const SHOP_NAMES = ['DELI & GRILL', 'PIZZA', 'NAILS', 'LAUNDROMAT', 'HARDWARE', 'COFFEE', 'FLOWERS', 'BAGELS', 'TAILOR', 'BOOKS', 'WINE & SPIRITS', 'CLEANERS',
@@ -247,9 +249,10 @@ export function makeFacadeMaterial(shared, defs) {
       .replace('#include <common>', `#include <common>
         precision highp sampler2DArray;
         #define REALREFL ${REALREFL.toFixed(2)}
+        #define PMIXH ${PMIXH.toFixed(1)}
 ${fcDefs}
         varying vec2 vFuv; varying vec2 vFst; varying vec2 vLay; varying vec2 vLay2; varying vec3 vWPos; varying vec3 vWNrm; varying vec3 vBake;
-        uniform sampler2DArray tWallA; uniform sampler2DArray tWallN; uniform sampler2D tSign; uniform samplerCube tStreet; uniform sampler2DArray tPanel; uniform sampler2DArray tPanelR; uniform sampler2DArray tPanelH; uniform float uPanelH[32]; uniform vec4 uPanel[32]; uniform vec2 uStyleP[5];
+        uniform sampler2DArray tWallA; uniform sampler2DArray tWallN; uniform sampler2D tSign; uniform samplerCube tStreet; uniform sampler2DArray tPanel; uniform sampler2DArray tPanelR; uniform sampler2DArray tPanelH; uniform float uPanelH[32]; uniform float uPanelMix[32]; uniform float uGood[20]; uniform float uGoodN[5]; uniform vec4 uPanel[32]; uniform vec2 uStyleP[5];
         uniform vec3 uSunColor; uniform vec3 uSunDir; uniform float uShadowFar; uniform vec3 uShadowCenter; uniform float uTime; uniform vec3 uNightK;
 #ifdef FC_X9
  uniform float uFcLod;
@@ -511,7 +514,7 @@ if (abs(N.y) > 0.9) { float gx = (vWPos.x + vWPos.z) * 11.0; if (fwidth(gx) < 0.
           { vec2 sp = uStyleP[int(style)];
             if (sp.y > 0.5 && !store && kind < 1.5 && fi >= 0.0 && fi < nFloors) {
               float sq = floor(seed * 512.0);    // the seed as an exact integer: a hash of the raw varying flickers between panels on some GPUs
-              float pl = sp.x + floor(hash21(vec2(sq, 7.0)) * sp.y * 0.999); vec4 pm = uPanel[int(pl)];
+              float pl = sp.x + floor(hash21(vec2(sq, 7.0)) * sp.y * 0.999); if (H > PMIXH && uPanelMix[int(pl)] > 0.5) { float gn = uGoodN[int(style)]; if (gn > 0.5) pl = uGood[int(style) * 4 + int(floor(hash21(vec2(sq, 17.0)) * gn * 0.999))]; }     /* v2: the stand-in comes from the style's good panels (panels.js), not simply the next one */ vec4 pm = uPanel[int(pl)];
               float pr = bw / pm.z; float pk = pr >= 0.75 ? clamp(floor(pr + 0.5), 1.0, 3.0) : 1.0 / clamp(floor(pm.z / bw + 0.5), 1.0, 4.0); float cx = bayx * pk; float ci = floor(cx);   // a photo bay may be a group of windows: then it spans several layout bays
               vec3 ch = hash32(vec2(ci + sq * 3.0, fi + sq));
               float pcol = mod(ci + floor(hash21(vec2(sq, 11.0)) * pm.x * 0.999), pm.x), prow = mod(floor(hash21(vec2(sq, 13.0)) * pm.y * 0.999) - fi + 64.0 * pm.y, pm.y);      // glass47: bays and storeys in the photo's own order (a bay keeps its photographed neighbours: no seam, sills and courses run through)
@@ -954,7 +957,7 @@ if (fRefl <= 1.5) { vec3 rr = min(texture(tStreet, vWPos + mR * tR - cameraPosit
         material.specularColor = mix(material.specularColor, vec3(0.05), fGlass); material.specularF90 = 1.0 - 0.92 * fFrm * (1.0 - fGlass); material.specularColor *= 1.0 - 0.7 * fFrm * (1.0 - fGlass);`)
       .replace('#include <aomap_fragment>', BAKE_LIGHT_GLSL + ' { vec3 gR = reflect(-normalize(cameraPosition - vWPos), bakeN); reflectedLight.indirectSpecular *= mix(1.0, mix(0.0, 0.15, smoothstep(0.12, 0.6, gR.y)), max(fGlass, fRough < 0.2 ? 1.0 : 0.0)); } { float sT = 1.0 - min(0.08 + 0.92 * pow(1.0 - clamp(dot(uSunDir, fN), 0.0, 1.0), 3.0), 1.0); reflectedLight.directDiffuse *= fShade * mix(1.0, sT * sqrt(sT), fGlass); } reflectedLight.directSpecular *= fShade;      // at a grazing sun the glass throws most of it back: what stands behind is barely lit');
   };
-  m.customProgramCacheKey = () => 'facade-l27-glass82' + fcKeys.join('');
+  m.customProgramCacheKey = () => 'facade-l27-glass82-pm2-' + PMIXH.toFixed(1) + fcKeys.join('');
   if (defs.FC_X8) { const d2 = Object.assign({}, defs); delete d2.FC_X8; const mg = makeFacadeMaterial(shared, d2); mg.name = 'facade-ironwork';
     m.onBeforeRender = (r, sc, cam, geo, obj) => { if (obj.material !== m) return; if (geo.userData.fcSplit) { if (geo.userData.fcSplit === 2) obj.material = [m, mg]; else if (geo.userData.fcSplit === 3) obj.material = mg; return; } geo.userData.fcSplit = 1;
       const ix = geo.index, k3 = geo.attributes.uv3;

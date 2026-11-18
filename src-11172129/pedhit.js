@@ -1301,8 +1301,12 @@ export function install(game, opts = {}) {
   // ---------------------------------------------------------------- the hit's feel: sound, hit-stop, camera, the car, the bystanders
   function thud(sp) {
     const s = game.sound; if (!s || !s.on || !s.ac) return; const a = s.ac, t = a.currentTime, k = Math.min(1, 0.35 + sp / 22);
-    const osc = (f0, f1, dur, vol, type) => { const o = a.createOscillator(), g = a.createGain(); o.type = type || 'sine'; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + dur); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur); o.connect(g); g.connect(s.out); o.start(t); o.stop(t + dur + 0.02); };
-    const noise = (dur, vol, type, f, t0 = 0) => { const n = a.createBufferSource(), fl = a.createBiquadFilter(), g = a.createGain(); n.buffer = s.white; fl.type = type; fl.frequency.value = f; g.gain.setValueAtTime(vol, t + t0); g.gain.exponentialRampToValueAtTime(0.001, t + t0 + dur); n.connect(fl); fl.connect(g); g.connect(s.out); n.start(t + t0, Math.random()); n.stop(t + t0 + dur + 0.02); };
+    // ragdoll lane, Nov 17: the thud's layers add up to more than full scale on a fast hit (rendered: 1.07 at 60 km/h with two bodies, 1.10 at 90 with one) and the game's
+    // sound bus has no limiter, so the loudest thuds were squared off. All of it now goes through a rounded ceiling of its own: nothing over 0.84 of full scale reaches the speakers.
+    if (S._thAc !== a) { S._thAc = a; const sh = a.createWaveShaper(), n = 1024, c = new Float32Array(n); for (let q = 0; q < n; q++) { const x = (q / (n - 1)) * 2 - 1; c[q] = 1.05 * Math.tanh(1.6 * x) / Math.tanh(1.6); } sh.curve = c; const inb = a.createGain(); inb.gain.value = 0.6; inb.connect(sh); sh.connect(s.out); S._thBus = inb; }
+    const bus = S._thBus;
+    const osc = (f0, f1, dur, vol, type) => { const o = a.createOscillator(), g = a.createGain(); o.type = type || 'sine'; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + dur); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur); o.connect(g); g.connect(bus); o.start(t); o.stop(t + dur + 0.02); };
+    const noise = (dur, vol, type, f, t0 = 0) => { const n = a.createBufferSource(), fl = a.createBiquadFilter(), g = a.createGain(); n.buffer = s.white; fl.type = type; fl.frequency.value = f; g.gain.setValueAtTime(vol, t + t0); g.gain.exponentialRampToValueAtTime(0.001, t + t0 + dur); n.connect(fl); fl.connect(g); g.connect(bus); n.start(t + t0, Math.random()); n.stop(t + t0 + dur + 0.02); };
     osc(95, 38, 0.22, 0.95 * k, 'sine'); osc(170, 60, 0.09, 0.5 * k, 'triangle');      // the body of the thud
     noise(0.07, 0.8 * k, 'lowpass', 900); noise(0.035, 0.45 * k, 'bandpass', 2600);     // the slap on the panel
     if (sp > 9) noise(0.25, 0.25 * k, 'bandpass', 420, 0.05);                            // the roll over the bonnet

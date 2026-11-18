@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { staticPathBlocked, exitsNearestBoxFace, segmentHitsBox, clamp, wrapPi, rng, Polyline, TAU } from './geo.js';
 import { PAINTS } from './models.js';
-import { buildingQuery, furnitureCrossing, pedestrianFurniture } from './crowd/nav.js';
+import { buildingQuery, furnitureCrossing, overlapsVehicleHeight, pedestrianFurniture } from './crowd/nav.js';
 import { plainSlide } from './move/plainfall.js';
 
 // What is on a Manhattan street: yellow cabs first, then black hire cars and SUVs, white vans, and everyone else.
@@ -602,6 +602,14 @@ function overlapsVehicle(cars, x, y, radius, speedLimit) {
   return false;
 }
 
+function sidewalkFurnitureCrossing(g, furniture, nearby, p, x, y, nx, ny, radius = 0.25) {
+  if (!furniture?.raisedTablesNear) return furnitureCrossing(furniture, nearby, x, y, nx, ny, undefined, radius);
+  const start = g.statics.onSidewalk(x, y) ? 0.15 : 0;
+  const end = g.statics.onSidewalk(nx, ny) ? 0.15 : 0;
+  const head = Math.max(start, end) + 1.75 * (p.scale || 1);
+  return furnitureCrossing(furniture, nearby, x, y, nx, ny, undefined, radius, Math.min(start, end), head - radius);
+}
+
 export class Peds {
   constructor(game) {
     this.g = game; this.list = []; this.rand = rng(777); this.target = 44; this.loops = game.city.ped_loops.map((p) => new Polyline(p.concat([p[0]]))).filter((l) => l.len > 60 && l.len < 1500);
@@ -685,7 +693,9 @@ export class Peds {
       if (p.state === 'walk' || p.state === 'flee') {
         // a fast car close by and coming this way: get out of the way
         let threat = null;
-        for (const v of cars) { const sp = Math.hypot(v.vx, v.vy); if (sp < 3) continue; const dx = p.x - v.x, dy = p.y - v.y, dd = Math.hypot(dx, dy); if (dd > 14) continue; const f = (dx * v.vx + dy * v.vy) / sp, side = Math.abs(dx * v.vy - dy * v.vx) / sp; if (f > -1 && f < 5 + sp * 1.1 && side < v.def.wid / 2 + 0.75) { threat = v; break; } }
+        for (const v of cars) { const sp = Math.hypot(v.vx, v.vy); if (sp < 3) continue; const dx = p.x - v.x, dy = p.y - v.y, dd = Math.hypot(dx, dy); if (dd > 14) continue;
+          if (checkWalls && !overlapsVehicleHeight(v, g.statics.onSidewalk(p.x, p.y) ? 0.15 : 0, 1.75 * (p.scale || 1))) continue;
+          const f = (dx * v.vx + dy * v.vy) / sp, side = Math.abs(dx * v.vy - dy * v.vx) / sp; if (f > -1 && f < 5 + sp * 1.1 && side < v.def.wid / 2 + 0.75) { threat = v; break; } }
         if (threat && p.state === 'walk') { p.state = 'flee'; p.t = 0; const dx = p.x - threat.x, dy = p.y - threat.y, sp = Math.hypot(threat.vx, threat.vy) || 1; const side = (dx * -threat.vy + dy * threat.vx) > 0 ? 1 : -1; p.fx = (-threat.vy / sp) * side; p.fy = (threat.vx / sp) * side; this.setAnim(p, 'run'); }
         if (p.state === 'flee') {
           p.rejoinStart = undefined;
@@ -721,7 +731,7 @@ export class Peds {
           }
           if ((!checkWalls || (!staticPathBlocked(g.statics, p.x, p.y, tmp2.x, tmp2.y, true, undefined, undefined, 0.3) &&
               !vehicleBlocksPath(g, null, p.x, p.y, tmp2.x, tmp2.y, 0.3, 2.2) &&
-              !furnitureCrossing(furniture, this._walkFurniture ||= [], p.x, p.y, tmp2.x, tmp2.y, undefined, 0.3))) &&
+              !sidewalkFurnitureCrossing(g, furniture, this._walkFurniture ||= [], p, p.x, p.y, tmp2.x, tmp2.y, 0.3))) &&
               !(checkWalls && this.sidewalkBuilding(tmp2.x, tmp2.y, p.x, p.y)) && !insideVehicle(g, tmp2.x, tmp2.y, 0.3, 2.2)) {
             p.x = tmp2.x; p.y = tmp2.y;
           }
@@ -756,7 +766,7 @@ export class Peds {
           // Traffic stopped at a light has no parked-car circles.
           if ((checkWalls && (vehicleBlocksPath(g, null, oldX, oldY, p.x, p.y, 0.25, 2.2) ||
               staticPathBlocked(g.statics, oldX, oldY, p.x, p.y, true) ||
-              furnitureCrossing(furniture, this._walkFurniture ||= [], oldX, oldY, p.x, p.y))) ||
+              sidewalkFurnitureCrossing(g, furniture, this._walkFurniture ||= [], p, oldX, oldY, p.x, p.y))) ||
               (checkWalls && this.sidewalkBuilding(p.x, p.y, oldX, oldY)) || insideVehicle(g, p.x, p.y, 0.25, 2.2) || furniture?.push(p.x, p.y, 0.25, tmp2) || g.statics.resolvePedestrian(p.x, p.y, 0.25, tmp2) ||
               g.statics.raycast(oldX, oldY, p.x, p.y) < 1) {
             p.x = oldX; p.y = oldY; p.s = p.rejoinStart ?? oldS; p.rejoinStart = undefined;
@@ -775,7 +785,7 @@ export class Peds {
                   g.statics.raycast(fromX, fromY, x, y) >= 1 &&
                   (!checkWalls || (!staticPathBlocked(g.statics, fromX, fromY, x, y, true) &&
                       !vehicleBlocksPath(g, null, oldX, oldY, x, y, 0.25) &&
-                      !furnitureCrossing(furniture, this._walkFurniture ||= [], oldX, oldY, x, y))) &&
+                      !sidewalkFurnitureCrossing(g, furniture, this._walkFurniture ||= [], p, oldX, oldY, x, y))) &&
                   !g.statics.resolvePedestrian(x, y, 0.25, tmp) &&
                   !insideVehicle(g, x, y, 0.25);
               let recovered = clear();
@@ -804,7 +814,8 @@ export class Peds {
             !staticPathBlocked(g.statics, x, y, p.x, p.y, true) &&
             !g.statics.resolvePedestrian(p.x, p.y, 0.25, tmp2) &&
             !furniture?.push(p.x, p.y, 0.25, tmp2) &&
-            !furnitureCrossing(furniture, this._shoveFurniture ||= [], x, y, p.x, p.y) &&
+            !(checkWalls ? sidewalkFurnitureCrossing(g, furniture, this._shoveFurniture ||= [], p, x, y, p.x, p.y) :
+              furnitureCrossing(furniture, this._shoveFurniture ||= [], x, y, p.x, p.y)) &&
             !insideVehicle(g, p.x, p.y, 0.25) &&
             !vehicleBlocksPath(g, contact, x, y, p.x, p.y, 0.25);
           g.traffic.pushPlayer(p);
@@ -840,7 +851,9 @@ export class Peds {
         p.onRoad = !g.statics.onSidewalk(p.x, p.y);
         // struck by a car
         for (const v of cars) { const sp = Math.hypot(v.vx, v.vy); if (sp < 2.2) continue; const dx = p.x - v.x, dy = p.y - v.y, fx = Math.cos(v.h), fy = Math.sin(v.h), f = dx * fx + dy * fy, s = -dx * fy + dy * fx;
-          if (Math.abs(f) < v.def.len / 2 + 0.3 && Math.abs(s) < v.def.wid / 2 + 0.25) { if (g.P.get('ragdoll2') !== '0') {
+          if (Math.abs(f) < v.def.len / 2 + 0.3 && Math.abs(s) < v.def.wid / 2 + 0.25) {
+            if (checkWalls && !overlapsVehicleHeight(v, p.onRoad ? 0 : 0.15, 1.75 * (p.scale || 1))) continue;
+            if (g.P.get('ragdoll2') !== '0') {
             const speed = p.state === 'flee' ? 4.6 : (p.back ? -1 : 1) * (p.speed || 0);
             p.beforeHit = {x: Math.cos(p.h) * speed, y: Math.sin(p.h) * speed};
           }

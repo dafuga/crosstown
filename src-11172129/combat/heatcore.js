@@ -1265,6 +1265,7 @@ float heatFold(vec3 p, float lg, float arm) {
     if (this.note && !(D && !D.woke)) { const b = this.note, a = clamp(Math.min(b.t * 2.5, (4.5 - b.t) * 2), 0, 1); c.globalAlpha = a; c.fillStyle = 'rgba(8,9,10,0.62)'; c.fillRect(0, Ht * 0.3, W, 118); H.text(b.title, W / 2, Ht * 0.3 + 62, 50, AMB, 'center', 800, 9); H.text(b.sub, W / 2, Ht * 0.3 + 98, 22, '#fff', 'center', 600, 1.5); c.globalAlpha = 1; }
   }
   hudMap(H, c, W, Ht) {
+    if (H.cmap && H.cmap.takesHeat) { H.cmap.heat = this; H.cmap.heatR = AREA[this.level]; return; }     // gameplay lane (map helper): the styled map (citymap2.js) draws the police itself, at its own scale, on the round map and the full map
     const g = this.g, pl = g.player, Rm = H.mapR, cx = W - 36 - Rm, cy = Ht - 36 - Rm, zoom = 1.25, yaw = g.cam.yaw; if (!this.level && !this.cops.length && !this.cars.length) return;
     c.save(); c.beginPath(); c.arc(cx, cy, Rm - 1, 0, 7); c.clip(); c.translate(cx, cy); c.rotate(yaw - Math.PI / 2); c.scale(zoom, zoom);
     const P = (x, y) => [x - pl.x, -(y - pl.y)];

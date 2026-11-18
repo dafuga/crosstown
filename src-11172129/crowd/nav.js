@@ -64,22 +64,35 @@ function swIndex(st) {
       if (inside(x, y, b.poly.ext)) { let hole = false; for (const h of b.poly.holes) if (inside(x, y, h)) { hole = true; break; } if (!hole) return true; } }
     return false; };
 }
-export function furnitureCrossing(nav, nearby, px, py, tx, ty, person, radius = 0.25, footZ, upperFootZ = footZ) {
+export function overlapsVehicleHeight(car, floor, bodyHeight) {
+  const base = car.z ?? 0;
+  return floor < base + (car.def.hgt || 1.45) && floor + bodyHeight > base;
+}
+
+export function furnitureCrossing(nav, nearby, px, py, tx, ty, person, radius = 0.25, footZ, upperFootZ = footZ, rise = 0) {
   if (!nav?.soft) return false;
   const dx = tx - px, dy = ty - py, length2 = dx*dx + dy*dy;
   if (!length2) return false;
   nearby.length = 0;
   nav.soft(Math.min(px, tx) - radius, Math.min(py, ty) - radius,
     Math.max(px, tx) + radius, Math.max(py, ty) + radius, nearby);
-  if (footZ !== undefined && upperFootZ + radius > 1)
+  if (footZ !== undefined && upperFootZ + rise + radius > 1)
     nav.raisedTablesNear?.(Math.min(px, tx) - radius, Math.min(py, ty) - radius,
       Math.max(px, tx) + radius, Math.max(py, ty) + radius, nearby);
   for (const o of nearby) {
+    let lo = 0, hi = 1;
     if (footZ !== undefined) {
       const bounds = o.seatObstacle;
-      if (bounds ? footZ >= bounds.top || upperFootZ + radius <= bounds.base : footZ >= 1) continue;
+      const top = bounds?.top ?? 1;
+      if (footZ >= top || (bounds && upperFootZ + rise + radius <= bounds.base)) continue;
+      if (rise > 0) {
+        // Only the part of a tipping body at the obstacle's height can touch it.
+        hi = Math.min(1, (top - footZ) / rise);
+        if (bounds) lo = Math.max(0, (bounds.base - upperFootZ - radius) / rise);
+        if (lo >= hi) continue;
+      }
     }
-    const u = clamp(((o.x - px)*dx + (o.y - py)*dy) / length2, 0, 1);
+    const u = clamp(((o.x - px)*dx + (o.y - py)*dy) / length2, lo, hi);
     if (person && u === 0 && Math.hypot(px-o.x, py-o.y) < o.h + radius) person.retreatingFromObstacle = true;
     if (u > 0 && Math.hypot(px + u*dx - o.x, py + u*dy - o.y) < o.h + radius) return true;
   }
@@ -99,12 +112,15 @@ function furniturePush(fg, OC, ok_) {
 // Base pedestrians still use the sidewalk furniture when the GPU crowd is off.
 export function pedestrianFurniture(game) {
   const cells = new Map(), cell = 6, key = (i, j) => i * 8192 + j;
-  for (const o of furnitureOf(game).extra) {
+  const raisedCells = new Map();
+  const {extra, raisedTables} = furnitureOf(game);
+  for (const [items, grid] of [[extra, cells], [raisedTables, raisedCells]]) for (const o of items) {
     const k = key(Math.floor(o.x / cell), Math.floor(o.y / cell));
-    if (!cells.has(k)) cells.set(k, []);
-    cells.get(k).push(o);
+    if (!grid.has(k)) grid.set(k, []);
+    grid.get(k).push(o);
   }
-  return { push: furniturePush(cells, cell, key), soft: furnitureQuery(cells, cell, key) };
+  return { push: furniturePush(cells, cell, key), soft: furnitureQuery(cells, cell, key),
+    raisedTablesNear: raisedCells.size ? furnitureQuery(raisedCells, cell, key) : undefined };
 }
 
 // Called only for a movement endpoint already inside a building.
@@ -540,7 +556,7 @@ export function buildNav(game, plazas = [], extraObs = [], raisedTables = []) {
   for (const nd of nodes) { delete nd._arms; delete nd._corners; }
   rep.ways = ways.length; rep.verts = verts.length; rep.km = +(ways.reduce((s, w) => s + (w.kind === 'cross' ? 0 : w.len), 0) / 1000).toFixed(1); rep.spots = spots.length;
   rep.obstacles = allObs.length;
-  const nav = { ways, verts, spots, near, inBuilding, blocked, push, gapTo, soft, raisedTablesNear: furnitureQuery(raisedGrid, OC, ok_), obstaclesNear, refresh, ver: 1, report: rep, STEP, weight: total };
+  const nav = { ways, verts, spots, near, inBuilding, blocked, push, gapTo, soft, get hasRaisedTables() { return raisedGrid.size > 0; }, raisedTablesNear: furnitureQuery(raisedGrid, OC, ok_), obstaclesNear, refresh, ver: 1, report: rep, STEP, weight: total };
   return nav;
 }
 // the band at distance s along a way

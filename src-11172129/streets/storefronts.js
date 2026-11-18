@@ -359,6 +359,9 @@ export function layout(C, opts = {}) {
       fi = frames.length / 3; frames.push(P.x, P.y, rot);
       stats.bays++; stats.kinds[P.role] = (stats.kinds[P.role] || 0) + 1; { const nm = P.role === 'shop' ? P.type.name : P.role, a = (stats.samples[nm] ||= []); if (Math.hypot(P.x + 200, P.y + 250) < 260 && P.kd > 3.4) a.push([+P.x.toFixed(1), +P.y.toFixed(1), +rot.toFixed(3)]); }
       const seed = r(0), TY = P.type, masP = [mas, 0, 0, seed];
+      const pretEntrance = fixedCat && bid === 2370 && P.key === 0 &&
+        SH.names[SH.rows['2370:0']?.[1]] === 'PRÊT À PAYER|';
+      const sidewalkGoods = TY.out && !pretEntrance;
       const xa = -Lp / 2, xb = Lp / 2;
       let sq = solG.get(P.ri); if (!sq) solG.set(P.ri, (sq = { P, iv: [] })); const pu = (P.x - P.ox) * P.dx + (P.y - P.oy) * P.dy, so = (a, b2, z) => { if (b2 - a > 0.01 && (z = solOut(P, a, b2, z)) > 0.03) sq.iv.push(pu + a, pu + b2, z); };
       const eA = P.extA ? solExt(P.x + P.dx * xa, P.y + P.dy * xa, -P.dx, -P.dy, P.nx, P.ny, P.extA, pproud) : 0, eB = P.extB ? solExt(P.x + P.dx * xb, P.y + P.dy * xb, P.dx, P.dy, P.nx, P.ny, P.extB, pproud) : 0;
@@ -460,7 +463,9 @@ export function layout(C, opts = {}) {
       if (P.role !== 'gate') {
         bk = modern ? 0.12 + 0.1 * r(18) : 0.36 + 0.36 * r(18);
         const dbl = isLobby || TY.dbl || (W > 6.8 && r(19) < 0.5), dw = Math.min(dbl ? 1.86 : 1.02, W - 0.1);
-        const rec = !isLobby && !P.inside && W > dw + 2.6 && r(20) < (style === 0 || style === 4 ? 0.55 : 0.28);
+        const displayWindow = fixedCat && bid === 2370 && P.key === 194 && !P.inside &&
+          P.sh === 'deli' && P.nameCell === -2 && SH.names[SH.rows['2370:0']?.[1]] === 'PRÊT À PAYER|';
+        const rec = !displayWindow && !isLobby && !P.inside && W > dw + 2.6 && r(20) < (style === 0 || style === 4 ? 0.55 : 0.28);
         zF = rec ? pproud + 0.14 : 0.10; const zd = rec ? 0.08 : zF;
         let dxc = isLobby || r(21) < 0.35 ? 0 : (r(22) < 0.5 ? -1 : 1) * (W / 2 - dw / 2 - (r(23) < 0.5 ? 0.02 : 0.9)); if (W < dw + 1.2) dxc = (r(22) < 0.5 ? -1 : 1) * (W - dw) / 2;
         dxc = Math.max(x0 + dw / 2, Math.min(x1 - dw / 2, dxc));
@@ -471,7 +476,7 @@ export function layout(C, opts = {}) {
         else if (!isLobby && r(27) < 0.6 && TY.tag >= 0) tagCell = TY.tag;
         const bkKind = r(28), bkCol = bkKind < 0.3 ? mul(fc[0], 1.0) : (bkKind < 0.55 ? [0.07 + 0.3 * r(29), 0.07 + 0.25 * r(29), 0.07 + 0.2 * r(29)] : (bkKind < 0.8 ? mul(baseCol, 0.9) : [0.5, 0.5, 0.48]));
         const ih = P.inside ? [tile.glass.length] : null;     /* interiors */
-        for (const [sa, sb] of [[x0, dl], [dr, x1]]) {
+        for (const [sa, sb] of (displayWindow ? [[x0, x1]] : [[x0, dl], [dr, x1]])) {
           if (sb - sa < 0.12) continue;
           if (bkKind < 0.3) bx(1, sa, sb, 0, bk, 0, zF + 0.05, K.PLAIN, bkCol, fc[1], fc[2], 1, seed); else if (bkKind < 0.55) bx(1, sa, sb, 0, bk, 0, zF + 0.05, K.TILE, bkCol, r(32) < 0.5 ? 0.1 : 0.15, r(33) < 0.25 ? 1 : 0, 0, seed);
           else bx(1, sa, sb, 0, bk, 0, zF + 0.05, K.MAS, bkCol, bkKind < 0.8 || bk < 0.5 ? (mas === 3 ? 3 : 2) : 0, 0, 0, seed);
@@ -483,10 +488,12 @@ export function layout(C, opts = {}) {
           if (rec) bx(0, sa, sb, sLo - 0.02, sLo + 0.02, 0, zF + 0.06, K.PLAIN, fc[0], fc[1], fc[2], 1, seed);
         }
         // the door bay
-        bx(0, dl - 0.02, dr + 0.02, 0, st, 0, zF + (st > 0.1 ? 0.32 : 0.06), K.TILE, stepTile, r(34) < 0.5 ? 0.05 : 0.3, r(35) < 0.2 ? 1 : 0, 0, seed);
-        if (ih) ih.push(tile.fine.length);     /* interiors */
-        door(dl, dr, zd, st, dbl, brass, sLo);
-        if (ih) doors.push({ id: bid + ':' + P.key, kind: P.inside.kind, tile: tk, glass: [ih[0] / GLASS_STRIDE, tile.glass.length / GLASS_STRIDE], fine: [ih[1] / BOX_STRIDE, tile.fine.length / BOX_STRIDE], bi, bid, x: P.x, y: P.y, rot, dx: P.dx, dy: P.dy, nx: P.nx, ny: P.ny, kd: P.kd, Lp, W, x0, x1, dl, dr, dbl, zF, zd, st, bk, sLo, sHi, Hh, pproud, style, frame: fc[0], brass, base: baseCol, lobby: isLobby });     /* interiors */
+        if (!displayWindow) {
+          bx(0, dl - 0.02, dr + 0.02, 0, st, 0, zF + (st > 0.1 ? 0.32 : 0.06), K.TILE, stepTile, r(34) < 0.5 ? 0.05 : 0.3, r(35) < 0.2 ? 1 : 0, 0, seed);
+          if (ih) ih.push(tile.fine.length);     /* interiors */
+          door(dl, dr, zd, st, dbl, brass, sLo);
+          if (ih) doors.push({ id: bid + ':' + P.key, kind: P.inside.kind, tile: tk, glass: [ih[0] / GLASS_STRIDE, tile.glass.length / GLASS_STRIDE], fine: [ih[1] / BOX_STRIDE, tile.fine.length / BOX_STRIDE], bi, bid, x: P.x, y: P.y, rot, dx: P.dx, dy: P.dy, nx: P.nx, ny: P.ny, kd: P.kd, Lp, W, x0, x1, dl, dr, dbl, zF, zd, st, bk, sLo, sHi, Hh, pproud, style, frame: fc[0], brass, base: baseCol, lobby: isLobby });     /* interiors */
+        }
         if (rec) {
           const zc = (zd + zF) / 2, rl = zF - zd;
           if (dl - x0 > 0.12) { gl(dl, (bk + sLo) / 2, zc, rl, sLo - bk, Math.PI / 2, 0); bx(0, dl - 0.1, dl, 0, bk, zd, zF, K.PLAIN, bkCol, 0.6, 0, 1, seed); F(0, dl - 0.03, dl + 0.03, bk, sLo, zF - 0.02, zF + 0.07); } else F(0, dl - 0.06, dl, 0, sLo, zd, zF);
@@ -500,7 +507,7 @@ export function layout(C, opts = {}) {
             for (const s of [-1, 1]) bc(0, s * (mw - 0.2), 2.94 + (sLo - 2.94) / 2, out * 0.45, 0.025, Math.hypot(sLo - 2.94, out * 0.9), 0.025, 0, -Math.atan2(out * 0.9, sLo - 2.94), K.PLAIN, STEEL, 0.4, 0.9, 0, seed); }
         }
         stats.shops++;
-        if (P.role === 'shop') shops.push({ x: +P.x.toFixed(2), y: +P.y.toFixed(2), h: +rot.toFixed(4), nx: +P.nx.toFixed(4), ny: +P.ny.toFixed(4), w: +W.toFixed(2), kerb: +P.kd.toFixed(2), out: +Math.max(zF + 0.1, pproud).toFixed(2), door: +dxc.toFixed(2), type: TY.name, food: ['deli', 'diner', 'pizza', 'bar', 'cafe', 'restaurant', 'fastfood', 'bakery'].includes(TY.name), stand: !!(TY.out && P.kd - zF > 3.3 && r(59) < 0.75), shed });
+        if (P.role === 'shop') shops.push({ x: +P.x.toFixed(2), y: +P.y.toFixed(2), h: +rot.toFixed(4), nx: +P.nx.toFixed(4), ny: +P.ny.toFixed(4), w: +W.toFixed(2), kerb: +P.kd.toFixed(2), out: +Math.max(zF + 0.1, pproud).toFixed(2), door: displayWindow ? null : +dxc.toFixed(2), type: TY.name, food: ['deli', 'diner', 'pizza', 'bar', 'cafe', 'restaurant', 'fastfood', 'bakery'].includes(TY.name), stand: !!(sidewalkGoods && P.kd - zF > 3.3 && r(59) < 0.75), shed });
       }
       // 1600 Broadway: the full north tile places the glazed Broadway corner
       // west of its survey footprint. Mount the upper display on that tile face.
@@ -544,7 +551,7 @@ export function layout(C, opts = {}) {
       if (!plainFascia && !shed && P.role === 'shop' && TY.blade >= 0 && r(55) < 0.4 && P.kd > 3) { const bp = SIGNPAL[Math.floor(r(56) * SIGNPAL.length)], yb = Math.min(sHi - 0.35, 3.3), xb2 = r(57) < 0.5 ? x0 - 0.05 : x1 + 0.05, lb = r(58) < 0.3;
         bc(1, xb2, yb, pproud + 0.5, 0.72, 0.62, 0.07, Math.PI / 2, 0, K.SIGN, bp[0], TY.blade, lb ? 2 : 0, pack(bp[1]), seed); bc(0, xb2, yb + 0.36, pproud + 0.45, 0.025, 0.025, 0.95, 0, 0, K.PLAIN, DARK, 0.5, 0.6, 0, seed); }
       // goods on the sidewalk
-      if (TY.out && P.role === 'shop' && P.kd - zF > 3.3 && r(59) < 0.75) {
+      if (sidewalkGoods && P.role === 'shop' && P.kd - zF > 3.3 && r(59) < 0.75) {
         const left = r(60) < 0.5; let sa = left ? x0 + 0.1 : Math.max(x0 + 0.1, x1 - 3.4), sb = Math.min(sa + 3.3, x1 - 0.1);
         if (sb - sa > 1.4) { const cxs = (sa + sb) / 2, len = sb - sa, green = [0.02, 0.07, 0.035];
           // people lane, Nov 17 (Matt: 'A woman just walked through the fruit stand'): the goods stand a metre out on the sidewalk and nothing knew it.

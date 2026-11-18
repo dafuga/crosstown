@@ -134,3 +134,4 @@ export class CityMap {
     c.restore();
   }
 }
+export { LANDMARKS, LANDMARKS_SOUTH, LANDMARKS_SOUTH2, LANDMARKS_SOUTH3, short };     // gameplay lane (map helper): citymap2.js uses the same lists

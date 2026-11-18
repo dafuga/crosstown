@@ -88,7 +88,7 @@ export function install(game) {
   const hudXY = (e) => { const c = hud.canvas, r = c.getBoundingClientRect(), k = hud.k || 1; return [((e.clientX - r.left) * (c.width / (r.width || 1))) / k, ((e.clientY - r.top) * (c.height / (r.height || 1))) / k]; };
   const ui = (e) => !!(e.target && e.target.closest && e.target.closest('#fbbox, a, button, input, textarea, select, [data-ui]'));
   const onMouse = (e) => {
-    const m = openMap(); if (!m || ui(e)) return; e.stopPropagation(); if (e.type === 'contextmenu') { e.preventDefault(); return; } if (e.type !== 'mousedown') return;
+    const m = openMap(); if (!m || ui(e)) return; e.stopPropagation(); if (e.type === 'contextmenu') { e.preventDefault(); return; } if (e.type !== (m.pan2 ? 'mouseup' : 'mousedown') || (m.pan2 && m.moved)) return;     /* gameplay lane (map helper): the styled map pans on a drag, so its click counts on mouse-up, and not after a drag */
     if (e.button === 2) { G.clear('map'); return; } if (e.button !== 0) return;
     const [X, Y] = hudXY(e), p = m.toMap(X, Y); if (!p) return; const q = m.toMap(X + 14, Y), near = q ? Math.max(12, Math.hypot(q[0] - p[0], q[1] - p[1])) : 30;
     if (G.target && Math.hypot(G.target.x - p[0], G.target.y - p[1]) < near) G.clear('map'); else G.set({ x: p[0], y: p[1] }, 'map');
