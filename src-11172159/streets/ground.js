@@ -67,7 +67,7 @@ class Acc {
 }
 
 // ------------------------------------------------------------------ the city, read once
-function gridAngleDeg(city) {
+function gridAngleDeg(city, whole = null) {     /* whole: the joined city, asked when this area has no street of its own (see the return) */
   // direction of the street grid modulo 90 degrees, from the street centre lines (length-weighted peak of the direction histogram)
   const bins = new Float64Array(360);
   for (const e of city.edges) for (let i = 1; i < e.pts.length; i++) {
@@ -76,6 +76,10 @@ function gridAngleDeg(city) {
   }
   let pk = 0; for (let i = 0; i < 360; i++) if (bins[i] > bins[pk]) pk = i;
   let sw = 0, sa = 0; for (let d = -8; d <= 8; d++) { const w = bins[(pk + d + 360) % 360]; sw += w; sa += w * (pk + d + 0.5) / 4; }
+  // uptown (air helper, Nov 17): an area with no street centre line (uptown's u6e and u7e, the strip by the Hudson north of W 125th) made this 0 / 0. The NaN went
+  // into uField.z of every ground material of the area, the sidewalk and road shaders drew NaN pixels, and the bloom pass spread each into a black rectangle
+  // (the air stills over Central Park, 4.7 km away). Such an area takes the joined city's grid, or 0 when there is no street anywhere.
+  if (!(sw > 0)) return whole && whole !== city ? gridAngleDeg(whole) : 0;
   return sa / sw;
 }
 const offGrid = (deg, grid) => { let d = ((deg - grid) % 90 + 90) % 90; if (d > 45) d -= 90; return d; };   // -45..45
@@ -227,8 +231,8 @@ function pvModel(game, sets) {
   const T = world.tiles; if (T) { const prev = T.onGround; T.onGround = (c) => { if (prev) prev(c); trim(c); }; }     /* a tile set that comes in later (as water.js does for the shore) */
 }
 
-function readCity(city, pv = null) {     /* pv: streets handoff-paved (pvPlan), null = as before */
-  const grid = gridAngleDeg(city);
+function readCity(city, pv = null, whole = null) {     /* pv: streets handoff-paved (pvPlan), null = as before; whole: see gridAngleDeg */
+  const grid = gridAngleDeg(city, whole);
   const E = city.edges.map((e, i) => mkEdge(e, i, city.nodes));
   const eg = new SegGrid(40);
   for (const ed of E) for (let i = 1; i < ed.p.length; i++) eg.add(ed.p[i - 1][0], ed.p[i - 1][1], ed.p[i][0], ed.p[i][1], { x1: ed.p[i - 1][0], y1: ed.p[i - 1][1], x2: ed.p[i][0], y2: ed.p[i][1], ed });
@@ -1733,7 +1737,7 @@ export async function add(game, ctx) {
   let tTurn = performance.now(); const lateSteps = [], turn = () => { if (!ctx.late) return null; lateSteps.push(Math.round(performance.now() - tTurn)); return new Promise((r) => setTimeout(() => { tTurn = performance.now(); r(); }, 0)); };     /* lateSteps: ms of each step, in the result (for measuring) */
   const pvOn = !(game.P && game.P.get('pavedfix') === '0'), pv = pvOn ? pvPlan(game.city, city.blocks, set) : null;     /* streets handoff-paved: ?pavedfix=0 = the sidewalk as before */
   if (pvOn && set && !(game.P && game.P.get('pavedfix') === 'layer')) { try { pvModel(game, (await import('../sets.js')).setsOf(game.city)); } catch (e) { console.log('[ground] model sidewalk not cut to its area: ' + (e && e.message)); } }     /* ?pavedfix=layer = this layer only, the areas' models as before */
-  const C = readCity(city, pv); await turn(); const nShared = markShared(C, sharedWays); const hist = buildHistory(C); await turn();
+  const C = readCity(city, pv, game.city); await turn(); const nShared = markShared(C, sharedWays); const hist = buildHistory(C); await turn();
   const pbx = set ? set.play : [-city.meta.px, -city.meta.py, city.meta.px, city.meta.py], fx = (pbx[2] - pbx[0]) / 2 + 60, fy = (pbx[3] - pbx[1]) / 2 + 60, fcx = (pbx[0] + pbx[2]) / 2, fcy = (pbx[1] + pbx[3]) / 2;
   const field = ctx.late ? await renderField(renderer, C, fx, fy, plazas, fcx, fcy, turn) : renderField(renderer, C, fx, fy, plazas, fcx, fcy); field.box = [fcx, fcy, fx, fy]; await turn();     /* late: the field in three steps (lateSteps has one entry more for each) */
   if (!world.__asph) { const q = game.P && game.P.get('asph'), v = (q || '').split(',').map(Number), d = ASPH_DEF, n = (i) => (q && q !== '0' && isFinite(v[i]) && v[i] > 0 ? v[i] : d[i]); world.__asph = { value: q === '0' ? new THREE.Vector4(1, 1, 1, 1) : new THREE.Vector4(n(0), n(1), n(2), n(3)) }; }     /* handoff-road: ?asph=0 = the road as before; ?asph=day,graze,slab,night = try other numbers; one object for every map area */

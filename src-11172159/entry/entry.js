@@ -37,7 +37,7 @@ const HOT_K = 2.3, U_GO = 2.3;      /* board/car fast: the pace under police pre
 
 // ---------------------------------------------------------------------------------------------------------------- per car kind
 // Everything in the car's own frame: x ahead, y up, z to the right, metres from the car's origin on the road.
-function carParams(type, D, def, rig) {
+function carParams(type, D, def, rig, cab) {
   const d = D && D[type], P = { type, door: !!d };
   const wid = def.wid || 1.85;
   if (d) {
@@ -46,7 +46,7 @@ function carParams(type, D, def, rig) {
     if (d.wheel) { const f = d.wheel.frame; P.wheelAx = V3(f[0], f[1], f[2]).normalize(); if (P.wheelAx.x > 0) P.wheelAx.negate(); P.wheelR = Math.max(0.15, (d.wheel.box[1][1] - d.wheel.box[0][1]) / 2 - 0.02); }
     P.eye = d.eye && d.eye[1] > 0.5 ? V3(...d.eye) : P.wheelC ? V3(P.wheelC.x - 0.47, P.wheelC.y + 0.30, P.wheelC.z) : null;
   }
-  if (!P.hinge) { P.L = 1.15; P.zs = -wid / 2; P.xr = -0.25; P.hinge = V3(P.xr + P.L, 0.8, P.zs); P.belt = 0.95; }
+  if (!P.hinge) { P.L = 1.15; P.zs = -wid / 2; P.xr = cab > 1.2 ? cab - 0.6 : -0.25;      /* gameplay/takeover: a kind with no door in doors.json and its seat far forward (a truck's cab: the tiller's seat is 7.2 m ahead of its middle) has its door by the seat, not at the middle of the body (?takebody=0: as before) */ P.hinge = V3(P.xr + P.L, 0.8, P.zs); P.belt = 0.95; }
   return P;
 }
 // where the hips go when seated, for a figure of this build (hips-to-eye measured in its Drive pose)
@@ -344,7 +344,7 @@ class Entry {
       if (hp && hd) { const a = hp.getWorldPosition(V3()), b = hd.getWorldPosition(V3()), fw = V3(1, 0, 0).applyQuaternion(hd.getWorldQuaternion(new THREE.Quaternion())); f = { eyeFwd: b.x - a.x + 0.085, eyeUp: b.y - a.y + 0.105, hipsY: a.y, hipsX: a.x, headFwd: fw }; } } } catch (e) {}
     return (this.fig[name] = f);
   }
-  params(v) { return this.P[v.type] || (this.P[v.type] = carParams(v.type, this.D, v.def || {}, null)); }
+  params(v) { return this.P[v.type] || (this.P[v.type] = carParams(v.type, this.D, v.def || {}, null, this.g.P.get('takebody') === '0' ? 0 : +((this.g.kit.seats && this.g.kit.seats[v.type]) || [0])[0] || 0)); }
   seat(v, name = 'player') { const P = this.params(v), st = this.seatLane(v); return seatFor(P, st, this.g.P.get('eseat') === '0' ? null : this.measure(name)); }
   seatLane(v) { return (this.g.kit.seats && this.g.kit.seats[v.type]) || [-0.05, 0.37, 0.1]; }
   ground(v, far) { const g = this.g, c = Math.cos(v.h), s = Math.sin(v.h), base = (v.z || 0) + (this.cars.sv() ? ((v._vv && v._vv.ride) || 0) - this.cars.sink : 0), m = far ? -1 : 1; return (x, z) => (g.statics.onSidewalk(v.x + c * x + s * z * m, v.y + s * x - c * z * m) ? 0.15 : 0) - base; }
@@ -513,7 +513,7 @@ class Entry {
     if (b.kind === 'in' && b.far && !b.nodoor && b.u >= T_IN) { b.sl += dt / SLIDE; if (b.sl >= 1) { b.sl = 1; this.finish(b); return; } }      /* h-door: seated on the passenger's side with the door shut: across to the wheel */
     else if (b.kind === 'in') {
       const j = b.jack, n = this.npc;
-      if (j && n && n.state !== 'gone' && b.u >= 1.0 && j.t < 1) { j.t += dt / 1.7; this.stepJack(dt, b, j, n); if (j.t >= 1) { this.stats.jacks++; } }      // door open: the driver comes out before the player goes on
+      if (j && n && n.state !== 'gone' && b.u >= 1.0 && j.t < 1) { j.t += dt / (g.takeMove === false ? 1.7 : 1.35);      /* gameplay/takeover 2 (CHIEF: 'Pull the driver out if there is one. Fast, ~0.5 s'): 0.50 s at the lane's pace of 2, was 0.63 (?takemove=0) */ this.stepJack(dt, b, j, n); if (j.t >= 1) { this.stats.jacks++; } }      // door open: the driver comes out before the player goes on
       else { const u0 = b.u; b.u += dt; if (b.nodoor && b.u >= ND_A && b.u < T_IN) { b.u = T_IN; this.skipJack(b); this.me.release(); this.hardDrive(); g.sound.door(); this.finish(b); return; } this.cues(u0, b.u, v, 1); }
       if (b.fast && !b.far && !b.nodoor && b.u >= U_GO && b.u < T_IN && !(j && j.t < 1 && n && n.state !== 'gone')) { this.tail = { v, u: b.u, k: b.pace }; this.finish(b); return; }      /* fast: seated = the car is his; the door comes shut as it moves (sync) */
       if (b.u >= T_IN) { if (b.far && !b.nodoor) { b.u = T_IN; b.sl = 0; } else { this.finish(b); return; } }

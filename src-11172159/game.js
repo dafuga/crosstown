@@ -386,7 +386,8 @@ export class Game {
       const vis = pl.vis, wk = (vis.walks || []).find((w) => w.name === 'walkbrisk') || (vis.walks || [])[0] || { name: 'walk', speed: 1.45 };   // the player walks briskly
       pl.speed = sp; this.playerAnim(sp > 3 ? 'run' : sp > 0.2 ? wk.name : 'idle');
       if (vis.mixer) vis.mixer.timeScale = sp > 3 ? sp / (vis.runSpeed || 5.0) : sp > 0.2 ? sp / wk.speed : 1;
-      if (I.use && !(heli && heli.tryBoard())) this.tryEnter();
+      if (this._take) this.stepTake(dt);
+      if (I.use && !(heli && heli.tryBoard()) && !this.takeRolling()) this.tryEnter();
     }
     I.use = false;
     for (const v of this.vehicles) if (v !== pl.vehicle) { v.step(dt, { steer: 0, throttle: 0, brake: 0, handbrake: true }, this); }     // a car nobody is driving stands on its handbrake (the brake pedal is reverse at a standstill)
@@ -458,6 +459,24 @@ export class Game {
 
   nearestCar(maxD = 3.6) {
     const pl = this.player; let best = null, bd = maxD;
+    if (this.takeBody === undefined) { const P = this.P; this.takeBody = !(P && P.get && P.get('takebody') === '0'); this.takeMove = !(P && P.get && P.get('takemove') === '0'); }
+    if (this.takeBody || this.takeMove) {
+      /* gameplay/takeover, Nov 17 (Matt: "I should be able to shoot anywhere and take anything over"). (a) ?takebody=0 off: the test is against the nearest point of
+         the vehicle's BODY (its len x wid box) as well as its middle: within maxD - 2 m (1.6 m) of the body anywhere round it counts, so a truck or a bus is taken
+         from its cab door (the tiller's door is 7.4 m from its middle, the rear-loader's 4.3 m, the pumper's 4.0 m: all outside 3.6 m). A small car is offered where
+         it was before (the middle rule stands), and the nearer middle still wins between two cars. (b) ?takemove=0 off: a car in traffic that is ROLLING (under 5.5 m/s,
+         20 km/h: a speed at which a man can get a hand on the door; faster ones are not offered) is taken too when he is within that 1.6 m of its body. F first makes
+         its driver brake hard (takeRolling: the traffic's own stop, 12 m/s2, about a metre from 5 m/s, and the cars behind see it as traffic does); once it stands, the
+         take goes on by itself (stepTake) and entry.js pulls its driver out as it does from a stopped one. */
+      const B = this.takeBody, MV = this.takeMove, R = Math.max(0, maxD - 2), px = pl.x, py = pl.y;
+      if (this._takeGo) { const c = this._takeGo; if (this.traffic.cars.includes(c)) return { kind: 'traffic', c }; }      /* the rolling car he grabbed has stopped: that one, wherever its metre of braking left it */
+      const body = (o) => { const f = o.def; if (!f || !(f.len > 0) || !(f.wid > 0)) return 1e9; const dx = px - o.x, dy = py - o.y, c = Math.cos(o.h), s = Math.sin(o.h); return Math.hypot(Math.max(0, Math.abs(dx * c + dy * s) - f.len / 2), Math.max(0, Math.abs(dy * c - dx * s) - f.wid / 2)); };
+      for (const v of this.vehicles) { let d = Math.hypot(v.x - px, v.y - py); if (B && d >= bd && d < 16) d = Math.min(d, body(v) + 2); if (d < bd) { bd = d; best = { kind: 'veh', v }; } }
+      for (const s of this.parked.near(px, py, B ? 12 : 8)) { let d = Math.hypot(s.x - px, s.y - py); if (B && d >= bd) d = Math.min(d, body(s) + 2); if (d < bd) { bd = d; best = { kind: 'slot', s }; } }
+      for (const c of this.traffic.cars) { const d0 = Math.hypot(c.x - px, c.y - py); if (d0 > 16 || (c.type === 'bus' && !B)) continue; const slow = c.v < 2.5; if (!slow && !(MV && c.v < 5.5)) continue;
+        const db = B || !slow ? body(c) : 1e9; let d = slow && c.type !== 'bus' ? d0 : 1e9; if (slow ? B && db < R : db < R) d = Math.min(d, db + 2); if (d < bd) { bd = d; best = { kind: 'traffic', c }; } }
+      return best;
+    }
     for (const v of this.vehicles) { const d = Math.hypot(v.x - pl.x, v.y - pl.y); if (d < bd) { bd = d; best = { kind: 'veh', v }; } }
     for (const s of this.parked.near(pl.x, pl.y, 8)) { const d = Math.hypot(s.x - pl.x, s.y - pl.y); if (d < bd) { bd = d; best = { kind: 'slot', s }; } }
     for (const c of this.traffic.cars) { if (c.type === 'bus') continue; const d = Math.hypot(c.x - pl.x, c.y - pl.y); if (d < bd && c.v < 2.5) { bd = d; best = { kind: 'traffic', c }; } }
@@ -481,6 +500,20 @@ export class Game {
       const d = this.doorPose(v); pl.busy = { kind: 'in', t: 0, dur: vis.dur.getin, v, x0: pl.x, y0: pl.y, h0: pl.h, x: d.x, y: d.y, h: d.h, z: 0 }; this.playerAnim('getin'); if (vis.mixer) vis.mixer.timeScale = 1; this.sound.door();
     } else this.finishEnter(v);
     return true;
+  }
+  /* gameplay/takeover 2: F on a car rolling in traffic (2.5 to 5.5 m/s). It is not frozen where it is: its driver stands on the brake (traffic.js's stun: 12 m/s2) and it
+     stays a car of the traffic while it stops, so what follows it brakes for it or goes round. When it stands (0.2 to 0.45 s, 0.3 to 1.0 m on) the ordinary tryEnter
+     runs on that car with every lane's wrap: he steps to the door, the driver is hauled out. Called off after 1.5 s, or if he has gone more than 4.5 m from its body. */
+  takeRolling() {
+    if (!this.takeMove) return false; if (this._take) return true; let n = null; try { n = this.nearestCar(); } catch (e) {} const c = n && n.kind === 'traffic' ? n.c : null; if (!c || !(c.v >= 2.5)) return false;
+    c.stun = Math.max(c.stun || 0, 0.7); this._take = { c, t: 0, v0: c.v, x0: c.x, y0: c.y }; return true;
+  }
+  stepTake(dt) {
+    const T = this._take, c = T.c, pl = this.player; T.t += dt;
+    if (pl.busy || pl.vehicle || T.t > 1.5 || !this.traffic.cars.includes(c)) { this._take = null; return; }
+    c.stun = Math.max(c.stun || 0, 0.4); if (c.v > 0.4) return;
+    this._take = null; const log = (this.takeLog = { v0: T.v0, t: T.t, d: Math.hypot(c.x - T.x0, c.y - T.y0), ok: false }); if (Math.hypot(c.x - pl.x, c.y - pl.y) > c.def.len / 2 + 4.5) return;
+    this._takeGo = c; try { log.ok = !!this.tryEnter(); } finally { this._takeGo = null; }
   }
   finishEnter(v) {
     this.player.busy = null; this.player.vehicle = v; this.player.vis.object.visible = !!this.player.vis.acts.drive; this.playerAnim('drive'); this.cam.mode = 'car'; if (!this.player.vis.acts.getin) this.sound.door(); this.missions.onEnter(v);

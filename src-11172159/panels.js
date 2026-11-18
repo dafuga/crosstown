@@ -5,7 +5,7 @@ import * as THREE from 'three';
 // glass52: tPanel holds every panel at 768 px; a panel whose file is 2048 px or more also gets a sharp 2048 px layer in tPanelH (at most MAXH of them: 22 MB of GPU memory each with mips)
 const S = 768, SH = 2048, MAXH = 4, MAXP = 32, ORDER = ['walkup', 'lightbrick', 'stone', 'glass', 'postwar', 'loft'];
 export function panelUniforms() {
-  return { tPanel: { value: null }, tPanelR: { value: null }, tPanelH: { value: null }, uPanelH: { value: new Array(MAXP).fill(-1) }, uPanel: { value: Array.from({ length: MAXP }, () => new THREE.Vector4(1, 1, 3, 3.3)) }, uStyleP: { value: Array.from({ length: 5 }, () => new THREE.Vector2(0, 0)) } };
+  return { tPanel: { value: null }, tPanelR: { value: null }, tPanelH: { value: null }, uPanelH: { value: new Array(MAXP).fill(-1) }, uPanelMix: { value: new Array(MAXP).fill(0) }, uGood: { value: new Array(20).fill(0) }, uGoodN: { value: new Array(5).fill(0) }, uPanel: { value: Array.from({ length: MAXP }, () => new THREE.Vector4(1, 1, 3, 3.3)) }, uStyleP: { value: Array.from({ length: 5 }, () => new THREE.Vector2(0, 0)) } };
 }
 export async function loadPanels(dir, shared) {
   const off = new URLSearchParams(location.search).get('panels') === '0';
@@ -26,7 +26,9 @@ export async function loadPanels(dir, shared) {
         const d = Math.min(x - x0, x1 - x, y - y0, y1 - y); a[y * Z + x] = Math.max(a[y * Z + x], Math.min(1, Math.max(0, d / E + 0.5))); } }
     for (let k = 0; k < Z * Z; k++) { out[o + k * 4] = px[k * 4]; out[o + k * 4 + 1] = px[k * 4 + 1]; out[o + k * 4 + 2] = px[k * 4 + 2]; out[o + k * 4 + 3] = a[k] * 255; } };
   list.forEach((m, i) => { fill(m, g, S, data, i * S * S * 4); const h = hi.indexOf(i); if (h >= 0) fill(m, gh, SH, dataH, h * SH * SH * 4); shared.uPanelH.value[i] = h;
-    shared.uPanel.value[i].set(m.bays, m.storeys, m.bay_m, m.storey_m); m._bmp.close(); });
+    shared.uPanel.value[i].set(m.bays, m.storeys, m.bay_m, m.storey_m); m._bmp.close();
+    /* facades lane, Nov 17 (gauntlet2 round 2): a panel whose own windows differ in width by 1.8 times or more (a tenement front with its small bathroom windows: lightbrick_2, lightbrick_4, walkup_4, postwar_1 today) is marked; facade.js keeps marked panels off buildings over 24 m, where they read as a big and a tiny window alternating on every floor of an office block */
+    { const ws = (m.glass || []).map((r) => r[2] - r[0]).filter((w) => w > 0); shared.uPanelMix.value[i] = ws.length > 1 && Math.max(...ws) / Math.min(...ws) >= 1.8 ? 1 : 0; } });
   const mk = (d, Z, n, an) => { const t = new THREE.DataArrayTexture(d, Z, Z, n); t.format = THREE.RGBAFormat; t.colorSpace = THREE.SRGBColorSpace; t.generateMipmaps = Z > 1;
     t.minFilter = Z > 1 ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter; t.magFilter = THREE.LinearFilter; t.anisotropy = an; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.needsUpdate = true; return t; };      // bays are laid in the photo's own order, so the photo's far edge is each edge's true neighbour
   shared.tPanel.value = mk(data, S, n, 8); shared.tPanelH.value = mk(dataH, hi.length ? SH : 1, nh, 16);
@@ -43,5 +45,11 @@ export async function loadPanels(dir, shared) {
   // style -> [first layer, count]: 0 brick walk-up (walkup + lightbrick), 1 stone prewar (lightbrick + stone), 2 glass, 3 postwar, 4 loft
   const idx = (names) => { const is = list.map((m, i) => (names.includes(m.style) ? i : -1)).filter((i) => i >= 0); return is.length ? [is[0], is.length] : [0, 0]; };
   [['walkup', 'lightbrick'], ['lightbrick', 'stone'], ['glass'], ['postwar'], ['loft']].forEach((names, s) => shared.uStyleP.value[s].set(...idx(names)));
+  /* facades lane, Nov 17 (panelmix v2, after merge's two critics on batch 11: the panel that took a tenement front's place had 'tiny windows strung thinly down wide blank wall'):
+     the stand-in for a marked panel on a tall building is drawn from the style's GOOD panels only: not marked, and windows filling 30 % or more of the wall's width
+     (the widest storey of the panel's glass rectangles). Up to four per style, in uGood[style * 4 + k], uGoodN[style] of them; none = the marked panel stays. */
+  { const frac = (m) => { const rows = new Map(); for (const r of m.glass || []) { const k = Math.round(r[1] * 20); rows.set(k, (rows.get(k) || 0) + (r[2] - r[0])); } return rows.size ? Math.max(...rows.values()) : 0; };
+    [0, 1, 2, 3, 4].forEach((st) => { const sp = shared.uStyleP.value[st], good = []; for (let i = sp.x; i < sp.x + sp.y; i++) if (!shared.uPanelMix.value[i] && frac(list[i]) >= 0.3) good.push(i); good.slice(0, 4).forEach((i, k) => { shared.uGood.value[st * 4 + k] = i; }); shared.uGoodN.value[st] = Math.min(4, good.length); });
+    console.log('[game] facade panels for tall fronts: ' + [0, 1, 3, 4].map((st) => st + ': ' + shared.uGood.value.slice(st * 4, st * 4 + shared.uGoodN.value[st]).map((i) => list[i].file.replace('.jpg', '')).join(' ')).join('; ')); }
   console.log('[game] facade panels: ' + list.length + ', sharp: ' + hi.length + ', texture memory about ' + Math.round((n * S * S + hi.length * SH * SH) * 4 * 1.333 / 1048576) + ' MB');
 }
