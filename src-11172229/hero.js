@@ -108,6 +108,8 @@ export async function addHero(world, dir) {
     if (g.noStand) { /* interleaved tiles: no stand-in could be made, the lot was cut at load */ }
     for (const sm of g.stand) { if (sm.parent) sm.parent.remove(sm); const i = world.buildingMeshes.indexOf(sm); if (i >= 0) world.buildingMeshes.splice(i, 1); sm.geometry.dispose(); } g.stand.length = 0;
     for (const [h, sc] of got) { world.heroRoot.add(sc); h.ok = true; cutBelow(world, h); glassSwap(world, h); }
+    /* facades lane, Nov 17: meshes of one model whose materials differ only in flat colour and baked-light level become one draw (src/hero/merge.js; ?heromerge=0 off) */
+    if (Q.get('heromerge') !== '0') for (const [h, sc] of got) { try { const mg = (state.merge = state.merge || { fn: (await import('./hero/merge.js')).heroMerge, log: [] }); const r = mg.fn(sc); mg.log.push([h.name, r[0], r[1]]); } catch (e) { console.warn('[game] hero ' + h.name + ' not merged: ' + (e && e.message)); } }
     for (const P of g.polys) pruned.push(P);
     if (!glassTimer && world.heroGlass && world.streetRT) glassTimer = setInterval(() => { world.streetRT.texture.needsPMREMUpdate = true; }, 400);   // standard glass reads the cube through three's PMREM copy, which is made once unless refreshed
     note(g, 'in'); };
@@ -120,6 +122,7 @@ export async function addHero(world, dir) {
     while (todo.length) { if (late) todo.sort((a, b) => dist(a) - dist(b)); await bring(todo.shift()); }
     state.done = true; const ok = list.filter((h) => h.ok && h.glb).map((h) => h.name);
     console.log('[game] hero buildings' + (late ? ' (after ready, nearest first: ' + state.log.filter((l) => l[2] === 'in' && !groups.get(l[1]).cutOnly).map((l) => l[1] + ' ' + l[0] + ' s').join(', ') + ')' : '') + ': ' + ok.join(', ') + '; massing triangles cut: ' + state.cut + ', held as stand-ins: ' + state.standTris);
+    if (state.merge && state.merge.log.length) console.log('[game] hero draws merged: ' + state.merge.log.filter((l) => l[1] !== l[2]).map((l) => l[0] + ' ' + l[1] + ' -> ' + l[2]).join(', ') + '; all models ' + state.merge.log.reduce((a, l) => a + l[1], 0) + ' -> ' + state.merge.log.reduce((a, l) => a + l[2], 0));
     // the helicopter's height picture was read at load with the stand-ins in it: read it again now that the real roofs are there (not while flying; ?herobake=0 off)
     if (late && ok.length && Q.get('herobake') !== '0') { const tryBake = () => { const gm = window.game, hl = gm && gm.heli, H = hl && hl.heights; if (!H || !H.bake || !H.hf) return true; if (hl.piloted) return false; try { const t0 = performance.now(); H.bake(); console.log('[game] hero: height picture read again in ' + Math.round(performance.now() - t0) + ' ms'); } catch (e) {} return true; };
       if (!tryBake()) { const iv = setInterval(() => { if (tryBake()) clearInterval(iv); }, 5000); } }

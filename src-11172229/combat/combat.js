@@ -64,7 +64,7 @@ export class Combat {
     { const q = game.P.get('gshake'); this.gs = q === null || q === '' || !isFinite(+q) ? 1 : clamp(+q, 0, 1); }      /* ?gshake=0..1: scale of the camera's shake, kick, zoom punch and lens pulse per shot, and of half the recoil climb (1 = the default, already far gentler than before Nov 11; 0 = a still camera) */
     this.deadDrv = []; this.headT = 0;
     /* players, Nov 14: ?ghz=0 = the old upright cylinder for people and head shots that only count four times; ?gacc=0 = the old spread (pistol 1.5 degrees from the hip, 0.3 aimed) */
-    this.HZ = game.P.get('ghz') !== '0'; this.ACC = game.P.get('gacc') !== '0'; this._zp = new Float64Array(8);
+    this.HZ = game.P.get('ghz') !== '0'; this.ACC = game.P.get('gacc') !== '0'; this.DRIVEFIRE = game.P.get('drivefire') !== '0'; this._zp = new Float64Array(8);
     /* ?gl2=0 = car glass that needs three rounds and stickers on the two-box stand-in; ?gpad2=0 = the controller's stick as game.js reads it and the hint for 12 s only; ?gdmg=0 = flat tyres that do not slow the car, lamps that cannot be shot out */
     this.GL2 = game.P.get('gl2') !== '0'; this.PAD2 = game.P.get('gpad2') !== '0'; this.RELRUN = game.P.get('relrun') !== '0'; this.MAPWHEEL = game.P.get('mapwheel') !== '0';      /* players, Nov 15: sprint while reloading (?relrun=0 as before), the wheel over the open map is the map's (?mapwheel=0 as before) */ this.DMG = game.P.get('gdmg') !== '0'; this.kbT = -1;
     /* ?gt=key:value,key:value overrides a tuning number read through this.T (for trying variants on a laptop; game.combat.tune is live) */
@@ -172,6 +172,24 @@ export class Combat {
   }
   /* may a gun be in the hand at all? Not in a car, getting in or out of one, in or boarding the helicopter, or on a roof (v1: the ray casting and the stance know street level only) */
   canCarry() { const g = this.g, pl = g.player, h = g.heli; return !pl.vehicle && !pl.busy && !(h && (h.piloted || h.busy || h.hasCamera)) && !(pl.alt > 2); }
+  /* gameplay/takeover 2, Nov 17 (Matt: "I should be able to shoot anywhere"): at the wheel of a car or on a motorcycle the pistol and the SMG fire (?drivefire=0: no gun in a
+     vehicle, as before). canCarry stays false there, so nothing of the gun on foot runs: no stance, no shoulder camera, no arm pose, no sights, and the gun is not drawn in his
+     hand. The left mouse button fires at the middle of the picture (a small cross is drawn there), the round leaving from beside the driver's window on the side the aim is on
+     (on a bike: from in front of the rider); his own vehicle does not stop it. 2 / 3 / Q pick the gun, R reloads. The controller is not read (RT is the gas). */
+  driveGun() { const g = this.g, pl = g.player, v = pl.vehicle, h = g.heli; if (!this.DRIVEFIRE || !v || !v.def || pl.busy || this.dead || (g.fly && g.fly.on) || (h && (h.piloted || h.busy || h.hasCamera))) return null; return this.slot === 'pistol' || this.slot === 'smg' ? this.slot : null; }
+  driveMuzzle() { const g = this.g, v = g.player.vehicle, d = g.world.camera.getWorldDirection(new THREE.Vector3()), ax = d.x, ay = -d.z, al = Math.hypot(ax, ay) || 1, c = Math.cos(v.h), s = Math.sin(v.h), z0 = v.z || 0;
+    if (v.moto) return { v, d, p: new THREE.Vector3(v.x + (ax / al) * 0.55, z0 + 1.25, -(v.y + (ay / al) * 0.55)) };
+    const side = ax * -s + ay * c >= 0 ? 1 : -1, fwd = +((g.kit.seats && g.kit.seats[v.type]) || [0])[0] || 0, out = (v.def.wid || 1.85) / 2 + 0.12;
+    return { v, d, p: new THREE.Vector3(v.x + c * fwd - s * out * side, z0 + Math.min(1.25, (v.def.hgt || 1.45) * 0.74), -(v.y + s * fwd + c * out * side)) }; }
+  driveFire(dt, K) {
+    const W = WEAPONS[this.slot], am = this.ammo[this.slot]; if (this.swap || !W || !am) { K.reload = false; K.tap = 0; this.pressed = K.fire; return; }
+    if (K.reload && !this.rel && am.mag < W.mag && am.reserve > 0) this.startReload(); K.reload = false; if (this.rel) this.stepReload(dt);
+    K.tap = Math.max(0, (K.tap || 0) - dt);
+    if (K.fire || K.tap > 0) {
+      if (!this.rel && this.fireCd <= 0 && (W.auto || !this.pressed)) { if (am.mag > 0) { const C = this.g.cam, y0 = C.yaw, p0 = C.pitch; this._dv = this.driveMuzzle(); try { this.shoot(W, am); } finally { this._dv = null; C.yaw = y0; C.pitch = p0; this.give = 0; } this.stats.drive = (this.stats.drive || 0) + 1; } else { if (!this.pressed) this.snd('dry'); if (am.reserve > 0) this.startReload(); } }
+      this.pressed = true; K.tap = 0;
+    } else this.pressed = false;
+  }
   mapUp() { const g = this.g; try { return !!(g.gps && g.gps.mapOpen ? g.gps.mapOpen() : g.hud && g.hud.cmap && g.hud.cmap.full); } catch (e) { return false; } }
   armedFoot() { const g = this.g; return this.slot !== 'unarmed' && this.canCarry() && !(g.fly && g.fly.on) && !this.dead; }
   equip(k, now = false) { if (k !== 'unarmed' && !WEAPONS[k]) return; if (k === this.slot) return; if (now) { this.setSlot(k); return; } this.swap = { to: k, t: 0 }; this.rel = null; this.snd(k === 'unarmed' ? 'holster' : 'draw', k); }
@@ -182,7 +200,7 @@ export class Combat {
     const g = this.g, I = g.input, K = this.inp, pl = g.player; this.t += dt;
     if (this.script) this.script.drive(dt, I, K); else { const P = this.padRead(K); K.aim = !!K.maim || P.aim; K.fire = !!K.mfire || P.fire; }      /* mouse buttons or the controller's triggers */
     if (K.wheel) { const i = ORDER.indexOf(this.swap ? this.swap.to : this.slot); K.want = ORDER[((i < 0 ? 0 : i) + (K.wheel > 0 ? 1 : ORDER.length - 1)) % ORDER.length]; K.wheel = 0; }
-    if (K.want) { if (this.canCarry()) this.equip(K.want); K.want = null; }
+    if (K.want) { if (this.canCarry() || (this.DRIVEFIRE && pl.vehicle && !pl.busy && (K.want === 'pistol' || K.want === 'smg' || K.want === 'unarmed'))) this.equip(K.want); K.want = null; }
     const armed = this.armedFoot();
     if (armed) {
       // the look: slower through the sights, and the camera may look up as far as down
@@ -238,7 +256,8 @@ export class Combat {
         }
         if (this.aimT > 0.55) { this.pressed = true; K.tap = 0; }      /* the press counts as used only once the gun was up to fire it */
       } else this.pressed = false;
-    } else { K.reload = false; this.pressed = K.fire; K.tap = 0; }
+    } else if (this.driveGun()) this.driveFire(dt, K);      /* gameplay/takeover 2: at the wheel */
+    else { K.reload = false; this.pressed = K.fire; K.tap = 0; }
     // recoil springs, bloom
     this.bloom = Math.max(0, this.bloom - dt * (W ? W.bloomMax * 2.2 : 3));
     { const k = 190, c = 17; this.gunBackV += (-k * this.gunBack - c * this.gunBackV) * dt; this.gunBack += this.gunBackV * dt; this.gunRiseV += (W && !W.auto ? -150 * this.gunRise - 12 * this.gunRiseV : -170 * this.gunRise - 15 * this.gunRiseV) * dt; this.gunRise += this.gunRiseV * dt; }
@@ -282,11 +301,12 @@ export class Combat {
     this.fx.loosen(c, _v.set(Math.cos(pl.h) * pl.speed * 0.5, -0.6, -Math.sin(pl.h) * pl.speed * 0.5));
   }
   muzzleWorld(out, dirOut) {
+    if (this._dv) { out.copy(this._dv.p); if (dirOut) dirOut.copy(this._dv.d); return out; }      /* at the wheel: beside the driver's window */
     const gun = this.guns[this.slot]; if (gun && gun.visible) { gun.updateMatrixWorld(true); out.copy(gun.userData.muzzle).applyMatrix4(gun.matrixWorld); if (dirOut) dirOut.set(1, 0, 0).transformDirection(gun.matrixWorld); return out; }
     const pl = this.g.player, C = this.g.cam; out.set(pl.x + Math.cos(C.yaw) * 0.6, 1.4, -(pl.y + Math.sin(C.yaw) * 0.6)); if (dirOut) dirOut.set(Math.cos(C.yaw), 0, -Math.sin(C.yaw)); return out;
   }
   eject(kind) {
-    const gun = this.guns[kind]; if (!gun) return; gun.updateMatrixWorld(true); const u = gun.userData, pl = this.g.player;
+    const gun = this.guns[kind]; if (!gun || this._dv) return;      /* (at the wheel the gun is not drawn: no casing from where it is stowed) */ gun.updateMatrixWorld(true); const u = gun.userData, pl = this.g.player;
     const p = _v.copy(u.eject).applyMatrix4(gun.matrixWorld), d = _v2.copy(u.ejectDir).transformDirection(gun.matrixWorld);
     if (kind === 'shotgun' && this.SW) { /* the shell goes out to the gun's RIGHT and up, whatever way the racked gun is rolled (the port's own direction, rolled with the gun, threw it left across the picture next to the camera), slowly enough to be seen in the air beside the gun */ const f = _v4.set(1, 0, 0).transformDirection(gun.matrixWorld), rx = -f.z, rz = f.x, rl = Math.hypot(rx, rz) || 1, sp = 1.5 + rnd() * 0.5; this.fx.casing(kind, p, _v3.set(rx / rl * sp + f.x * 0.2 + rs(0.15), 1.9 + rnd() * 0.5, rz / rl * sp + f.z * 0.2 + rs(0.15))); return; }
     this.fx.casing(kind, p, _v3.set(d.x * (1.7 + rnd() * 0.8) + rs(0.4), d.y * 1.8 + 1.1 + rnd() * 0.8, d.z * (1.7 + rnd() * 0.8) + rs(0.4)));
@@ -505,6 +525,7 @@ export class Combat {
     }
     // cars: a lower body and a cabin, as two boxes in the car's own frame
     const car = (v, kind) => {
+      if (this._dv && v === this._dv.v) return;      /* fired from his own car: it does not stop the round */
       const ex2 = v.x - ox, ey2 = v.y - oy, along = ex2 * dx + ey2 * dy; if (along < -8 || along > H.t + 8) return; const L = v.def.len; if (Math.abs(ex2 * dy - ey2 * dx) > (L * 0.6 + 1) * Math.max(hl, 0.2) + Math.abs(dz) * 60) return;
       const cs = Math.cos(v.h), sn = Math.sin(v.h), z0 = v.z || 0, lx = -(ex2 * cs + ey2 * sn), ly = -(-ex2 * sn + ey2 * cs), lz = oz - z0, ldx = dx * cs + dy * sn, ldy = -dx * sn + dy * cs;
       const Wd = v.def.wid * 0.9, Ht = v.def.hgt - (v.type === 'taxi' ? 0.3 : 0), belt = Math.min(Ht * 0.58, 1.08), van = v.type === 'van' || v.type === 'bus';
@@ -1117,9 +1138,10 @@ export class Combat {
         c.strokeStyle = '#ffd23f'; c.lineWidth = 2; c.globalAlpha = Math.min(1, u * 1.4) * 0.8; c.beginPath(); c.arc(cx, cy, Math.max(0.5, 7 + (1 - u) * 30), 0, 7); c.stroke(); c.lineCap = 'butt'; }
       c.globalAlpha = 1;
     }
+    if (!armed && W && this.driveGun()) { const cx = Wd / 2, cy = Ht / 2, col = this.hitT > 0 || this.killT > 0 ? '#ff5340' : '#ffffff'; c.globalAlpha = 0.85; c.lineCap = 'butt'; for (const [lw, st] of [[5, 'rgba(0,0,0,0.6)'], [2.4, col]]) { c.strokeStyle = st; c.lineWidth = lw; c.beginPath(); c.moveTo(cx - 13, cy); c.lineTo(cx - 5, cy); c.moveTo(cx + 5, cy); c.lineTo(cx + 13, cy); c.moveTo(cx, cy - 13); c.lineTo(cx, cy - 5); c.moveTo(cx, cy + 5); c.lineTo(cx, cy + 13); c.stroke(); } c.globalAlpha = 1; }      /* gameplay/takeover 2: where a round fired from the wheel goes */
     { const v = pl.vehicle, S = v && this.cars.get(v); if (S && S.crash && S.crash.stall > 0) { c.globalAlpha = 1; H.panel(Wd / 2 - 120, Ht - 286, 240, 38, 6); H.text('ENGINE STALLED', Wd / 2, Ht - 260, 17, '#ff5a45', 'center', 700, 3); } }      /* so a dead pedal does not read as a fault */
     // weapon panel, top right under the cash
-    if (this.slot !== 'unarmed' && W && !pl.vehicle) {
+    if (this.slot !== 'unarmed' && W && (!pl.vehicle || this.driveGun())) {
       const am = this.ammo[this.slot], x = Wd - 216, y = 96, low = am.mag <= Math.ceil(W.mag * 0.2);
       H.panel(x, y, 180, 74); c.fillStyle = '#ffb82e'; c.fillRect(x + 175, y, 5, 74);
       H.text(W.name, x + 16, y + 22, 12, 'rgba(255,255,255,0.72)', 'left', 700, 2);
