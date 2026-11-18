@@ -63,15 +63,17 @@ function glowMesh(cap, minAng) { const base = new THREE.PlaneGeometry(2, 2), geo
   const m = new THREE.Mesh(geo, mat); m.frustumCulled = false; m.renderOrder = 6; m.visible = false; m.matrixAutoUpdate = false; m.name = 'night_glow'; m.layers.enable(3);
   return { m, P, C, D, mat, geo, cap, n: 0, put(i, x, y, z, r, g, b, size, dx, dy, dz, directional) { P.setXYZ(i, x, y, z); C.setXYZW(i, r, g, b, size); D.setXYZW(i, dx || 0, dy || 0, dz || 0, directional ? 1 : 0); } }; }
 
+/* merge2 round 20 (Nov 18): a city sky at night: a fifth of the stars at a third of the brightness, and twice the glow on the horizon haze (critic, round 19: 'large hard white stars' over Manhattan; real: 'no stars, or two or three', a dull orange-grey sky brightest at the horizon). ?citysky=0 = as before */
+const CITYSKY = (() => { try { return new URLSearchParams(location.search).get('citysky') !== '0'; } catch (e) { return true; } })();
 const SKY_FS = `uniform vec3 uMoon; uniform float uN, uDusk, uCloud; uniform vec3 uCloudCol; varying vec3 vDir;
   float h21(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
   void main(){ vec3 d = normalize(vDir); vec3 c = vec3(0.0);
     vec2 sp = vec2(atan(d.z, d.x), asin(clamp(d.y, -1.0, 1.0))) * 90.0; vec2 ci = floor(sp), cf = fract(sp) - 0.5; float h = h21(ci);
-    float star = step(0.985, h) * smoothstep(0.16, 0.0, length(cf - (vec2(h21(ci + 7.0), h21(ci + 13.0)) - 0.5) * 0.6)) * (0.25 + 2.5 * fract(h * 91.7)) * smoothstep(0.03, 0.3, d.y);
-    c += vec3(0.8, 0.9, 1.0) * star * 0.5 * uN * uN;
+    float star = step(${CITYSKY ? '0.997' : '0.985'}, h) * smoothstep(0.16, 0.0, length(cf - (vec2(h21(ci + 7.0), h21(ci + 13.0)) - 0.5) * 0.6)) * (0.25 + 2.5 * fract(h * 91.7)) * smoothstep(0.03, 0.3, d.y);
+    c += vec3(0.8, 0.9, 1.0) * star * ${CITYSKY ? '0.16' : '0.5'} * uN * uN;
     float md = acos(clamp(dot(d, uMoon), -1.0, 1.0)); float disc = smoothstep(0.0135, 0.0115, md); float mare = 0.8 + 0.2 * h21(floor(d.xy * 260.0));
     c += vec3(0.95, 0.97, 1.0) * (disc * 2.2 * mare + 0.035 * exp(-md * 16.0) + 0.012 * exp(-md * 3.5)) * smoothstep(0.6, 1.0, uN);
-    float hz = exp(-max(d.y, 0.0) * 7.0); c += vec3(0.055, 0.036, 0.022) * hz * uN;                       // the city's own glow on the haze
+    float hz = exp(-max(d.y, 0.0) * ${CITYSKY ? '5.0' : '7.0'}); c += vec3(0.055, 0.036, 0.022) * ${CITYSKY ? '1.45' : '1.0'} * hz * uN;                       // the city's own glow on the haze
     c += vec3(0.9, 0.36, 0.12) * uDusk * exp(-max(d.y, 0.0) * 4.5) * (0.35 + 0.65 * pow(max(dot(normalize(d.xz), normalize(uMoon.xz)), 0.0), 2.0));
     // rain: a grey deck over everything (stars, moon and the blue sky behind it go)
     float cn = h21(floor(d.xz / max(d.y + 0.25, 0.05) * 3.0)); float a = uCloud * 0.94; vec3 cc = uCloudCol * (0.82 + 0.18 * cn) * mix(1.0, 0.72, smoothstep(0.0, 0.7, d.y));
