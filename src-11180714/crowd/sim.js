@@ -1428,7 +1428,7 @@ export class CrowdSim {
     const y = a.y + Math.sin(a.h) * a.v * dt;
     const turningApproach = turnInPlace && ad > TURN * dt;
     if (a.v && this.fbWalls && (buildingOnWalk(this.nav, a, x, y) ||
-        (this.nav.soft && this.furnitureAtHeight(a.x, a.y, x, y, a.z ?? 0, 1.78 * (a.tall ?? 1), 0.25, true)) ||
+        this.crossesFurniture(a.x, a.y, x, y, undefined, a.z ?? 0, 1.78 * (a.tall ?? 1)) ||
         (turningApproach && (this.staticApproachBlocked(a.x, a.y, x, y, undefined, a) ||
           this.vehicleAt(x, y, a.x, a.y, undefined, true, undefined, a, 1.78 * (a.tall ?? 1), undefined, true))))) {
       a.v = 0;

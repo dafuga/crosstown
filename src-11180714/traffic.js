@@ -672,6 +672,16 @@ export class Peds {
     }
     return this.furniture;
   }
+  underRaisedObstacle(furniture, x, y, height) {
+    if (!furniture?.raisedTablesNear || furniture.hasRaisedTables === false) return false;
+    const nearby = this._walkFurniture ||= [];
+    nearby.length = 0;
+    furniture.raisedTablesNear(x-.25, y-.25, x+.25, y+.25, nearby);
+    if (!nearby.length) return false;
+    const floor = this.g.statics.onSidewalk(x,y) ? .15 : 0;
+    return nearby.some(table => floor < table.seatObstacle.top &&
+      floor + height > table.seatObstacle.base && Math.hypot(x-table.x,y-table.y) < table.h + .25);
+  }
   spawn(px, py, anywhere) {
     const furniture = this.furnitureGrid();
     const near = this.nearLoops(px, py);
@@ -686,17 +696,7 @@ export class Peds {
       if ((walls ? this.sidewalkBuilding(tmp.x, tmp.y) : this.inBuilding(tmp.x, tmp.y)) || insideVehicle(this.g, tmp.x, tmp.y, 0.25, Infinity, walls ? spawnHeight : undefined) ||
           furniture?.push(tmp.x, tmp.y, 0.25, tmp2) ||
           this.g.statics.resolvePedestrian(tmp.x, tmp.y, 0.25, tmp2)) continue;
-      if (walls && furniture?.raisedTablesNear && furniture.hasRaisedTables !== false) {
-        const nearby = this._walkFurniture ||= [];
-        nearby.length = 0;
-        furniture.raisedTablesNear(tmp.x-.25, tmp.y-.25, tmp.x+.25, tmp.y+.25, nearby);
-        if (nearby.length) {
-          const floor = this.g.statics.onSidewalk(tmp.x,tmp.y) ? .15 : 0;
-          if (nearby.some(table => floor < table.seatObstacle.top &&
-              floor + spawnHeight > table.seatObstacle.base &&
-              Math.hypot(tmp.x-table.x,tmp.y-table.y) < table.h + .25)) continue;
-        }
-      }
+      if (walls && this.underRaisedObstacle(furniture,tmp.x,tmp.y,spawnHeight)) continue;
       const kind = this.kinds[Math.floor(this.rand() * this.kinds.length)];
       const p = { loop: l, s, dir: this.rand() < 0.5 ? 1 : -1, speed: 1.15 + this.rand() * 0.55, back: 1, x: tmp.x, y: tmp.y, h: 0, off: (this.rand() - 0.5) * 2.4, state: 'walk', t: 0, vis: this.visual(kind), scale: 0.94 + this.rand() * 0.12, phase: this.rand() * 10, fall: 0, vx: 0, vy: 0, onRoad: false };
       const r1 = this.rand(), r2 = this.rand(), wk = p.vis.walks || []; p.walk = 'walk'; p.walkSpeed = 1.45;
@@ -782,7 +782,12 @@ export class Peds {
               vehicleBlocksPath(g,null,p.x,p.y,x,y,0.25, Infinity, height) || furniture?.push(x,y,0.25,tmp2) ||
               sidewalkFurnitureCrossing(g,furniture,this._walkFurniture ||= [],p,p.x,p.y,x,y) ||
               g.statics.resolvePedestrian(x,y,0.25-8*Number.EPSILON*Math.max(1,Math.abs(x),Math.abs(y)),tmp2)) {
-            // Wait for the recovery segment to reopen; the current position may still overlap the wall.
+            // A streamed wall can disappear while a different obstacle still blocks the exit.
+            if (!g.statics.resolvePedestrian(p.x,p.y,0.25,tmp2) && !furniture?.push(p.x,p.y,0.25,tmp2) &&
+                !this.underRaisedObstacle(furniture,p.x,p.y,height) &&
+                !this.sidewalkBuilding(p.x,p.y,p.x,p.y) && !insideVehicle(g,p.x,p.y,0.25,Infinity,height)) {
+              p.wallExit = undefined;
+            }
           } else {
             const fraction = Math.min(1,p.speed*dt/(distance || 1));
             p.x += dx*fraction; p.y += dy*fraction;

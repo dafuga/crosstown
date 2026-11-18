@@ -71,7 +71,7 @@ export class Soup {
     for (let k = 0; k < (closed ? n : n - 1); k++) { const A = rings[k], B = rings[(k + 1) % n]; for (let s = 0; s < sides; s++) { const s2 = (s + 1) % sides; this.i.push(A[s], B[s2], B[s], A[s], A[s2], B[s2]); } }
   }
   // a sheet of thickness t whose side view is the polyline pts [[x, y], ...] (its front is on the left of the walk), from z0 to z1
-  ribbon(pts, t, z0, z1, m, mBack = m) {
+  ribbon(pts, t, z0, z1, m, mBack = m, capEnds = true) {
     const n = pts.length, F = [], Bk = [], N = [];
     for (let k = 0; k < n; k++) {
       const a = pts[Math.max(k - 1, 0)], b = pts[Math.min(k + 1, n - 1)]; let nx = -(b[1] - a[1]), ny = b[0] - a[0]; const l = Math.hypot(nx, ny) || 1; nx /= l; ny /= l;
@@ -79,13 +79,16 @@ export class Soup {
     }
     for (let k = 0; k < n - 1; k++) {
       const f0 = F[k], f1 = F[k + 1], b0 = Bk[k], b1 = Bk[k + 1], n0 = N[k], n1 = N[k + 1];
-      let a = this.v(f0[0], f0[1], z0, n0[0], n0[1], 0, m), b = this.v(f1[0], f1[1], z0, n1[0], n1[1], 0, m), c = this.v(f1[0], f1[1], z1, n1[0], n1[1], 0, m), d = this.v(f0[0], f0[1], z1, n0[0], n0[1], 0, m); this.i.push(a, c, b, a, d, c);
-      a = this.v(b0[0], b0[1], z0, -n0[0], -n0[1], 0, mBack); b = this.v(b1[0], b1[1], z0, -n1[0], -n1[1], 0, mBack); c = this.v(b1[0], b1[1], z1, -n1[0], -n1[1], 0, mBack); d = this.v(b0[0], b0[1], z1, -n0[0], -n0[1], 0, mBack); this.i.push(a, b, c, a, c, d);
-      this.q4([f0[0], f0[1], z0], [b0[0], b0[1], z0], [b1[0], b1[1], z0], [f1[0], f1[1], z0], m, null, [0, 0, z0 - z1]);
-      this.q4([f0[0], f0[1], z1], [b0[0], b0[1], z1], [b1[0], b1[1], z1], [f1[0], f1[1], z1], m, null, [0, 0, z1 - z0]);
+      const inset0 = pts[k][2] || 0, inset1 = pts[k + 1][2] || 0;
+      let a = this.v(f0[0], f0[1], z0 + inset0, n0[0], n0[1], 0, m), b = this.v(f1[0], f1[1], z0 + inset1, n1[0], n1[1], 0, m), c = this.v(f1[0], f1[1], z1 - inset1, n1[0], n1[1], 0, m), d = this.v(f0[0], f0[1], z1 - inset0, n0[0], n0[1], 0, m); this.i.push(a, c, b, a, d, c);
+      a = this.v(b0[0], b0[1], z0 + inset0, -n0[0], -n0[1], 0, mBack); b = this.v(b1[0], b1[1], z0 + inset1, -n1[0], -n1[1], 0, mBack); c = this.v(b1[0], b1[1], z1 - inset1, -n1[0], -n1[1], 0, mBack); d = this.v(b0[0], b0[1], z1 - inset0, -n0[0], -n0[1], 0, mBack); this.i.push(a, b, c, a, c, d);
+      if (capEnds) {
+        this.q4([f0[0], f0[1], z0 + inset0], [b0[0], b0[1], z0 + inset0], [b1[0], b1[1], z0 + inset1], [f1[0], f1[1], z0 + inset1], m, null, [0, 0, z0 - z1]);
+        this.q4([f0[0], f0[1], z1 - inset0], [b0[0], b0[1], z1 - inset0], [b1[0], b1[1], z1 - inset1], [f1[0], f1[1], z1 - inset1], m, null, [0, 0, z1 - z0]);
+      }
     }
-    const e = n - 1; this.q4([F[0][0], F[0][1], z0], [Bk[0][0], Bk[0][1], z0], [Bk[0][0], Bk[0][1], z1], [F[0][0], F[0][1], z1], m, null, [pts[0][0] - pts[1][0], pts[0][1] - pts[1][1], 0]);
-    this.q4([F[e][0], F[e][1], z0], [Bk[e][0], Bk[e][1], z0], [Bk[e][0], Bk[e][1], z1], [F[e][0], F[e][1], z1], m, null, [pts[e][0] - pts[e - 1][0], pts[e][1] - pts[e - 1][1], 0]);
+    const e = n - 1, first = pts[0][2] || 0, last = pts[e][2] || 0; this.q4([F[0][0], F[0][1], z0 + first], [Bk[0][0], Bk[0][1], z0 + first], [Bk[0][0], Bk[0][1], z1 - first], [F[0][0], F[0][1], z1 - first], m, null, [pts[0][0] - pts[1][0], pts[0][1] - pts[1][1], 0]);
+    this.q4([F[e][0], F[e][1], z0 + last], [Bk[e][0], Bk[e][1], z0 + last], [Bk[e][0], Bk[e][1], z1 - last], [F[e][0], F[e][1], z1 - last], m, null, [pts[e][0] - pts[e - 1][0], pts[e][1] - pts[e - 1][1], 0]);
   }
   // a turned shape about the local Z axis: prof = [[radius, z, material], ...] walked so that its outside is on the left ((dr, dz) -> normal (-dz, dr) in (z, r))
   lathe(prof, segs) {
@@ -321,13 +324,54 @@ export const CORDS = [].concat(pillarsOf(WIN.R).map((x) => [x, 1.82, HW - TH - 0
 function seat(S, m, tall) {      // local: hip at the origin, facing +X
   const top = tall ? 0.72 : 0.50;
   const pr = [[0.24, -0.075], [0.16, -0.055], [-0.10, -0.07], [-0.19, -0.03], [-0.235, 0.10], [-0.275, top - 0.06], [-0.285, top]];
-  S.ribbon(pr, 0.028, -0.215, 0.215, m); if (!tall) { S.ribbon(pr.slice(1, 3).map((p) => [p[0] + 0.002, p[1] + 0.009]), 0.02, -0.17, 0.17, ISEAT); S.ribbon(pr.slice(4, 6).map((p) => [p[0] + 0.009, p[1] + 0.004]), 0.02, -0.17, 0.17, ISEAT); }
+  // Taper the moulded shell at the front lip and upper corners.
+  if (!tall) { pr[0].push(0.025); pr[5].push(0.008); pr[6].push(0.048); }
+  S.ribbon(pr, 0.028, -0.215, 0.215, m);
+  if (tall) return;
+  // The blue inserts follow the sitter-facing surface of the moulded shell.
+  for (const start of [1, 4]) {
+    const edge = (k) => {
+      const dx = pr[k+1][0] - pr[k-1][0], dy = pr[k+1][1] - pr[k-1][1];
+      const scale = 0.016 / Math.hypot(dx, dy);
+      return [pr[k][0] + dy * scale, pr[k][1] - dx * scale];
+    };
+    const a = edge(start), b = edge(start + 1);
+    const point = (u, z) => [a[0] + (b[0]-a[0])*u, a[1] + (b[1]-a[1])*u, z];
+    const widths = [0.143, 0.166, 0.166, 0.143], stops = [0, 0.075, 0.925, 1];
+    for (let i = 1; i < stops.length; i++) {
+      const u = stops[i-1], v = stops[i];
+      S.q4(point(u,-widths[i-1]), point(v,-widths[i]), point(v,widths[i]), point(u,widths[i-1]),
+        ISEAT, null, [b[1]-a[1], a[0]-b[0], 0]);
+    }
+  }
 }
 function interior(S, G) {
   const zi = HW - TH, XB = -5.32, XD = 4.30, DH = DOORS.front.w / 2;                 // inner wall, rear wall, the line behind the driver
   // floors, steps, rear wall, the front lining under the windscreen
   S.q4([XSTEP1, YFL, -zi], [XSTEP1, YFL, zi], [5.72, YFL, zi], [5.72, YFL, -zi], IFLOOR, null, [0, 1, 0]); S.q4([5.72, YFL, -0.9], [5.72, YFL, 0.9], [5.99, YFL, 0.9], [5.99, YFL, -0.9], IFLOOR, null, [0, 1, 0]);
   S.box(XSTEP2, YFL, -zi, XSTEP1, (YFL + YF2) / 2, zi, IFLOOR, '-y-x'); S.box(XB, YFL, -zi, XSTEP2, YF2, zi, IFLOOR, '-y-x');
+  // Access covers in the raised rear aisle. Leave the speckled flooring visible inside each rim.
+  const hatchRim = I(0x666663, 0.55, 0.35);
+  for (const centre of [-4.53, -3.83]) {
+    const rim = (inset) => {
+      const points = [];
+      for (let corner = 0; corner < 4; corner++) {
+        const cx = centre + (corner === 0 || corner === 3 ? 0.16 : -0.16);
+        const cz = corner < 2 ? 0.22 : -0.22;
+        for (let segment = 0; segment <= 3; segment++) {
+          const angle = (corner + segment / 3) * Math.PI / 2;
+          points.push([cx + (0.08 - inset) * Math.cos(angle), YF2 + 0.002,
+            cz + (0.08 - inset) * Math.sin(angle)]);
+        }
+      }
+      return points;
+    };
+    const outer = rim(0), inner = rim(0.013);
+    for (let i = 0; i < outer.length; i++) {
+      const next = (i + 1) % outer.length;
+      S.q4(outer[i], outer[next], inner[next], inner[i], hatchRim, null, [0, 1, 0]);
+    }
+  }
   for (const [x, y] of [[XSTEP1, (YFL + YF2) / 2], [XSTEP2, YF2]]) S.box(x - 0.05, y - 0.02, -zi, x + 0.004, y + 0.004, zi, IYEL);
   S.box(DOORS.front.x - DH, YFL - 0.01, zi - 0.06, DOORS.front.x + DH, YFL + 0.004, HW - 0.005, IYEL); S.box(DOORS.rear.x - DH, YFL - 0.01, zi - 0.06, DOORS.rear.x + DH, YFL + 0.004, HW - 0.005, IYEL);
   S.q4([XD - 0.10, YFL + 0.004, -0.2], [XD - 0.10, YFL + 0.004, zi], [XD - 0.02, YFL + 0.004, zi], [XD - 0.02, YFL + 0.004, -0.2], IYEL, null, [0, 1, 0]);      // the yellow line behind the driver
@@ -337,12 +381,38 @@ function interior(S, G) {
   for (const sg of [1, -1]) S.at(0, 0, 0, sg > 0 ? Math.PI / 2 : -Math.PI / 2, () => {
     const a = sg > 0 ? XB : -5.9, b = sg > 0 ? 5.9 : -XB, P = (z, y) => [-(z), y];     // local x = -world z (sg>0) / +world z (sg<0)
     const pr = [P(zi, YT - 0.02), P(zi - 0.02, YT + 0.06), P(zi - 0.20, 2.70), P(zi - 0.42, 2.775), P(zi - 0.50, 2.79), P(0, 2.80)];
-    S.ribbon(pr.slice(0, 3), 0.01, a, b, ICEIL); S.ribbon(pr.slice(2, 4), 0.012, a + 0.2, b - 0.5, ILIGHT); S.ribbon(pr.slice(3), 0.01, a, b, ICEIL);
+    S.ribbon(pr.slice(0, 2), 0.01, a, a + 0.2, ICEIL);
+    const start = a + 0.2, end = b - 0.5;
+    const pitch = (end - start) / 6;
+    for (let bay = 0; bay < 6; bay++) {
+      const left = start + bay * pitch, right = start + (bay + 1) * pitch;
+      const diffuserEnd = bay === 5 ? end : right - 0.10;
+      S.ribbon(pr.slice(0, 2), 0.01, left, diffuserEnd, ILIGHT, ILIGHT, false);
+      if (bay < 5) S.ribbon(pr.slice(0, 2), 0.01, diffuserEnd, right, ICEIL, ICEIL, false);
+    }
+    S.ribbon(pr.slice(0, 2), 0.01, b - 0.5, b, ICEIL);
+    S.ribbon(pr.slice(1, 4), 0.01, a, b, ICEIL);
+    S.ribbon(pr.slice(3), 0.01, a, b, mat(0xd6d9db, 0.65, 0, 0, 2.25));
   });
   for (const sg of [1, -1]) for (let k = 0; k < 9; k++) {       // advert cards on the sloped rail
     const x0 = -4.9 + k * 1.08, x1 = x0 + 1.0, n = (k * 3 + (sg > 0 ? 0 : 4)) % 8, za = sg * (zi - 0.035), zb = sg * (zi - 0.185), u0 = uvr(REG.ads, n / 8, 0), u1 = uvr(REG.ads, (n + 1) / 8, 1);
     const p0 = [sg > 0 ? x1 : x0, 2.560, za], p1 = [sg > 0 ? x0 : x1, 2.560, za], p2 = [sg > 0 ? x0 : x1, 2.676, zb], p3 = [sg > 0 ? x1 : x0, 2.676, zb];
     S.q4(p0, p1, p2, p3, IPIC, [u0[0], u0[1], u1[0], u1[1]], [0, -1, -sg]);
+  }
+  // Slotted air outlets along the sides of the raised central ceiling.
+  const grille = I(0x939598, 0.70), slot = I(0x43454a, 0.78);
+  for (const side of [-1, 1]) {
+    const face = (x0, x1, z0, z1, offset, material) => {
+      const point = (x, z) => [x, 2.80 - 0.01 * z / (zi - 0.50) - offset, side * z];
+      S.q4(point(x0,z0), point(x1,z0), point(x1,z1), point(x0,z1), material, null, [0,-1,0]);
+    };
+    for (const x of [-4.45, -2.65, -0.85, 0.95, 2.75, 4.55]) {
+      face(x, x + 0.66, 0.54, 0.72, 0.008, grille);
+      for (let row = 0; row < 6; row++) {
+        const z = 0.556 + row * 0.024;
+        face(x + 0.04, x + 0.62, z, z + 0.010, 0.009, slot);
+      }
+    }
   }
   // wheel housings
   for (const sg of [1, -1]) { S.box(AXF - 0.66, YFL, sg > 0 ? 0.66 : -zi, AXF + 0.66, 1.06, sg > 0 ? zi : -0.66, IHOUSE, '-y'); S.box(AXR - 0.68, YF2, sg > 0 ? 0.54 : -zi, AXR + 0.68, 1.15, sg > 0 ? zi : -0.54, IHOUSE, '-y'); }
@@ -350,20 +420,33 @@ function interior(S, G) {
   // seats and their legs
   for (const [x, y, z, yaw] of SEATS) { S.at(x, y, z, yaw, () => { seat(S, ISHELL, false); }); const fl = floorAt(x) + 0.001, base = y - 0.11;
     if (base - fl > 0.5 || (x < -4.7)) continue; S.box(x - 0.03, fl, z - 0.03, x + 0.03, base, z + 0.03, IDARK, '-y+y'); }
-  for (const [x, y, z, yaw] of SEATS) if (yaw === 0 && Math.abs(Math.abs(z) - 0.62) < 0.02) S.at(x, y, z, 0, () => { const za = -Math.sign(z) * 0.20, zb = -Math.sign(z) * 0.03; S.tube([[-0.272, 0.43, za], [-0.292, 0.61, za], [-0.292, 0.61, zb], [-0.272, 0.43, zb]], 0.011, 5, ISTEEL); });      // the loop handle on the aisle seat's back
+  // Moulded handholds span the tops of the paired forward-facing seats.
+  for (const [x, y, z, yaw] of SEATS) {
+    if (yaw !== 0 || x < -4.7) continue;
+    S.at(x, y, z, yaw, () => {
+      S.tube([[-0.294, 0.44, -0.18], [-0.311, 0.55, -0.177],
+        [-0.315, 0.583, -0.147], [-0.315, 0.583, 0.147],
+        [-0.311, 0.55, 0.177], [-0.294, 0.44, 0.18]], 0.016, 4, ISHELL);
+    });
+  }
   for (const x of [1.25, -2.0]) { const u = uvr(REG.screen, 0, 0), w = uvr(REG.screen, 1, 1), SC = I(0xffffff, 0.3, 0, 7); S.box(x - 0.03, 2.43, -0.33, x + 0.03, 2.72, 0.33, IDARK); S.tube([[x, 2.70, 0], [x, 2.80, 0]], 0.02, 5, IDARK);
     S.q4([x - 0.031, 2.45, 0.31], [x - 0.031, 2.45, 0.01], [x - 0.031, 2.70, 0.01], [x - 0.031, 2.70, 0.31], SC, [u[0], u[1], w[0], w[1]], [-1, 0, 0]); S.q4([x - 0.031, 2.45, -0.01], [x - 0.031, 2.45, -0.31], [x - 0.031, 2.70, -0.31], [x - 0.031, 2.70, -0.01], SC, [u[0], u[1], w[0], w[1]], [-1, 0, 0]);
     S.q4([x + 0.031, 2.45, -0.31], [x + 0.031, 2.45, -0.01], [x + 0.031, 2.70, -0.01], [x + 0.031, 2.70, -0.31], SC, [u[0], u[1], w[0], w[1]], [1, 0, 0]); S.q4([x + 0.031, 2.45, 0.01], [x + 0.031, 2.45, 0.31], [x + 0.031, 2.70, 0.31], [x + 0.031, 2.70, 0.01], SC, [u[0], u[1], w[0], w[1]], [1, 0, 0]); }
   S.box(5.40, 2.30, -1.12, 5.52, 2.46, -0.30, IDARK); S.box(5.30, 1.9, -1.2, 5.34, 2.2, -1.0, IDARK); S.box(4.95, 0.56, -1.19, 5.45, 1.02, -1.08, IDARK); S.tube([[5.30, 0.95, -1.1], [5.22, 1.12, -1.1]], 0.016, 5, IDARK);      // the driver's sun visor, inside mirror, side console and its lever
   // grab rails overhead, stanchions at the seats and the doors, stop strips on the pillars
-  const POLE = 0.017, RX = DOORS.rear.x, rail = (z) => [[XD - 0.1, 2.56, z], [XD - 0.1, 2.24, z], [XSTEP1 + 0.1, 2.24, z], [XSTEP2 - 0.25, 2.44, z], [-4.75, 2.44, z], [-4.75, 2.66, z]];
+  const POLE = 0.017, RX = DOORS.rear.x, rail = (z) => [[XD - 0.1, 2.80, z], [XD - 0.1, 2.24, z], [XSTEP1 + 0.1, 2.24, z], [XSTEP2 - 0.25, 2.44, z], [-4.75, 2.44, z], [-4.75, 2.80, z]];
   for (const sg of [1, -1]) { S.tube(rail(sg * 0.42), POLE, 6, IYEL);
     for (const x of [2.52, 1.05]) S.tube([[x, YFL, sg * 0.42], [x, 2.24, sg * 0.42]], POLE, 6, IYEL);
     for (const x of sg > 0 ? [-0.60] : [-0.60, -2.14]) S.tube([[x, YFL + 0.98, sg * 0.42], [x, 2.24, sg * 0.42]], POLE, 6, IYEL);
-    S.tube([[XSTEP2 - 0.02, YF2, sg * 0.50], [XSTEP2 - 0.02, 2.40, sg * 0.50]], POLE, 6, IYEL);
-    for (const x of [1.8, -1.3]) S.tube([[x, 2.24, sg * 0.42], [x, 2.76, sg * 0.42]], POLE, 6, IYEL); }
-  for (const x of [RX - DH - 0.06, RX + DH + 0.06]) { S.tube([[x, YFL, 0.80], [x, 2.74, 0.80]], POLE, 6, IYEL); S.box(x - 0.015, YFL, 0.80, x + 0.015, 1.25, zi, IHOUSE); G.q4([x, 1.25, 0.80], [x, 1.25, zi], [x, 1.95, zi], [x, 1.95, 0.80], IGLASS); G.q4([x, 1.25, zi], [x, 1.25, 0.80], [x, 1.95, 0.80], [x, 1.95, zi], IGLASS); }
-  S.tube([[XD, YFL, 0.72], [XD, 2.74, 0.72]], POLE, 6, IDARK); S.tube([[5.66, YFL, 0.30], [5.66, 1.3, 0.30], [5.36, 1.3, 0.30]], POLE, 6, IDARK);
+    // The step stanchion bends inward to meet the sloping overhead rail.
+    const stepX = XSTEP2 - 0.02;
+    const railY = 2.24 + 0.20 * (stepX - (XSTEP1 + 0.1)) / (XSTEP2 - 0.25 - (XSTEP1 + 0.1));
+    S.tube([[stepX, YF2, sg * 0.50], [stepX, railY - 0.20, sg * 0.50],
+      [stepX, railY - 0.15, sg * 0.49], [stepX, railY - 0.04, sg * 0.43],
+      [stepX, railY, sg * 0.42]], POLE, 6, IYEL);
+    for (const x of [1.8, -1.3]) S.tube([[x, 2.24, sg * 0.42], [x, 2.80, sg * 0.42]], POLE, 6, IYEL); }
+  for (const x of [RX - DH - 0.06, RX + DH + 0.06]) { S.tube([[x, YFL, 0.80], [x, 2.79, 0.80]], POLE, 6, IYEL); S.box(x - 0.015, YFL, 0.80, x + 0.015, 1.25, zi, IHOUSE); G.q4([x, 1.25, 0.80], [x, 1.25, zi], [x, 1.95, zi], [x, 1.95, 0.80], IGLASS); G.q4([x, 1.25, zi], [x, 1.25, 0.80], [x, 1.95, 0.80], [x, 1.95, zi], IGLASS); }
+  S.tube([[XD, YFL, 0.72], [XD, 2.80, 0.72]], POLE, 6, IDARK); S.tube([[5.66, YFL, 0.30], [5.66, 1.3, 0.30], [5.36, 1.3, 0.30]], POLE, 6, IDARK);
   for (const [x, y, z] of CORDS) { const s = Math.sign(z); S.box(x - 0.018, YS + 0.08, z - 0.006, x + 0.018, YT - 0.1, z + 0.006, IYEL); S.box(x - 0.022, y - 0.03, z - s * 0.016, x + 0.022, y + 0.03, z + 0.006 * s + 0.0, IRED); }
   // the driver's place: platform, seat, dash, wheel, screen, partition; fare box and reader; the STOP REQUESTED sign
   S.box(XD, YFL, -zi, 5.9, 0.56, -0.2, ISTEP, '-y'); S.at(DRIVER[0], DRIVER[1], DRIVER[2], 0, () => { seat(S, ISEATD, true); S.box(-0.12, -0.52, -0.12, 0.12, -0.10, 0.12, IDARK); });

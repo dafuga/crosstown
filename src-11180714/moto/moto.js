@@ -207,6 +207,21 @@ export function install(game) {
     const n = Math.max(1, Math.min(1 + Math.floor(hash(s.y, s.x) * 3), Math.floor((gap - 0.8) / 0.95)));
     for (let i = 0; i < n; i++) { const a = mid + (i - (n - 1) / 2) * 0.95, x = s.x + c * a, y = s.y + sn * a, hb = wrapPi(s.h + side * (1.0 + (hash(x, y) - 0.5) * 0.2));
       if (st.onSidewalk(x, y) || st.resolve(x, y, 0.6, _o) || (g.roads.inLane && g.roads.inLane(x + Math.cos(hb) * 0.95, y + Math.sin(hb) * 0.95, 0.2)) || !g.bounds.in(x, y, -4)) continue;
+      // A taken car still occupies the gap while its driver boards or walks away.
+      const occupied = g.vehicles.some(car => {
+        const floor = (car.z ?? 0) + (g.decks?.inStep ? car._dk?.z ?? 0 : 0);
+        if (floor > DEF.hgt || floor + car.def.hgt < 0) return false;
+        const dx = x - car.x, dy = y - car.y, c = Math.cos(car.h), sn = Math.sin(car.h);
+        const along = Math.abs(dx * c + dy * sn), across = Math.abs(dy * c - dx * sn);
+        const ch = Math.abs(Math.cos(hb - car.h)), sh = Math.abs(Math.sin(hb - car.h));
+        if (along >= (car.def.len + DEF.len * ch + DEF.wid * sh) / 2 ||
+            across >= (car.def.wid + DEF.len * sh + DEF.wid * ch) / 2) return false;
+        // An angled motorcycle can also clear the car on either of its own axes.
+        const bx = Math.cos(hb), by = Math.sin(hb);
+        return Math.abs(dx * bx + dy * by) < (DEF.len + car.def.len * ch + car.def.wid * sh) / 2 &&
+               Math.abs(dy * bx - dx * by) < (DEF.wid + car.def.len * sh + car.def.wid * ch) / 2;
+      });
+      if (occupied) continue;
       addSlot(x, y, hb, PAINTS[Math.floor(hash(x * 3.1, y * 1.7) * PAINTS.length)]).laid = true; M.stats.placed++; }
   }
   function layOut() { const fx = g.focus.x, fy = g.focus.y, i0 = Math.floor((fx - 260) / 80), i1 = Math.floor((fx + 260) / 80), j0 = Math.floor((fy - 260) / 80), j1 = Math.floor((fy + 260) / 80);

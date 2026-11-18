@@ -32,9 +32,13 @@ export function furnitureOf(game) {
     for (const name in K) { const m = pedestrianFurnitureRadii(name); if (!m || !K[name].list) continue; for (const it of K[name].list) { if (F.displacedFurniture?.has(it)) continue; const raised = it[2] > 1;
       if (raised && name !== 'ptable' && name !== 'cafe') continue;
       const sc = it[4] && typeof it[4].s === 'number' ? it[4].s : 1, r = m[1] * sc, h = m[2] * sc; (raised ? raisedTables : extra).push({ x: it[0], y: it[1], r, h, seatObstacle: name === 'ptable' || name === 'cafe' ? { base: it[2], top: it[2] + (name === 'ptable' ? 0.73 : 1) * sc } : null });
-      if (/^(bike|bikeB|bikeShare|benchP|shelter|cart)$/.test(name)) { const c = Math.cos(it[3]), sn = Math.sin(it[3]), L = /shelter/.test(name) ? 1.4 : 0.55; extra.push({ x: it[0] + c * L, y: it[1] + sn * L, r, h }, { x: it[0] - c * L, y: it[1] - sn * L, r, h }); } } }
+      if (/^(bike|bikeB|bikeShare|benchP|shelter|cart)$/.test(name)) { const c = Math.cos(it[3]), sn = Math.sin(it[3]), L = (name === 'shelter' ? 1.4 : 0.55) * sc; extra.push({ x: it[0] + c * L, y: it[1] + sn * L, r, h }, { x: it[0] - c * L, y: it[1] - sn * L, r, h }); } } }
     if (K.pchair && K.pchair.list) for (const it of K.pchair.list) { if (F.displacedFurniture?.has(it)) continue; const o = it[4]; if (o && o.tilt && (Math.abs(o.tilt[0]) > 0.3 || Math.abs(o.tilt[1]) > 0.3)) continue; seats.push({ x: it[0], y: it[1], z: it[2], h: it[3], seat: 0.452 * (o && typeof o.s === 'number' ? o.s : 1) }); }
-    if (K.benchP && K.benchP.list) for (const it of K.benchP.list) seats.push({ x: it[0], y: it[1], z: it[2], h: it[3] - Math.PI / 2, seat: 0.465, bench: true });
+    for (const it of K.benchP?.list || []) {
+      if (F.displacedFurniture?.has(it)) continue;
+      const scale = typeof it[4]?.s === 'number' ? it[4].s : 1;
+      seats.push({ x: it[0], y: it[1], z: it[2], h: it[3] - Math.PI / 2, seat: 0.465 * scale, bench: true });
+    }
   }
   // people lane, Nov 17 (Matt: 'A woman just walked through the fruit stand'): the goods shops set out on the sidewalk (produce crates, flower
   // tiers: streets/storefronts.js, a strip about a metre deep and up to 3.3 m long) as a row of circles the walk goes round
@@ -80,7 +84,7 @@ export function furnitureCrossing(nav, nearby, px, py, tx, ty, person, radius = 
   nearby.length = 0;
   nav.soft(Math.min(px, tx) - radius, Math.min(py, ty) - radius,
     Math.max(px, tx) + radius, Math.max(py, ty) + radius, nearby);
-  if (footZ !== undefined && upperFootZ + rise + radius > 1)
+  if (footZ !== undefined && upperFootZ + rise + radius > 1 && nav.hasRaisedTables !== false)
     nav.raisedTablesNear?.(Math.min(px, tx) - radius, Math.min(py, ty) - radius,
       Math.max(px, tx) + radius, Math.max(py, ty) + radius, nearby);
   for (const o of nearby) {
