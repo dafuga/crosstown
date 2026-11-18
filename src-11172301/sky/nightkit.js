@@ -126,8 +126,12 @@ export async function makeKit(game, N) {
   const carLights = () => { const cam = w.camera.position, cx = cam.x, cy = -cam.z; let n = 0; cand.length = 0; const pv = g.player.vehicle;
     const one = (c, mine) => { const dx = c.x - cx, dy = c.y - cy, d2 = dx * dx + dy * dy; if (d2 > 260 * 260 || c.gone) return; const def = c.def || {}, len = def.len || 4.6, wid = def.wid || 1.85, co = Math.cos(c.h), si = Math.sin(c.h), hz = (LAMP_H[c.type] || 0.66) + (c.z || 0), fx = len / 2 - 0.06, ly = wid / 2 - 0.27;
       if (n + 4 > C.cap) return;
+      // The RAV4's rear clusters are inset from the bumper and higher than its headlights.
+      const rav4 = c.type === 'au_rav4';
+      const rearOffset = rav4 ? 2.12 : fx;
+      const rearHeight = rav4 ? (c.z || 0) + 1.15 : hz + 0.12;
       for (const s of [-1, 1]) { C.put(n++, c.x + co * fx - si * ly * s, hz, -(c.y + si * fx + co * ly * s), 1.0, 0.96, 0.86, 0.26, co, -0.05, -si, true);
-        const br = c.brake || (mine && g.input && g.input.brake > 0.1) ? 1 : 0.34; C.put(n++, c.x - co * fx - si * ly * s, hz + 0.12, -(c.y - si * fx + co * ly * s), 1.0 * br, 0.05 * br, 0.03 * br, 0.2, -co, 0, si, true); }
+        const br = c.brake || (mine && g.input && g.input.brake > 0.1) ? 1 : 0.34; C.put(n++, c.x - co * rearOffset - si * ly * s, rearHeight, -(c.y - si * rearOffset + co * ly * s), 1.0 * br, 0.05 * br, 0.03 * br, 0.2, -co, 0, si, true); }
       cand.push([mine ? -1 : d2, c.x + co * (fx + 0.15), hz, -(c.y + si * (fx + 0.15)), co, -si]); };
     try { for (const c of g.traffic.cars) one(c, false); if (pv) one(pv, true); } catch (e) {}
     C.geo.instanceCount = n; C.P.needsUpdate = C.C.needsUpdate = C.D.needsUpdate = true; K.carN = n / 4;

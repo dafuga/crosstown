@@ -161,6 +161,7 @@ export async function addCrowd(game, opts = {}) {
       over = T.ms > budget * 1.15 ? over + 1 : 0; under = T.ms < budget * 0.7 ? under + 1 : 0;
       if (over >= 3 && T.k > 0.4) { T.k = Math.max(0.4, T.k * 0.88); over = 0; apply(); } else if (under >= 6 && T.k < 1) { T.k = Math.min(1, T.k * 1.08); under = 0; apply(); } };
     const cam = world.camera, last = { x: 1e9, y: 0, z: 0, fx: 0, fz: 0 }, dir = new THREE.Vector3();
+    const TURNCUT = !!(P && P.get('crowdturncut') === '1');
     // run the sim alone for a while with the camera where it is (after a cut, before a still): people reach the kerbs, crossings fill
     out.settle = (secs = 10) => { sim.cx = 1e9; for (let i = 0; i < secs * 60; i++) sim.step(1 / 60); };
     const render0 = world.render.bind(world);
@@ -169,7 +170,11 @@ export async function addCrowd(game, opts = {}) {
       stepOnce();
       if (out.on && render.group.visible) {
         cam.getWorldDirection(dir); { const hl = Math.hypot(dir.x, dir.z); if (hl > 1e-4) { dir.x /= hl; dir.z /= hl; } else { dir.x = last.fx; dir.z = last.fz; } }      /* (gameplay/people, Nov 12, public report 075004-16a733: the HEADING is compared, not the 3D direction: looking down steeper than 57 degrees made x*x + z*z < 0.3, so every frame counted as a camera cut and ran settle(10) = 600 crowd steps a frame: 65 -> 2 fps standing over anything) */
-        const cut = Math.hypot(cam.position.x - last.x, cam.position.z - last.z) > 25 || dir.x * last.fx + dir.z * last.fz < 0.3;
+        // people lane, Nov 17 (CHIEF 04:11, from Matt's stutter trace): a CUT is the camera JUMPING about 25 m, nothing else. A sharp turn used to count too
+        // (heading more than 72 degrees off the last frame's: one fast flick of the mouse), and ran settle(10) = 600 crowd steps inside the frame: a freeze
+        // of 0.3 to 0.6 s on the street and on the subway stairs. The crowd within 45 m is always there whichever way one looks; further off behind it is
+        // thinner and fills in out of sight as before. ?crowdturncut=1 = a sharp turn is a cut again.
+        const jump = Math.hypot(cam.position.x - last.x, cam.position.z - last.z) > 25, cut = jump || (TURNCUT && dir.x * last.fx + dir.z * last.fz < 0.3); if (cut) { out.cuts = (out.cuts || 0) + 1; if (!jump) out.turnCuts = (out.turnCuts || 0) + 1; }
         if (cut && out.autoSettle !== false) out.settle(last.x > 1e8 ? 8 : 10);      // the camera was put somewhere else: the crowd there is already going about its day
         last.x = cam.position.x; last.z = cam.position.z; last.fx = dir.x; last.fz = dir.z;
         const t = performance.now(); render.update(); T.upd += performance.now() - t; tick();
