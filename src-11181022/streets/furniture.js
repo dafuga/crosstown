@@ -458,7 +458,7 @@ async function loadHHead(A, HP) {
   } catch (e) { console.log('[streets] furniture: hero head not loaded: ' + (e && e.message)); }
 }
 const FRAG_COMMON = /* glsl */`
-  varying vec3 vWPos; varying vec4 vFw; varying vec3 vWN; uniform sampler2D tWear; uniform sampler2D tRust; uniform sampler2D tPaint; uniform sampler2D tPaintH; uniform vec3 uSunDir; float fBump; float fPole; float fPoleR; float fArm; float fGloss; float fEnam; float fVis; float fShade; float fHsh; varying vec4 vHL; varying vec3 vSunL;
+  varying vec3 vWPos; varying vec4 vFw; varying vec3 vWN; uniform sampler2D tWear; uniform sampler2D tRust; uniform sampler2D tPaint; uniform sampler2D tPaintH; uniform vec3 uSunDir; uniform vec3 uNightK; float fBump; float fPole; float fPoleR; float fArm; float fGloss; float fEnam; float fVis; float fShade; float fHsh; varying vec4 vHL; varying vec3 vSunL;
   uniform sampler2D tLight; uniform vec2 uHalf; uniform vec3 uSunColor; uniform float uShadowFar; uniform vec3 uShadowCenter;
   vec3 bakeV; vec3 bakeN; float fRust; float fBase; vec3 fEmit;
   float fH(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
@@ -467,7 +467,7 @@ const FRAG_COMMON = /* glsl */`
 function patch(m, shared, mode, extra = '') {
   const f = mode === 'f';
   m.onBeforeCompile = (sh) => {
-    Object.assign(sh.uniforms, { tLight: shared.tLight, uHalf: shared.uHalf, uSunColor: shared.uSunColor, uShadowFar: shared.uShadowFar, uShadowCenter: shared.uShadowCenter, tWear: WEAR.wear, tRust: WEAR.rust, tPaint: WEAR.paint, tPaintH: WEAR.painth, uSunDir: shared.uSunDir });
+    Object.assign(sh.uniforms, { uNightK: ARMNIGHT && shared.uNightK ? shared.uNightK : { value: new THREE.Vector3(1, 0, 0) }, tLight: shared.tLight, uHalf: shared.uHalf, uSunColor: shared.uSunColor, uShadowFar: shared.uShadowFar, uShadowCenter: shared.uShadowCenter, tWear: WEAR.wear, tRust: WEAR.rust, tPaint: WEAR.paint, tPaintH: WEAR.painth, uSunDir: shared.uSunDir });
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', `#include <common>
         varying vec3 vWPos; varying vec4 vFw; varying vec3 vWN; attribute vec2 aBand; float fCull; ${f ? 'attribute vec4 aW; attribute vec3 aTint; attribute vec2 aCell; attribute vec4 aHL; varying vec4 vHL; varying vec3 vSunL; uniform vec3 uSunDir;' : ''}`)
@@ -563,7 +563,7 @@ function patch(m, shared, mode, extra = '') {
           diffuseColor.rgb *= 0.86 + 0.2 * n2; fRust = 0.0; fGloss = 0.0; fEnam = 0.0; fVis = 0.0; fShade = 0.0; fHsh = 0.0; fBump = 0.0; fPole = 0.0; fPoleR = 0.0; fArm = 0.0;`}
           fBase = smoothstep(0.5, 0.0, vFw.z) * (0.35 + 0.65 * n2) + 0.25 * (1.0 - 0.85 * fEnam) * smoothstep(0.62, 0.9, n1 * n2 * 2.0);
           diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.06, 0.054, 0.047), clamp(fBase, 0.0, 1.0) * 0.62);
-          fEmit = diffuseColor.rgb * max(0.0, -vFw.x) + diffuseColor.rgb * 0.5 * fArm * (0.35 + 0.65 * smoothstep(0.3, -0.7, vWN.y)) * bakeV.g;
+          fEmit = diffuseColor.rgb * max(0.0, -vFw.x) + diffuseColor.rgb * 0.5 * fArm * (0.35 + 0.65 * smoothstep(0.3, -0.7, vWN.y)) * bakeV.g * uNightK.x;      /* merge2 round 21 (Nov 18): the signal arm's own sky-fill glow follows the daylight (uNightK.x: 1 by day, 0.05 at night); it stayed at full strength at 22:00 and the arm read as 'a white neon tube'. ?armnight=0 = as before */
         }`)
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
         if (fPole > 0.0) { vec2 bD = vec2(dFdx(fBump), dFdy(fBump)) * 0.007; vec3 bSx = dFdx(-vViewPosition), bSy = dFdy(-vViewPosition), bR1 = cross(bSy, normal), bR2 = cross(normal, bSx); float bDet = dot(bSx, bR1);
@@ -581,6 +581,7 @@ function patch(m, shared, mode, extra = '') {
 }
 
 // ------------------------------------------------------------------------------------------------ prototype builder
+const ARMNIGHT = (() => { try { return new URLSearchParams(location.search).get('armnight') !== '0'; } catch (e) { return true; } })();
 const GAL = { w: [0.035, 0.42] }, PAINT = { w: [0.3, 0] }, IRON = { w: [0.36, 0.25] }, PLAIN = { w: [0, 0] }, STEEL = { w: [0.12, 0.7] };
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler();
 class PB {
@@ -1153,7 +1154,7 @@ export async function add(game, ctx) {
   const sdv = world.sunDir || { x: -0.5, y: 0.62, z: 0.6 }, sh2 = Math.hypot(sdv.x, sdv.z) || 1, SUN = { dx: -sdv.x / sh2, dy: sdv.z / sh2, k: Math.min(2.2, sh2 / Math.max(0.2, sdv.y)), h: Math.atan2(sdv.z, -sdv.x) };
   { const geo = new THREE.PlaneGeometry(2, 2); geo.rotateX(-PI / 2);
     const m = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.5, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
-    m.onBeforeCompile = (sh) => { Object.assign(sh.uniforms, { tLight: shared.tLight, uHalf: shared.uHalf });
+    m.onBeforeCompile = (sh) => { Object.assign(sh.uniforms, { uNightK: ARMNIGHT && shared.uNightK ? shared.uNightK : { value: new THREE.Vector3(1, 0, 0) }, tLight: shared.tLight, uHalf: shared.uHalf });
       sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\n varying vec2 vSU; varying vec2 vSW;').replace('#include <begin_vertex>', `#include <begin_vertex>
         { vec4 sP = vec4(transformed, 1.0);
         #ifdef USE_INSTANCING

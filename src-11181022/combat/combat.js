@@ -64,7 +64,7 @@ export class Combat {
     { const q = game.P.get('gshake'); this.gs = q === null || q === '' || !isFinite(+q) ? 1 : clamp(+q, 0, 1); }      /* ?gshake=0..1: scale of the camera's shake, kick, zoom punch and lens pulse per shot, and of half the recoil climb (1 = the default, already far gentler than before Nov 11; 0 = a still camera) */
     this.deadDrv = []; this.headT = 0;
     /* players, Nov 14: ?ghz=0 = the old upright cylinder for people and head shots that only count four times; ?gacc=0 = the old spread (pistol 1.5 degrees from the hip, 0.3 aimed) */
-    this.HZ = game.P.get('ghz') !== '0'; this.ACC = game.P.get('gacc') !== '0'; this.DRIVEFIRE = game.P.get('drivefire') !== '0'; this.DRIVEGUN = game.P.get('drivegun') !== '0'; this.DRIVEPAD = game.P.get('drivepad') !== '0';      /* gameplay/takeover 3: ?drivegun=0 = no gun drawn at the window, no larger flash, no sure tracer, no draw on the click; ?drivepad=0 = R1 / RB does not fire at the wheel */ this._zp = new Float64Array(8);
+    this.HZ = game.P.get('ghz') !== '0'; this.ACC = game.P.get('gacc') !== '0'; this.DRIVEFIRE = game.P.get('drivefire') !== '0'; this.DRIVEGUN = game.P.get('drivegun') !== '0'; this.DRIVEPAD = game.P.get('drivepad') !== '0'; this.AIRFIRE = game.P.get('airfire') !== '0'; this.BUSFIRE = game.P.get('busfire') === '1'; this.HELIFIRE = game.P.get('helifire') !== '0';      /* gameplay/takeover fire: ?airfire=0 = no gun above 2 m, ?helifire=0 = no hand gun in the helicopter (each as before); the bus passenger's gun is OFF until it has been run in a browser: ?busfire=1 = on */      /* gameplay/takeover 3: ?drivegun=0 = no gun drawn at the window, no larger flash, no sure tracer, no draw on the click; ?drivepad=0 = R1 / RB does not fire at the wheel */ this._zp = new Float64Array(8);
     /* ?gl2=0 = car glass that needs three rounds and stickers on the two-box stand-in; ?gpad2=0 = the controller's stick as game.js reads it and the hint for 12 s only; ?gdmg=0 = flat tyres that do not slow the car, lamps that cannot be shot out */
     this.GL2 = game.P.get('gl2') !== '0'; this.PAD2 = game.P.get('gpad2') !== '0'; this.RELRUN = game.P.get('relrun') !== '0'; this.MAPWHEEL = game.P.get('mapwheel') !== '0';      /* players, Nov 15: sprint while reloading (?relrun=0 as before), the wheel over the open map is the map's (?mapwheel=0 as before) */ this.DMG = game.P.get('gdmg') !== '0'; this.kbT = -1;
     /* ?gt=key:value,key:value overrides a tuning number read through this.T (for trying variants on a laptop; game.combat.tune is live) */
@@ -174,13 +174,44 @@ export class Combat {
     I.lookX += rx * k * 17; I.lookY += ry * k * 11;
   }
   /* may a gun be in the hand at all? Not in a car, getting in or out of one, in or boarding the helicopter, or on a roof (v1: the ray casting and the stance know street level only) */
-  canCarry() { const g = this.g, pl = g.player, h = g.heli; return !pl.vehicle && !pl.busy && !(h && (h.piloted || h.busy || h.hasCamera)) && !(pl.alt > 2); }
+  canCarry() { const g = this.g, pl = g.player, h = g.heli; return !pl.vehicle && !pl.busy && !(h && (h.piloted || h.busy || h.hasCamera)) && !(pl.alt > 2 && !this.airCarry()); }
+  /* gameplay/takeover fire, Nov 18 (Matt: "I should be able to shoot anywhere"): the 2 m rule was guns v1's (Nov 11: "the ray casting and the stance know street level only"; the only
+     way up then was the helicopter). Now a gun is carried above 2 m as well: on a low roof, a deck, a terrace, stairs, in a fall, on the hook's line. What the rule guarded is kept:
+     the ray casting is given the roofs (castAir, below); walking in the stance is put back by the roof's and the decks' own steps, as any walk there is. Still refused: down on the ground after
+     a long fall, hanging from an edge by his hands, and under the canopy unless grfree.js's own rule hands him the gun. The helicopter, a seat and "busy" are canCarry's other tests. ?airfire=0 = as before */
+  airCarry() { if (!this.AIRFIRE) return false; const G = this.g.grapple, F = G && G.free, a = F && F.a; if (F && F.rag) return false; if (a && (a.mode === 'grab' || a.mode === 'chute')) return false; return true; }
+  /* cast() for a man above the street: its walls are lines on the map with no top and its only floor is the street. With the helicopter's height picture of the city: a wall met above the
+     real top of what stands there (half a metre before and after) does not stop the round, and a roof on the way does. Where the picture says he is inside something (a deck or stairs within a
+     building's outline) the plain cast is kept. */
+  castAir(ox, oy, oz, dx, dy, dz, tmin, tmax) {
+    const base = Combat.prototype.cast, Hh = this.g.heli && this.g.heli.heights; let h = base.call(this, ox, oy, oz, dx, dy, dz, tmin, tmax); if (!Hh || typeof Hh.top !== 'function') return h;
+    const top = (t) => Hh.top(ox + dx * t, oy + dy * t, 1e4), t0 = Math.max(tmin, 0.3); if (top(t0) > oz + dz * t0 + 0.05) return h;
+    for (let i = 0; i < 12 && h.kind === 'wall'; i++) { const b = h.t, z = oz + dz * b; if (z < 2.2 || Math.max(top(b - 0.5), top(b + 0.5)) > z - 0.2) break; h = base.call(this, ox, oy, oz, dx, dy, dz, b + 0.05, tmax); this.stats.airOver = (this.stats.airOver || 0) + 1; }
+    const end = Math.min(h.t, 160); for (let t = t0 + 0.6; t < end; t += 0.6) { const z = oz + dz * t; if (z < 0.7) break; if (!(top(t) > z + 0.05)) continue;
+      let lo = t - 0.6, hi = t; for (let k = 0; k < 6; k++) { const m = (lo + hi) / 2; if (top(m) > oz + dz * m + 0.05) hi = m; else lo = m; }
+      const flat = dz < -0.02 && top(hi) - (oz + dz * hi) < 0.6; h.kind = 'wall'; h.t = hi; h.x = ox + dx * hi; h.y = oy + dy * hi; h.z = oz + dz * hi; h.nx = flat ? 0 : -dx; h.ny = flat ? 0 : -dy; h.nz = flat ? 1 : 0; h.obj = null; h.part = undefined; this.stats.airRoof = (this.stats.airRoof || 0) + 1; break; }
+    return h;
+  }
+  /* gameplay/takeover fire: a gun from a seat that is not a wheel. (1) A bus passenger, standing or seated (?busfire=0): any gun, fired from his own eyes (the view aboard is his own), the gun
+     drawn low at the right of the picture; his own bus does not stop the round. (2) Flying the helicopter (?helifire=0): the pistol or the SMG, only once he has picked it WITH ITS KEY while
+     seated (2 / 3; Q puts it away), so a gun that was out when he boarded changes nothing; then the left mouse button fires it from the door on the side he aims at and R reloads it, and the
+     rockets stay on Enter (heli/rockets.js). Both run on the at-the-wheel path below (driveFire): no stance, no pose, a cross in the middle of the picture. */
+  seatGun() { const g = this.g, pl = g.player, h = g.heli, b = pl.busy; if (this.dead || (g.fly && g.fly.on) || this.slot === 'unarmed') return null;
+    if (b) return this.BUSFIRE && b.bus && b.kind === 'bus' && g.bus && g.bus.ride && g.bus.ride.B ? 'bus' : null;
+    if (h && h.piloted && !h.busy) return this.HELIFIRE && this.heliSel && (this.slot === 'pistol' || this.slot === 'smg') ? 'heli' : null;
+    return null; }
+  heliGun() { return this.seatGun() === 'heli'; }
+  seatMuzzle() { const g = this.g, cam = g.world.camera, d = cam.getWorldDirection(new THREE.Vector3()), k = this.seatGun();
+    if (k === 'heli') { const f = g.heli.f, r = (this._sr ||= new THREE.Vector3()).set(0, 0, 1).applyQuaternion(f.quat), side = d.dot(r) >= 0 ? 1 : -1;      /* (the model's +z is the pilot's door side: heli.js doorPoint) */
+      return { v: null, d, seat: k, p: new THREE.Vector3().set(0.35, -0.1, 0).applyQuaternion(f.quat).add(f.pos).addScaledVector(r, side * 1.25) }; }
+    const B = g.bus.ride.B, r = (this._sr ||= new THREE.Vector3()).crossVectors(d, UP).normalize(), u = (this._su ||= new THREE.Vector3()).crossVectors(r, d);
+    return { v: B.c || B.v || null, d, seat: k, fp: true, p: new THREE.Vector3().copy(cam.position).addScaledVector(d, 0.55).addScaledVector(r, 0.17).addScaledVector(u, -0.13) }; }
   /* gameplay/takeover 2, Nov 17 (Matt: "I should be able to shoot anywhere"): at the wheel of a car or on a motorcycle the pistol and the SMG fire (?drivefire=0: no gun in a
      vehicle, as before). canCarry stays false there, so nothing of the gun on foot runs: no stance, no shoulder camera, no arm pose, no sights, and the gun is not drawn in his
      hand. The left mouse button fires at the middle of the picture (a small cross is drawn there), the round leaving from beside the driver's window on the side the aim is on
      (on a bike: from in front of the rider); his own vehicle does not stop it. 2 / 3 / Q pick the gun, R reloads. The controller is not read (RT is the gas). */
-  driveGun() { const g = this.g, pl = g.player, v = pl.vehicle, h = g.heli; if (!this.DRIVEFIRE || !v || !v.def || pl.busy || this.dead || (g.fly && g.fly.on) || (h && (h.piloted || h.busy || h.hasCamera))) return null; return this.slot === 'pistol' || this.slot === 'smg' ? this.slot : null; }
-  driveMuzzle() { const g = this.g, v = g.player.vehicle, d = g.world.camera.getWorldDirection(new THREE.Vector3()), ax = d.x, ay = -d.z, al = Math.hypot(ax, ay) || 1, c = Math.cos(v.h), s = Math.sin(v.h), z0 = v.z || 0;
+  driveGun() { const g = this.g, pl = g.player, v = pl.vehicle, h = g.heli; if (!v && this.seatGun()) return this.slot;      /* fire: a bus passenger, the helicopter's pilot */ if (!this.DRIVEFIRE || !v || !v.def || pl.busy || this.dead || (g.fly && g.fly.on) || (h && (h.piloted || h.busy || h.hasCamera))) return null; return this.slot === 'pistol' || this.slot === 'smg' ? this.slot : null; }
+  driveMuzzle() { if (!this.g.player.vehicle) return this.seatMuzzle(); const g = this.g, v = g.player.vehicle, d = g.world.camera.getWorldDirection(new THREE.Vector3()), ax = d.x, ay = -d.z, al = Math.hypot(ax, ay) || 1, c = Math.cos(v.h), s = Math.sin(v.h), z0 = v.z || 0;
     if (v.moto) return { v, d, p: new THREE.Vector3(v.x + (ax / al) * 0.55, z0 + 1.25, -(v.y + (ay / al) * 0.55)) };
     const lat = (ax * -s + ay * c) / al, side = lat >= 0 ? 1 : -1, fwd = +((g.kit.seats && g.kit.seats[v.type]) || [0])[0] || 0, wid = v.def.wid || 1.85, hgt = v.def.hgt || 1.45, out = wid / 2 + 0.12, yw = Math.min(1.25, hgt * 0.74);
     if (this.DRIVEGUN && hgt <= 1.9) {      /* gameplay/takeover 3: the gun is in his left hand at the driver's window whichever way he aims; aimed to the right the hand goes up and fires across the roof */
@@ -190,11 +221,11 @@ export class Combat {
   /* gameplay/takeover 3: the gun drawn at the window for 1.6 s from a shot (called from pose() each drawn frame), its muzzle on driveMuzzle's point, and the driver's left
      hand sent to its grip through game.entry.gunHand (entry.js's seated pose; car frame: x ahead, y up, z right). On a motorcycle the gun is drawn, the arm is not moved. */
   driveShow(gun) {
-    const g = this.g, E = g.entry, since = this.t - (this.dvT ?? -9); if (!this.DRIVEGUN || !gun || !this.driveGun() || !(since < 1.6)) { if (E && E.gunHand) E.gunHand = null; this.dvOn = false; return false; }
+    const g = this.g, E = g.entry, since = this.t - (this.dvT ?? -9); const fp = !g.player.vehicle && this.seatGun() === 'bus';      /* fire: aboard a bus the gun is in the picture for as long as it is out */ if (!(this.DRIVEGUN || fp) || !gun || !this.driveGun() || !(since < 1.6 || fp)) { if (E && E.gunHand) E.gunHand = null; this.dvOn = false; return false; }
     if (!this.dvOn) { this.dvOn = true; this.dvT0 = this.t; }
     const M = this.driveMuzzle(), v = M.v, d = M.d, zx = (this._dz ||= new THREE.Vector3()).crossVectors(d, UP).normalize(), yx = (this._dy ||= new THREE.Vector3()).crossVectors(zx, d);
     gun.quaternion.setFromRotationMatrix((this._dm ||= new THREE.Matrix4()).makeBasis(d, yx, zx)); gun.position.copy(M.p).sub((this._dp ||= new THREE.Vector3()).copy(gun.userData.muzzle || zx.set(0, 0, 0)).applyQuaternion(gun.quaternion)); gun.visible = true;
-    if (E && M.arm && !v.moto) { const G = (E.gunHand ||= { p: new THREE.Vector3(), f: new THREE.Vector3(), n: new THREE.Vector3(), k: 0 }), c = Math.cos(v.h), s = Math.sin(v.h), wx = gun.position.x - v.x, wy = -gun.position.z - v.y;
+    if (E && M.arm && v && !v.moto) { const G = (E.gunHand ||= { p: new THREE.Vector3(), f: new THREE.Vector3(), n: new THREE.Vector3(), k: 0 }), c = Math.cos(v.h), s = Math.sin(v.h), wx = gun.position.x - v.x, wy = -gun.position.z - v.y;
       G.p.set(wx * c + wy * s, gun.position.y - (v.z || 0), wx * s - wy * c); G.f.set(d.x * c - d.z * s, d.y, d.x * s + d.z * c).normalize(); G.n.crossVectors(G.f, UP).normalize(); G.k = clamp(Math.min((this.t - this.dvT0) / 0.1, (1.6 - since) / 0.25), 0, 1); }
     else if (E && E.gunHand) E.gunHand = null;
     return true;
@@ -204,7 +235,7 @@ export class Combat {
     if (K.reload && !this.rel && am.mag < W.mag && am.reserve > 0) this.startReload(); K.reload = false; if (this.rel) this.stepReload(dt);
     K.tap = Math.max(0, (K.tap || 0) - dt);
     if (K.fire || K.tap > 0) {
-      if (!this.rel && this.fireCd <= 0 && (W.auto || !this.pressed)) { if (am.mag > 0) { const C = this.g.cam, y0 = C.yaw, p0 = C.pitch; this._dv = this.driveMuzzle(); try { if (this.DRIVEGUN) { this.dvT = this.t; this.shoot((this._Wd ||= {})[this.slot] ||= Object.assign({}, W, { tracer: 1 }), am); const p = this._dv.p, d = this._dv.d, F = this.fx;      /* takeover 3: seen from the chase camera 6 to 8 m off, not from over the shoulder: every round a tracer, a flash four times the size for 0.12 s, a light that reaches the car's side */ F.spawn({ mz: 1, add: true, x: p.x + d.x * 0.12, y: p.y + d.y * 0.12, z: p.z + d.z * 0.12, life: 0.12, s0: 0.85, s1: 0.3, r: 9, g: 5.2, b: 1.9, r1: 5, g1: 1.6, b1: 0.3, a: 1, frame: 4 + (this.shots & 1), fade: 0.7 }); F.lightI *= 1.8; F.light.distance = 6; this.stats.driveFlash = (this.stats.driveFlash || 0) + 1; } else this.shoot(W, am); } finally { this._dv = null; C.yaw = y0; C.pitch = p0; this.give = 0; } this.stats.drive = (this.stats.drive || 0) + 1; } else { if (!this.pressed) this.snd('dry'); if (am.reserve > 0) this.startReload(); } }
+      if (!this.rel && this.fireCd <= 0 && (W.auto || !this.pressed)) { if (am.mag > 0) { const C = this.g.cam, y0 = C.yaw, p0 = C.pitch; this._dv = this.driveMuzzle(); try { if (this.DRIVEGUN && !this._dv.fp) { this.dvT = this.t; this.shoot((this._Wd ||= {})[this.slot] ||= Object.assign({}, W, { tracer: 1 }), am); const p = this._dv.p, d = this._dv.d, F = this.fx;      /* takeover 3: seen from the chase camera 6 to 8 m off, not from over the shoulder: every round a tracer, a flash four times the size for 0.12 s, a light that reaches the car's side */ F.spawn({ mz: 1, add: true, x: p.x + d.x * 0.12, y: p.y + d.y * 0.12, z: p.z + d.z * 0.12, life: 0.12, s0: 0.85, s1: 0.3, r: 9, g: 5.2, b: 1.9, r1: 5, g1: 1.6, b1: 0.3, a: 1, frame: 4 + (this.shots & 1), fade: 0.7 }); F.lightI *= 1.8; F.light.distance = 6; this.stats.driveFlash = (this.stats.driveFlash || 0) + 1; } else { this.dvT = this.t; this.shoot(W, am); } } finally { if (this._dv.seat) this.stats[this._dv.seat + 'Fire'] = (this.stats[this._dv.seat + 'Fire'] || 0) + 1; this._dv = null; C.yaw = y0; C.pitch = p0; this.give = 0; } this.stats.drive = (this.stats.drive || 0) + 1; } else { if (!this.pressed) this.snd('dry'); if (am.reserve > 0) this.startReload(); } }
       this.pressed = true; K.tap = 0;
     } else this.pressed = false;
   }
@@ -219,7 +250,8 @@ export class Combat {
     if (this.script) this.script.drive(dt, I, K); else { const P = this.padRead(K); K.aim = !!K.maim || P.aim; K.fire = !!K.mfire || P.fire; }      /* mouse buttons or the controller's triggers */
     if (K.wheel) { const i = ORDER.indexOf(this.swap ? this.swap.to : this.slot); K.want = ORDER[((i < 0 ? 0 : i) + (K.wheel > 0 ? 1 : ORDER.length - 1)) % ORDER.length]; K.wheel = 0; }
     if (this.DRIVEGUN && this.DRIVEFIRE && K.fire && !this.pressed && !K.want && !this.swap && pl.vehicle && pl.vehicle.def && !pl.busy && !this.dead && !this.driveGun() && this.t > 1) { K.want = this.last === 'smg' && this.ammo.smg ? 'smg' : 'pistol'; K.tap = 0.9; }      /* gameplay/takeover 3: the fire button at the wheel with no hand gun out draws one (the rifle and the shotgun stay refused there) */
-    if (K.want) { if (this.canCarry() || (this.DRIVEFIRE && pl.vehicle && !pl.busy && (K.want === 'pistol' || K.want === 'smg' || K.want === 'unarmed'))) this.equip(K.want); K.want = null; }
+    { const hp = !!(g.heli && g.heli.piloted); if (!hp) this.heliSel = false; else if (K.want && this.HELIFIRE && (K.want === 'pistol' || K.want === 'smg' || K.want === 'unarmed') && !g.heli.busy && !this.dead) { this.heliSel = K.want !== 'unarmed'; this.equip(K.want); K.want = null; } }      /* fire: in the helicopter a hand gun is his only once picked there */
+    if (K.want) { if (this.canCarry() || (this.BUSFIRE && pl.busy && pl.busy.bus && pl.busy.kind === 'bus') || (this.DRIVEFIRE && pl.vehicle && !pl.busy && (K.want === 'pistol' || K.want === 'smg' || K.want === 'unarmed'))) this.equip(K.want); K.want = null; }
     const armed = this.armedFoot();
     if (armed) {
       // the look: slower through the sights, and the camera may look up as far as down
@@ -463,6 +495,7 @@ export class Combat {
     return hit;
   }
   cast(ox, oy, oz, dx, dy, dz, tmin, tmax) {
+    if (this.AIRFIRE && oz > 2.5 && !this._air && this.g.player.alt > 2 && !this.g.player.vehicle) { this._air = true; try { return this.castAir(ox, oy, oz, dx, dy, dz, tmin, tmax); } finally { this._air = false; } }      /* fire: above the street the roofs count (castAir) */
     const g = this.g, st = g.statics, H = { kind: 'none', t: tmax, x: ox + dx * tmax, y: oy + dy * tmax, z: oz + dz * tmax, nx: -dx, ny: -dy, nz: -dz };
     const take = (t, kind, nx, ny, nz, obj, part) => { if (t < tmin || t >= H.t) return; H.t = t; H.kind = kind; H.x = ox + dx * t; H.y = oy + dy * t; H.z = oz + dz * t; H.nx = nx; H.ny = ny; H.nz = nz; H.obj = obj; H.part = part; };
     // ground (the kerb is 15 cm up)
