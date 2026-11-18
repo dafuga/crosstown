@@ -89,7 +89,7 @@ export function addRockets(heli, ctx) {
     if (S.reload > 0) { S.reload -= dt; if (S.reload <= 0) { S.ammo = CLIP; S.reload = 0; } }
     const fl = flying();
     if (fl) {
-      aimUpdate(); let want = pressed.size > 0;
+      aimUpdate(); let want = pressed.size > 0; if (want && g.combat && g.combat.heliGun && g.combat.heliGun()) want = pressed.has('Enter') || pressed.has('NumpadEnter');      /* gameplay/takeover fire: with a hand gun picked in the seat the mouse and R are the gun's; the rockets stay on Enter (?helifire=0 = as before) */
       const gp = g.padui && g.padui.pad ? g.padui.pad() /* gameplay/pad: the pad in use, not slot 0 only */ : navigator.getGamepads ? navigator.getGamepads()[0] : null; if (gp && gp.buttons[0] && gp.buttons[0].pressed) want = true;
       if (S.shoot) { want = true; S.shoot = false; }
       if (want) fire();

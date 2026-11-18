@@ -25,7 +25,9 @@ export async function install(game) {
   // every other map keeps assets/subway/ untouched. ?subeast=0, or the folder missing, falls back to it (the play-area filter below then drops what lies outside).
   let DIR = 'assets/subway/', data = null; const cm = (g.city && g.city.meta) || (w.city && w.city.meta) || {};
   // (handover-18: the map with the west column, set 'west', = nine areas, has assets/subway/west/, which holds the east stations too; ?subwest=0 falls back to east/)
-  for (const n of ['west', 'east']) { if (data || !(cm.sets || []).some((q) => q && q.set === n) || P.get('sub' + n) === '0') continue; try { const r = await fetch(DIR + n + '/subway.json'); if (r.ok) { data = await r.json(); DIR += n + '/'; } else console.log('[subway] no ' + n + ' data (' + r.status + '): a smaller set is used'); } catch (e) { data = null; } }
+  /* (Nov 17: the uptown map, ?map=uptown, whose sets are named u2f, u3e, ...: assets/subway/uptown/, every real entrance from W 59th St to 135th St inside the areas that map draws; its stations are not built yet: stairs down to a shut gate. ?subuptown=0 = the plain set) */
+  const hasSet = (n) => (cm.sets || []).some((q) => q && (n === 'uptown' ? /^u\d/.test(q.set || '') : q.set === n));
+  for (const n of ['uptown', 'west', 'east']) { if (data || !hasSet(n) || P.get('sub' + n) === '0') continue; try { const r = await fetch(DIR + n + '/subway.json'); if (r.ok) { data = await r.json(); DIR += n + '/'; } else console.log('[subway] no ' + n + ' data (' + r.status + '): a smaller set is used'); } catch (e) { data = null; } }
   if (!data) data = await (await fetch(DIR + 'subway.json')).json(); const meta = data.meta, EN = data.entrances; console.log('[subway] data: ' + DIR);
   const S = (g.subway = { data, units: new Map(), own: false, deep: false, z: 0, floor: null, unit: null, fails: 0, stats: { built: 0, dropped: 0, buildMs: 0 }, K });
   // other parts of the lane (riders, voice, police) listen here: S.on(name, fn). Names: unit (u), drop (u), enter (u, entrance), leave, deep (on), board (t), alight (t), hop (from unit, to unit, t),
