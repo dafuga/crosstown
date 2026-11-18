@@ -33,6 +33,7 @@ export async function init(game) {
   Object.assign(park, { on: true, src, index: src.index, outline: src.index.outline, owns: game.terrain.owns, terrain: game.terrain });
   for (const c of src.index.chunks) park.chunks.set(c.id, { c, id: c.id, i: c.i, j: c.j, state: 0, busy: false });
   game.park = park; console.log('[game] park: ' + src.index.chunks.length + ' chunks' + (src.index.test ? ' (TEST data)' : ''));
+  try { (await import('./cityprops.js')).install(game, park); } catch (e) { console.log('[game] park: city props not dropped: ' + (e && e.message)); }      /* handoff-19: the city's bins, hydrants, meters and news boxes do not stand inside the park (?parkfaults=0 = as before) */
   return park;
 }
 

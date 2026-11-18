@@ -133,7 +133,7 @@ export async function makeLook(game, opts = {}) {
       Object.assign(sh.uniforms, shared, U);
       sh.vertexShader = sh.vertexShader
         .replace('#include <common>', `#include <common>
-          attribute vec4 aVar; ${o.glass ? '' : 'attribute vec4 aFx; varying vec4 vFx; varying vec2 vTuv;'} varying vec4 vVar; varying vec4 vFlag; varying vec2 vBl; varying vec3 vOPos; varying vec3 vWPos; varying vec3 vWNrm;`)
+          attribute vec4 aVar; ${o.glass ? '' : 'attribute vec4 aFx; varying vec4 vFx; varying vec2 vTuv;'} flat varying vec4 vVar; varying vec4 vFlag; varying vec2 vBl; varying vec3 vOPos; varying vec3 vWPos; varying vec3 vWNrm;`)
         .replace('#include <begin_vertex>', `#include <begin_vertex>
           vVar = aVar; vOPos = position; vFlag = vec4(mod(aVar.z, 2.0), mod(floor(aVar.z / 2.0), 2.0), mod(floor(aVar.z / 4.0), 2.0), mod(floor(aVar.z / 8.0), 2.0)); vBl = vec2(mod(floor(aVar.z / 16.0), 2.0), mod(floor(aVar.z / 32.0), 2.0));     // brake, +SELECT, stop requested, the player's bus; right and left turn lamps lit
           ${o.glass ? '' : 'vFx = aFx; vTuv = uv; if (aFx.w > 7.5 && aFx.w < 8.5) vTuv.x += 0.25 * vFlag.y;'}
@@ -145,7 +145,7 @@ export async function makeLook(game, opts = {}) {
           vWPos = (busM * vec4(position, 1.0)).xyz; vWNrm = normalize(mat3(busM) * normal);`);
       let f = sh.fragmentShader
         .replace('#include <common>', `#include <common>
-          ${o.glass ? '' : 'varying vec4 vFx; varying vec2 vTuv; uniform sampler2D tBus; uniform sampler2D tBusSign;'} varying vec4 vVar; varying vec4 vFlag; varying vec2 vBl; varying vec3 vOPos; varying vec3 vWPos; varying vec3 vWNrm;
+          ${o.glass ? '' : 'varying vec4 vFx; varying vec2 vTuv; uniform sampler2D tBus; uniform sampler2D tBusSign;'} flat varying vec4 vVar; varying vec4 vFlag; varying vec2 vBl; varying vec3 vOPos; varying vec3 vWPos; varying vec3 vWNrm;
           uniform sampler2D tLight; uniform vec2 uHalf; uniform vec3 uSunColor; uniform float uShadowFar; uniform vec3 uShadowCenter; uniform vec3 uSunDir; uniform samplerCube tBusStreet; uniform float uBusStreet;
           ${NOISE_GLSL}
           // what paint and glass mirror where the game has no picture of the street to give: the streets lane's made-up street (vehicles.js vehEnv)
@@ -180,6 +180,13 @@ export async function makeLook(game, opts = {}) {
               float cov = texture2D(tBus, vec2((832.0 + (dg + fract(vTuv.x)) * 64.0) / 2048.0, 1.0 - (1664.0 + (1.0 - vTuv.y) * 96.0) / 2048.0)).r;
               diffuseColor.rgb = mix(diffuseColor.rgb, dot(diffuseColor.rgb, vec3(0.3, 0.6, 0.1)) > 0.25 ? vec3(0.015) : vec3(0.9), cov);
             } else if (vTuv.x > -0.5) diffuseColor.rgb *= texture2D(tBus, vTuv).rgb;
+            // Pixel coverage of the five 12 mm joints in the centre ceiling.
+            if (kind > 2.2 && kind < 2.3 && abs(vOPos.z) < 0.725) {
+              float centre = clamp(round((vOPos.x + 3.45) / 1.8), 0.0, 4.0) * 1.8 - 3.45;
+              float dx = vOPos.x - centre, footprint = max(fwidth(vOPos.x), 0.0001);
+              float overlap = min(dx + footprint * 0.5, 0.006) - max(dx - footprint * 0.5, -0.006);
+              diffuseColor.rgb *= 1.0 - 0.72 * clamp(overlap / footprint, 0.0, 1.0);
+            }
             if (kind > 9.5) {      // riders: dark November coats, trousers, skin, each from the rider's own number (below 1: the driver's uniform)
               float h1 = hash11(vVar.x * 1.37), h2 = hash11(vVar.x * 2.91 + 5.0);
               vec3 cc = h1 < 0.38 ? vec3(0.012, 0.012, 0.014) : h1 < 0.55 ? vec3(0.015, 0.022, 0.05) : h1 < 0.68 ? vec3(0.045, 0.05, 0.03) : h1 < 0.78 ? vec3(0.09, 0.02, 0.025) : h1 < 0.9 ? vec3(0.07, 0.07, 0.075) : vec3(0.22, 0.15, 0.08);

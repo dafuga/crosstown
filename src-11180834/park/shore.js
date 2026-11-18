@@ -4,9 +4,14 @@
 import * as THREE from 'three';
 import { lit } from './mat.js';
 import { BASE } from './ground.js';
+import { CELL } from './terrain.js';
 
 const hash = (x, y) => { const v = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return v - Math.floor(v); };
 let KIT = null;
+// park faults (Nov 18, ?parkfaults=0 = as before): a water's whole shore is built when its FIRST chunk loads, and T.ground gives 0 (the street's level) for a
+// chunk whose heights are not in yet: stones and reeds of the other chunks stood at 0, metres over the water (two rocks in the air over the Lake). Now a
+// chunk without heights answers the water's level, and the stones and reeds are placed again when the set of the body's chunks with heights changes.
+const FIX = !(typeof location !== 'undefined' && new URLSearchParams(location.search).get('parkfaults') === '0');
 const REED_OLD = typeof location !== 'undefined' && new URLSearchParams(location.search).get('parkreed') === '0';
 function kit(game, S) {
   if (KIT) return KIT;
@@ -45,15 +50,19 @@ export function build(game, S, a, level, skip) {
         /* critic r2 (Nov 17): tufts stood up to 1.1 m out on open water, bright yellow, "like stickers". Now: on the bank and the first half-metre of
            shallows only, and only where a bank rises within 1.5 m (the data's ground at the water is the water's level), three to a clump. ?parkreed=0 = as before */
         if (stand > 0.74 && h < 0.45) { if (REED_OLD) { const o = -0.2 + h2 * 1.3; reeds.push([x + nx * o, y + ny * o, o, h, h2]); }
-          else if (Math.max(T.ground(x - nx * 0.8, y - ny * 0.8), T.ground(x - nx * 1.5, y - ny * 1.5)) > level + 0.12) for (let c3 = 0; c3 < 3; c3++) { const ha = hash(x + c3 * 3.7, y - c3 * 1.9), hb = hash(y + c3 * 2.3, x + c3 * 5.1), o = -0.45 + ha * 0.9; reeds.push([x + nx * o + ux * (hb - 0.5) * 0.7, y + ny * o + uy * (hb - 0.5) * 0.7, o, ha, hb]); } }
+          else if (FIX || Math.max(T.ground(x - nx * 0.8, y - ny * 0.8), T.ground(x - nx * 1.5, y - ny * 1.5)) > level + 0.12) for (let c3 = 0; c3 < 3; c3++) { const ha = hash(x + c3 * 3.7, y - c3 * 1.9), hb = hash(y + c3 * 2.3, x + c3 * 5.1), o = -0.45 + ha * 0.9; reeds.push([x + nx * o + ux * (hb - 0.5) * 0.7, y + ny * o + uy * (hb - 0.5) * 0.7, o, ha, hb, x - nx * 0.8, y - ny * 0.8, x - nx * 1.5, y - ny * 1.5]); } }      /* FIX: the bank test waits for the heights (reedM) */
         const rocky = 0.5 + 0.5 * Math.sin(run * 0.11 + 4.0) * Math.sin(run * 0.031 + 0.4);
         if (h2 < (rocky > 0.7 ? 0.35 : 0.05)) { const o = -0.7 + h * 1.4; stones.push([x + nx * o, y + ny * o, o, h, h2]); } } } }
   const m4 = new THREE.Matrix4(), q4 = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), sc = new THREE.Vector3(), c = new THREE.Color();
-  const yAt = (x, y, o) => BASE + (o > 0 ? level : Math.max(level, T.ground(x, y)));
-  if (reeds.length) { const im = new THREE.InstancedMesh(K.reedGeo, K.reedMat, reeds.length); im.name = 'park_reeds'; reeds.forEach((t, k) => { const hgt = 0.5 + t[3] * 0.55, wd = 0.6 + t[4] * 0.5; e.set(0, t[3] * 6.283, 0); q4.setFromEuler(e); v.set(t[0], yAt(t[0], t[1], t[2]) - 0.12, -t[1]); sc.set(wd, hgt, wd); im.setMatrixAt(k, m4.compose(v, q4, sc)); const g = REED_OLD ? 0.20 + 0.12 * t[4] : 0.075 + 0.04 * t[4]; im.setColorAt(k, REED_OLD ? c.setRGB(g, g * (0.80 + 0.08 * t[3]), g * 0.62) : c.setRGB(g, g * (1.0 + 0.08 * t[3]), g * 1.45));      /* Nov 17: 0.20-0.32 on the tan picture came to four times the lawn's albedo in red: bright yellow. Now on the lawn's scale, greyer */      /* dull tan-brown: dry November sedge, knee to waist high */ });
+  const G = FIX ? (x, y) => (!T.inBox(x, y) || T.get(Math.floor(x / CELL), Math.floor(y / CELL)) ? T.ground(x, y) : level) : T.ground;
+  const yAt = (x, y, o) => BASE + (o > 0 ? level : Math.max(level, G(x, y)));
+  const reedM = (t) => { const hgt = 0.5 + t[3] * 0.55, wd = 0.6 + t[4] * 0.5; e.set(0, t[3] * 6.283, 0); q4.setFromEuler(e); v.set(t[0], yAt(t[0], t[1], t[2]) - 0.12, -t[1]); if (t.length < 9 || Math.max(G(t[5], t[6]), G(t[7], t[8])) > level + 0.12) sc.set(wd, hgt, wd); else sc.set(0, 0, 0); return m4.compose(v, q4, sc); };
+  const stoneM = (t) => { const s = 0.25 + t[3] * t[3] * 0.95; e.set((t[4] - 0.5) * 0.5, t[3] * 6.283, (t[3] - 0.5) * 0.5); q4.setFromEuler(e); v.set(t[0], yAt(t[0], t[1], t[2]) + s * 0.08, -t[1]); sc.set(s * (1.1 + t[4] * 0.7), s * (0.45 + t[3] * 0.35), s * (0.9 + t[4] * 0.4)); return m4.compose(v, q4, sc); };
+  let reedIm = null, stoneIm = null;
+  if (reeds.length) { const im = new THREE.InstancedMesh(K.reedGeo, K.reedMat, reeds.length); im.name = 'park_reeds'; reedIm = im; reeds.forEach((t, k) => { im.setMatrixAt(k, reedM(t)); const g = REED_OLD ? 0.20 + 0.12 * t[4] : 0.075 + 0.04 * t[4]; im.setColorAt(k, REED_OLD ? c.setRGB(g, g * (0.80 + 0.08 * t[3]), g * 0.62) : c.setRGB(g, g * (1.0 + 0.08 * t[3]), g * 1.45));      /* Nov 17: 0.20-0.32 on the tan picture came to four times the lawn's albedo in red: bright yellow. Now on the lawn's scale, greyer */      /* dull tan-brown: dry November sedge, knee to waist high */ });
     im.instanceMatrix.needsUpdate = true; im.instanceColor.needsUpdate = true; im.computeBoundingSphere(); im.castShadow = true; group.add(im); }
   const colliders = game.P.get('parkcol') !== '0' ? (group.userData.stones = []) : null;
-  if (stones.length) { const im = new THREE.InstancedMesh(K.sg, K.stoneMat, stones.length); im.name = 'park_shore_stones'; stones.forEach((t, k) => { const s = 0.25 + t[3] * t[3] * 0.95; e.set((t[4] - 0.5) * 0.5, t[3] * 6.283, (t[3] - 0.5) * 0.5); q4.setFromEuler(e); v.set(t[0], yAt(t[0], t[1], t[2]) + s * 0.08, -t[1]); sc.set(s * (1.1 + t[4] * 0.7), s * (0.45 + t[3] * 0.35), s * (0.9 + t[4] * 0.4)); im.setMatrixAt(k, m4.compose(v, q4, sc));
+  if (stones.length) { const im = new THREE.InstancedMesh(K.sg, K.stoneMat, stones.length); im.name = 'park_shore_stones'; stoneIm = im; stones.forEach((t, k) => { im.setMatrixAt(k, stoneM(t));
       if (colliders) {
         // Project the tilted, nonuniformly scaled mesh onto the ground once at load.
         const a = m4.elements;
@@ -71,5 +80,14 @@ export function build(game, S, a, level, skip) {
     });
     im.instanceMatrix.needsUpdate = true; im.computeBoundingSphere(); im.castShadow = true; im.receiveShadow = true; group.add(im); }
   group.userData.counts = { reeds: reeds.length, stones: stones.length };
+  if (FIX && (reedIm || stoneIm)) {      /* placed again when one of the body's chunks gets (or loses) its heights; the colliders are circles on the plan and do not move */
+    const keys = new Set(), add = (x, y) => { if (T.inBox(x, y)) keys.add(Math.floor(x / CELL) * 4096 + Math.floor(y / CELL)); };
+    for (const t of stones) add(t[0], t[1]); for (const t of reeds) { add(t[0], t[1]); if (t.length >= 9) { add(t[5], t[6]); add(t[7], t[8]); } }
+    const K2 = [...keys], sig = () => { let s = ''; for (let k = 0; k < K2.length; k++) s += T.chunks.has(K2[k]) ? '1' : '0'; return s; }; let last = sig();
+    const U = group.userData; U.replaced = 0; U.chunks = K2.length;
+    const check = () => { const now = sig(); if (now === last) return; last = now; U.replaced++;
+      if (reedIm) { reeds.forEach((t, k) => reedIm.setMatrixAt(k, reedM(t))); reedIm.instanceMatrix.needsUpdate = true; reedIm.computeBoundingSphere(); }
+      if (stoneIm) { stones.forEach((t, k) => stoneIm.setMatrixAt(k, stoneM(t))); stoneIm.instanceMatrix.needsUpdate = true; stoneIm.computeBoundingSphere(); } };
+    U.recheck = check; if (reedIm) reedIm.onBeforeRender = check; if (stoneIm) stoneIm.onBeforeRender = check; }
   return group;
 }
