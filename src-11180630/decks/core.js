@@ -10,7 +10,9 @@ export const G = 9.81;
 export class Decks {
   constructor(list, cell = 32) {
     this.cell = cell; this.grid = new Map(); this.list = []; this.byId = new Map();
+    this.areas = []; this.agrid = new Map();     /* landmarks lane, Nov 18: AREA decks (a row with "poly"): one flat walkable surface, an outline with holes, at height z (the carrier's flight deck). Ribbons are untouched. */
     for (const src of list || []) {
+      if (Array.isArray(src.poly) && src.poly.length > 2) { this.addArea(src); continue; }
       const pts = (src.pts || []).map((p) => [+p[0], +p[1], +p[2] || 0]); if (pts.length < 2 || !(src.w > 0)) continue;
       const d = { id: src.id, name: src.name || src.id, kind: src.kind === 'walk' ? 'walk' : 'road', pts, w: +src.w, hw: src.w / 2, lanes: src.lanes || 1, oneway: !!src.oneway,
         rail: [!!(src.rail && src.rail[0]), !!(src.rail && src.rail[1])], join: [(src.join && src.join[0]) ?? null, (src.join && src.join[1]) ?? null], s: [0], segs: [], len: 0 };
@@ -32,6 +34,17 @@ export class Decks {
     }
     this.hit = null; this._l = { s: 0, off: 0, z: 0, px: 0, py: 0, tx: 1, ty: 0, slope: 0, d: 0, inside: false };
   }
+  // an area deck: { id, kind: 'walk', poly: [[x, y], ...], holes: [[[x, y], ...], ...], z }. A body's centre is carried anywhere inside the outline and
+  // outside every hole; its circle is kept r inside every edge (rails all round), except where a ribbon carries on at that height (the gangway).
+  addArea(src) {
+    const loops = [src.poly].concat(src.holes || []).map((Q) => Q.map((p) => [+p[0], +p[1]])), o = loops[0]; let x0 = 1e18, y0 = 1e18, x1 = -1e18, y1 = -1e18;
+    for (const p of o) { x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1]); }
+    const A = { id: src.id, name: src.name || src.id, kind: 'walk', area: true, loops, z: +src.z || 0, box: [x0, y0, x1, y1], rail: [true, true], zmax: +src.z || 0 }; this.areas.push(A); this.byId.set(A.id, A);
+    const c = this.cell; for (let i = Math.floor((x0 - 3) / c); i <= Math.floor((x1 + 3) / c); i++) for (let j = Math.floor((y0 - 3) / c); j <= Math.floor((y1 + 3) / c); j++) { const k = i * 100003 + j;
+      if (!this.grid.get(k)) this.grid.set(k, []); let a = this.agrid.get(k); if (!a) this.agrid.set(k, (a = [])); a.push(A); }
+  }
+  static inLoop(Q, x, y) { let c = false; for (let i = 0, j = Q.length - 1; i < Q.length; j = i++) { const a = Q[i], b = Q[j]; if ((a[1] > y) !== (b[1] > y) && x < (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0]) c = !c; } return c; }
+  onArea(A, x, y) { const b = A.box; if (x < b[0] || x > b[2] || y < b[1] || y > b[3] || !Decks.inLoop(A.loops[0], x, y)) return false; for (let i = 1; i < A.loops.length; i++) if (Decks.inLoop(A.loops[i], x, y)) return false; return true; }
   // the decks that may be over or under (x, y): undefined almost everywhere (one map lookup)
   near(x, y) { return this.grid.get(Math.floor(x / this.cell) * 100003 + Math.floor(y / this.cell)); }
   // height of deck d's surface at distance s along it (held flat past either end)
@@ -61,6 +74,7 @@ export class Decks {
       const l = this.locate(d, x, y); if (!l.inside || l.d > d.hw) continue;
       if (l.z <= lim && l.z > top) { top = l.z; this.hit = d; }
     }
+    if (kind !== 'car' && this.areas.length) { const B = this.agrid.get(Math.floor(x / this.cell) * 100003 + Math.floor(y / this.cell)); if (B) for (const A of B) if (A.z <= lim && A.z > top && this.onArea(A, x, y)) { top = A.z; this.hit = A; } }
     return top;
   }
   // rails: a circle (x, y, r) of a body riding at height z is kept inside the railed sides of its deck. Fills out like StaticWorld.resolve
@@ -80,6 +94,14 @@ export class Decks {
       if (open) continue;
       out.x = px + nx * over; out.y = py + ny * over; out.nx = nx; out.ny = ny; out.depth = Math.max(out.depth, over); out.tag = 'rail'; n++;
     }
+    if (kind !== 'car' && this.areas.length) { const B = this.agrid.get(Math.floor(out.x / this.cell) * 100003 + Math.floor(out.y / this.cell));
+      if (B) for (const A of B) { if (Math.abs(A.z - z) > 1) continue;
+        for (let pass = 0; pass < 3; pass++) { if (!this.onArea(A, out.x, out.y)) break;      // off the area (on the gangway, or in the air): nothing to hold
+          let best = r, bx = 0, by = 0;      // the nearest edge point within r, over the outline and the holes
+          for (const Q of A.loops) for (let i = 0, j = Q.length - 1; i < Q.length; j = i++) { const p = Q[j], q = Q[i], dx = q[0] - p[0], dy = q[1] - p[1], l2 = dx * dx + dy * dy || 1, t = Math.max(0, Math.min(1, ((out.x - p[0]) * dx + (out.y - p[1]) * dy) / l2)), ex = p[0] + dx * t, ey = p[1] + dy * t, dd = Math.hypot(out.x - ex, out.y - ey); if (dd < best) { best = dd; bx = ex; by = ey; } }
+          if (best >= r) break; const dd = best || 1e-6, nx = (out.x - bx) / dd, ny = (out.y - by) / dd, qx = bx - nx * 0.3, qy = by - ny * 0.3; let open = false;      // a ribbon carrying on just past the edge at this height: no rail there
+          if (a) for (const e of a) { const m = this.locate(e, qx, qy, this._m ||= {}); if (m.inside && m.d <= e.hw && Math.abs(m.z - z) <= 1) { open = true; break; } }
+          if (open) break; out.x = bx + nx * r; out.y = by + ny * r; out.nx = nx; out.ny = ny; out.depth = Math.max(out.depth, r - best); out.tag = 'rail'; n++; } } }
     return n;
   }
   // the solid low part of a deck, for a body on the street (height z): where the surface is more than STEP above it and lower than

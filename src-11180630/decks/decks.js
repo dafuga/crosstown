@@ -18,7 +18,7 @@ const FAR = 1e6;
 export async function install(game, file) {     /* penn lane, Nov 17: file = another data file in assets/decks/ (decks-penn.json: the post office steps) */
   const g = game, P = g.P; if (g.decks || (P && P.get('decks') === '0')) return g.decks || null;
   let data = null;
-  try { const r = await fetch('assets/decks/' + (file || (P && P.get('decks') === 'test' ? 'test-decks.json' : 'decks.json'))); if (r.ok) data = await r.json(); } catch (e) {}
+  for (const f of [].concat(file || (P && P.get('decks') === 'test' ? 'test-decks.json' : 'decks.json'))) try { const r = await fetch('assets/decks/' + f); if (r.ok) { const j = await r.json(); if (j && Array.isArray(j.decks)) { if (!data) data = { decks: [] }; data.decks.push(...j.decks); } } } catch (e) {}     /* landmarks lane, Nov 18: file may be a LIST of data files; their rows are joined (the carrier's gangway and flight deck beside the post office steps). A file that is missing is skipped. */
   if (!data || !Array.isArray(data.decks) || !data.decks.length) return null;
   const D = new Decks(data.decks); if (!D.list.length) return null;
   const pl = g.player, st = g.statics, _o = {}, _ax = [0, 0];
