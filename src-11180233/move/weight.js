@@ -23,9 +23,10 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v)), lerp = (a, b, t) => a + 
 // scrub: speed taken off, m/s2, by a wheel held hard over well above vC (the speed a street corner is taken at, m/s; full by vC + vBand). townV: above this speed (m/s)
 // the scrub fades to `fast` of itself and the pedal is no longer cut. holdUp: how fast a held wheel builds the scrub, 1/s. cut: the share of the pedal a full scrub takes in town.
 // sq0, sq1: the share of the limit at which the tyres start to be heard and at which they squeal fully. sqMax: v.slip at a full squeal; sqScrub: more of it while scrubbing.
+// wet: the share of the grip a wet road takes (town speeds; handling.js's model above 50 km/h is not changed for rain).
 // lean, leanMax: extra body roll per m/s2 of sideways load, rad, and its most.
 // hA, hLowK, hLowMax, hLtUp, hLtMax, hLt: handling.js's numbers while this is on (its own are put back when it is switched off).
-export const TUNE = { g: 8.6, gMin: 6.2, gMax: 10.6, hb: 1.5, scrub: 5.0, vC: 6.9, vBand: 2.5, townV: 14.5, fast: 0.25, holdUp: 5, cut: 0.9, sq0: 0.74, sq1: 1.04, sqMax: 3.4, sqScrub: 2.4, lean: 0.0055, leanMax: 0.055, hA: 9.0, hLowK: 1.0, hLowMax: 9.6, hLtUp: 0.02, hLtMax: 0.04, hLt: 0.005 };
+export const TUNE = { g: 8.6, gMin: 6.2, gMax: 10.6, hb: 1.5, scrub: 5.0, vC: 6.9, vBand: 2.5, townV: 14.5, fast: 0.25, holdUp: 5, cut: 0.9, sq0: 0.74, sq1: 1.04, sqMax: 3.4, sqScrub: 2.4, lean: 0.0055, leanMax: 0.055, wet: 0.2, hA: 9.0, hLowK: 1.0, hLowMax: 9.6, hLtUp: 0.02, hLtMax: 0.04, hLt: 0.005 };
 const H_KEYS = { aLat: 'hA', lowK: 'hLowK', lowMax: 'hLowMax', ltUp: 'hLtUp', ltMax: 'hLtMax', lt: 'hLt' };
 
 export function install(g, Vehicle) {
@@ -46,7 +47,7 @@ export function install(g, Vehicle) {
     // not the player's own car on keys or a pad, or in a handbrake slide (drift.js's): the step below, untouched
     if (!W.on || W.err || !inp || inp.lock === undefined || !gg || !gg.player || this !== gg.player.vehicle || this.moto || this.patrol || this.ems || this.heat || this.drive || this.wreck || !(dt > 0) || (this._dr && this._dr.on)) { const S0 = this._wt; if (S0 && S0.lean) { this.roll -= S0.lean; S0.lean = 0; } if (S0) { S0.sq = 0; this._wtQ = 0; } return below.call(this, dt, inp, gg); }
     try {
-      const T = W.TUNE, S = this._wt || (this._wt = { lat: 0, lim: 0, k: 0, sq: 0, lean: 0 }), wb = this.def.wheelbase || 2.7, vf = this.vf || 0, av = Math.abs(vf), aW = W.gOf(this);
+      const T = W.TUNE, S = this._wt || (this._wt = { lat: 0, lim: 0, k: 0, sq: 0, lean: 0 }), wb = this.def.wheelbase || 2.7, vf = this.vf || 0, av = Math.abs(vf), wet = gg.rain && gg.rain.wet > 0 ? Math.min(1, gg.rain.wet) : 0, aW = W.gOf(this) * (1 - T.wet * wet);     /* a wet road (the progress lane's rain) holds less */
       // the wheel a key may ask for is what the tyres carry at this speed (the lever allows more, as in the game's own steering)
       const lockW = Math.atan(aW * wb / Math.max(av * av, 6)) * (inp.handbrake ? T.hb : 1), lock0 = inp.lock, lat0 = inp.latLim, req = Math.abs(lock0);
       if (req > lockW) inp.lock = Math.sign(lock0) * lockW;

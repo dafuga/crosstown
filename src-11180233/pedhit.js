@@ -1372,11 +1372,15 @@ export function install(game, opts = {}) {
     }
     return false;
   }
+  const STAY = game.P?.get('bodystay') !== '0', _vw = new THREE.Vector3();
+  const inView = (p, cam) => { if (p.distanceTo(cam) > 70) return false; _vw.copy(p).project(world.camera); return Math.abs(_vw.x) < 1.05 && Math.abs(_vw.y) < 1.1 && _vw.z < 1; };
   S.update = (dt) => {
     if (!S.list.length) { stamp++; return; } acc = Math.min(acc + dt, 0.1); const n = Math.floor(acc / SUB); acc -= n * SUB; const cam = world.camera.position;
     for (let i = S.list.length - 1; i >= 0; i--) { const R = S.list[i]; R.t += dt;
       if (R.fig.ped) { const p = R.fig.ped; if (p.state !== 'down') { restoreFeet(R); S.list.splice(i, 1); continue; } p.t = Math.min(p.t, 5); p.vx = p.vy = 0; p.fall = 0; p.x = R.P.hips.p.x; p.y = -R.P.hips.p.z; }
-      if (R.t > 25 || R.P.hips.p.distanceTo(cam) > 140) { release(R); S.list.splice(i, 1); continue; }
+      // ragdoll lane, Nov 17: a body went after 25 s wherever it lay, also in the middle of the picture in front of a player who had got out to look. Now a body the
+      // camera is looking at from within 70 m stays (80 s at most: the ambulance crew takes a body by setting its clock to 99 (ems.js), which must still remove it at once); out of sight it goes after 25 s as before. ?bodystay=0 = as before.
+      if (R.P.hips.p.distanceTo(cam) > 140 || (R.t > 25 && (!STAY || R.t > 80 || !inView(R.P.hips.p, cam)))) { release(R); S.list.splice(i, 1); continue; }
       // a body at rest wakes when one of the player's cars comes at it: asleep, the car drove into it and stood in it (node run: the car rolled back 6 m onto the body it had thrown); awake it is pushed along or aside like any struck body, and the walls hold it
       if (R.frozen) {
         const hp = R.P.hips.p;

@@ -24,7 +24,7 @@
 //   another walk he can reach, then stands until he can be taken away unseen.
 //   BODIES (lying): nobody walks over someone on the ground: they are passed like a thing in the way, and never stood on.
 // No three.js here: render.js reads the agents' public fields (x y z h scale fall char clip ph clipB phB blend tint acc).
-import { staticPathBlocked, exitsNearestBoxFace, segmentHitsBox, clamp, wrapPi, rng, TAU } from '../geo.js';
+import { aboveMeasuredEdge, staticPathBlocked, exitsNearestBoxFace, segmentHitsBox, clamp, wrapPi, rng, TAU } from '../geo.js';
 import { bandAt, furnitureCrossing, overlapsVehicleHeight } from './nav.js';
 import { plainSlide } from '../move/plainfall.js';
 
@@ -51,6 +51,58 @@ function clearsFurniture(walker, obstacle) {
   if (!bounds) return false;
   const floor = walker.z ?? 0;
   return floor >= bounds.top || floor + 1.78 * (walker.tall ?? 1) <= bounds.base;
+}
+
+// Endpoint separation handles landings inside an obstacle. This catches a stride
+// that enters and leaves the footprint before reaching its endpoint.
+function strideCrosses(x, y, dx, dy, length2, cx, cy, radius) {
+  const ex = x - cx, ey = y - cy;
+  const back = ex*dx + ey*dy;
+  if (back <= 0 || back >= length2) return false;
+  const radius2 = radius*radius;
+  if (ex*ex + ey*ey < radius2) return false;
+  const cross = ex*dy - ey*dx;
+  return cross*cross < length2*(radius2 - 1e-10);
+}
+
+function clipsWallEnd(edges, floor, x, y, dx, dy, length2, radius) {
+  for (const edge of edges) {
+    if (aboveMeasuredEdge(edge, floor)) continue;
+    if (strideCrosses(x, y, dx, dy, length2, edge[0], edge[1], radius) ||
+        strideCrosses(x, y, dx, dy, length2, edge[2], edge[3], radius)) return true;
+  }
+  return false;
+}
+
+function strideObstacle(cell, a, x, y, dx, dy, length2) {
+  for (const o of cell.circ) {
+    if (o.on && strideCrosses(x, y, dx, dy, length2, o.x, o.y, o.r + 0.2)) return 'round';
+  }
+  for (const o of cell.soft) {
+    if (strideCrosses(x, y, dx, dy, length2, o.x, o.y, o.h + 0.12) && !clearsFurniture(a, o)) return 'soft';
+  }
+  for (const car of cell.cars) {
+    if (!car.gone && strideCrossesCar(a, car, x, y, dx, dy)) return 'car';
+  }
+  return null;
+}
+
+function strideCrossesCar(a, car, x, y, dx, dy) {
+  const reach = (car.def.len + car.def.wid)/2 + 0.4;
+  if (Math.abs(x-car.x) > reach + Math.abs(dx) || Math.abs(y-car.y) > reach + Math.abs(dy)) return false;
+  if (!overlapsVehicleHeight(car, a.z ?? 0, 1.78 * (a.tall ?? 1))) return false;
+  const c = Math.cos(car.h), s = Math.sin(car.h);
+  const ex = x - car.x, ey = y - car.y;
+  const u = ex*c + ey*s, v = ey*c - ex*s;
+  const du = dx*c + dy*s, dv = dy*c - dx*s;
+  // World-to-car projection loses a few ulps at city coordinates. Treat that
+  // narrow band as contact so a tangential stride can follow the bumper.
+  const epsilon = 8 * Number.EPSILON * Math.max(1, Math.abs(car.x), Math.abs(car.y), car.def.len, car.def.wid);
+  const length = car.def.len/2 + 0.2 - epsilon, width = car.def.wid/2 + 0.2 - epsilon;
+  // Leave endpoint penetration to outBox, which chooses the recovery face.
+  if (Math.abs(u) < length && Math.abs(v) < width) return false;
+  if (Math.abs(u-du) < length && Math.abs(v-dv) < width) return false;
+  return segmentHitsBox(u-du/2, v-dv/2, du/2, dv/2, length, width);
 }
 
 function buildingOnWalk(nav, a, x, y, fromX = a.x, fromY = a.y) {
@@ -273,7 +325,7 @@ export class CrowdSim {
     return furnitureCrossing(this.nav, nearby, px, py, tx, ty, person, 0.25, floor,
       height === undefined ? floor : floor + height - 0.25);
   }
-  vehicleAt(x, y, fromX = x, fromY = y, vehicles, allowExit = false, person, seat, bodyHeight, ignoreCar) {
+  vehicleAt(x, y, fromX = x, fromY = y, vehicles, allowExit = false, person, seat, bodyHeight, ignoreCar, allowPartialRetreat = false) {
     const hx = (x - fromX) / 2, hy = (y - fromY) / 2;
     const cx = fromX + hx, cy = fromY + hy;
     const hits = car => {
@@ -286,18 +338,23 @@ export class CrowdSim {
       const c = Math.cos(car.h), s = Math.sin(car.h);
       const u = dx*c + dy*s, v = dy*c - dx*s, du = hx*c + hy*s, dv = hy*c - hx*s;
       const length = car.def.len/2 + 0.3, width = car.def.wid/2 + 0.3;
+      const epsilon = 8 * Number.EPSILON * Math.max(1, Math.abs(x), Math.abs(y), Math.abs(car.x), Math.abs(car.y));
       if (allowExit) {
         const startU = u-du, startV = v-dv;
         const gapU = length-Math.abs(startU), gapV = width-Math.abs(startV);
         if (gapU >= 0 && gapV >= 0) {
           // Permit retreat through the nearest face, never across the vehicle.
           // Include contact at the face within world-coordinate roundoff.
-          const epsilon = 8 * Number.EPSILON * Math.max(1, Math.abs(x), Math.abs(y), Math.abs(car.x), Math.abs(car.y));
           if (person) person.retreatingFromObstacle = true;
+          // A capped collision correction may need several frames to exit the nearest face.
+          if (allowPartialRetreat &&
+              ((gapU <= gapV + epsilon && Math.sign(startU)*du > epsilon) ||
+               (gapV <= gapU + epsilon && Math.sign(startV)*dv > epsilon))) return false;
           if (exitsNearestBoxFace(startU, startV, u+du, v+dv, length, width, epsilon)) return false;
         }
       }
-      return segmentHitsBox(u, v, du, dv, length, width);
+      const tolerance = allowPartialRetreat ? epsilon : 0;
+      return segmentHitsBox(u, v, du, dv, length-tolerance, width-tolerance);
     };
     if (vehicles ? vehicles.some(hits) : this.g.vehicles?.some(hits) || this.g.traffic?.cars?.some(hits)) return true;
     const parked = this.g.parked;
@@ -564,10 +621,48 @@ export class CrowdSim {
     if (this.nav.soft) this.nav.soft(x0, y0, x1, y1, c.soft); return c;
   }
   // does the move a -> b cross one of the lines S? (this._ks: the line)
-  crosses(S, ax, ay, bx, by) {
+  crosses(S, ax, ay, bx, by, floor, nearest = false, skip) {
     const rx = bx - ax, ry = by - ay;
-    for (const s of S) { const sx = s[2] - s[0], sy = s[3] - s[1], den = rx * sy - ry * sx; if (den > -1e-12 && den < 1e-12) continue; const t = ((s[0] - ax) * sy - (s[1] - ay) * sx) / den; if (t < 0 || t > 1) continue; const u = ((s[0] - ax) * ry - (s[1] - ay) * rx) / den; if (u >= -1e-6 && u <= 1 + 1e-6) { this._ks = s; return true; } }
-    return false;
+    let first = Infinity, shared = false;
+    // Each candidate is compared with the same blocked slide direction.
+    const px = skip ? skip[2]-skip[0] : 0, py = skip ? skip[3]-skip[1] : 0;
+    const skippedSpan = Math.abs(px)+Math.abs(py);
+    const tolerance = skip ? 8*Number.EPSILON*Math.max(1, Math.abs(ax), Math.abs(ay), Math.abs(bx), Math.abs(by)) : 0;
+    for (const edge of S) {
+      if (edge === skip || aboveMeasuredEdge(edge, floor)) continue;
+      const sx = edge[2]-edge[0], sy = edge[3]-edge[1], den = rx*sy - ry*sx;
+      if (Math.abs(den) < 1e-12) continue;
+      if (skip) {
+        const error = tolerance*(Math.abs(sx)+Math.abs(sy)+skippedSpan);
+        if (Math.abs(sx*py-sy*px) <= error) continue;
+      }
+      const ex = edge[0]-ax, ey = edge[1]-ay;
+      const t = (ex*sy - ey*sx)/den;
+      if (t < 0 || t > 1 || t > first + 1e-12) continue;
+      const u = (ex*ry - ey*rx)/den;
+      if (u < -1e-6 || u > 1+1e-6) continue;
+      if (Math.abs(t-first) <= 1e-12) {
+        shared = true;
+        // At a shared corner prefer the wall that preserves more of this stride.
+        const previous = this._ks;
+        const px = previous[2]-previous[0], py = previous[3]-previous[1];
+        const projection = (rx*sx + ry*sy)**2 / (sx*sx + sy*sy);
+        const prior = (rx*px + ry*py)**2 / (px*px + py*py);
+        if (projection < prior) continue;
+        if (projection === prior) {
+          // Canonical directions make equal slides independent of endpoint order.
+          const angle = Math.atan2(sy, sx) % Math.PI;
+          const priorAngle = Math.atan2(py, px) % Math.PI;
+          if ((angle + Math.PI) % Math.PI >= (priorAngle + Math.PI) % Math.PI) continue;
+        }
+      }
+      else shared = false;
+      this._ks = edge;
+      if (!nearest) return true;
+      first = t;
+    }
+    if (nearest) { this._wallT = first; this._sharedCorner = shared; }
+    return first < Infinity;
   }
   // (x, y) out of car e's box grown by m: _o.x, _o.y; false when it is not inside. A car that moves puts people off to its side.
   outBox(e, x, y, m, sp, ox = x, oy = y) {
@@ -602,21 +697,77 @@ export class CrowdSim {
       a.kc = 0; a.clearanceVersion = staticVersion; a.furnitureVersion = this.nav.ver;
     }
     let still = true; if (a.kc > 0) { a.kc -= Math.sqrt(m2); if (a.kc > 0) still = false; }
-    let S = null, c = null, near = 9;
+    const floor = this.fbWalls ? a.z : undefined;
+    let S = null, c = null, originCell = null, near = 9;
     if (still) {
       c = this.cellAt(x, y); S = c.segs;
+      // A stride shorter than the relocation threshold can still exceed the cell padding.
+      if (this.fbWalls && !far && (Math.abs(mx) > 1.3 || Math.abs(my) > 1.3)) {
+        const origin = this.cellAt(ox, oy);
+        if (origin !== c) originCell = origin;
+        if (origin !== c && origin.segs.length) S = [...new Set([...origin.segs, ...S])];
+      }
       if (S.length) {
-        if (!far && m2 > 1e-12 && this.crosses(S, ox, oy, x, y)) {      // not through a line: along it, or not at all
+        if (!far && m2 > 1e-12 && this.crosses(S, ox, oy, x, y, floor, this.fbWalls)) {      // not through a line: along it, or not at all
           const s = this._ks, sx = s[2] - s[0], sy = s[3] - s[1], L2 = sx * sx + sy * sy || 1e-9, al = (mx * sx + my * sy) / L2, L = Math.sqrt(L2); let nx = -sy / L, ny = sx / L; if ((ox - s[0]) * nx + (oy - s[1]) * ny < 0) { nx = -nx; ny = -ny; }
           // A streamed fence may pass exactly through the old center. Recover on the approach side.
           if (Math.abs((ox - s[0]) * nx + (oy - s[1]) * ny) < 1e-9) {
             if (mx * nx + my * ny > 0) { nx = -nx; ny = -ny; }
             ox += nx * 1e-4; oy += ny * 1e-4;
           }
-          x = ox + sx * al; y = oy + sy * al; if (this.crosses(S, ox, oy, x, y)) { x = ox; y = oy; } else N.slide++; a.wnx = nx; a.wny = ny; hit = true; N.wall++; }
+          const firstT = this._wallT;
+          x = ox + sx * al; y = oy + sy * al;
+          const height = 1.78 * (a.tall ?? 1);
+          const obstacleBlocksSlide = (tx, ty, sharedCorner) => {
+            if (this.fallenBodyBlocks(a, ox, oy, tx, ty)) return true;
+            if (!sharedCorner) return false;
+            const dx = tx - ox, dy = ty - oy, length2 = dx*dx + dy*dy;
+            return clipsWallEnd(S, floor, tx, ty, dx, dy, length2, R) ||
+              strideObstacle(c, a, tx, ty, dx, dy, length2) ||
+              (originCell && strideObstacle(originCell, a, tx, ty, dx, dy, length2)) ||
+              buildingOnWalk(this.nav, a, tx, ty, ox, oy) ||
+              this.crossesFurniture(ox, oy, tx, ty, undefined, a.z ?? 0, height) ||
+              this.vehicleAt(tx, ty, ox, oy, undefined, true, undefined, a, height, undefined, true);
+          };
+          if (this.crosses(S, ox, oy, x, y, floor) ||
+              (this.fbWalls && obstacleBlocksSlide(x, y, this._sharedCorner))) {
+            x = ox; y = oy;
+            // Try remaining walls at this intersection in projected-stride order.
+            let candidates = S;
+            while (this.fbWalls && this.crosses(candidates, ox, oy, a.x, a.y, floor, true, s) &&
+                Math.abs(this._wallT - firstT) <= 1e-12) {
+              const hasAnother = this._sharedCorner;
+              const other = this._ks, ex = other[2]-other[0], ey = other[3]-other[1];
+              const along = (mx*ex + my*ey)/(ex*ex + ey*ey);
+              const tx = ox + along*ex, ty = oy + along*ey;
+              if ((tx !== ox || ty !== oy) && !this.crosses(S, ox, oy, tx, ty, floor) && !obstacleBlocksSlide(tx, ty, true)) {
+                x = tx; y = ty; N.slide++;
+                const length = Math.hypot(ex,ey);
+                nx = -ey/length; ny = ex/length;
+                if ((ox-other[0])*nx + (oy-other[1])*ny < 0) { nx = -nx; ny = -ny; }
+                break;
+              }
+              if (!hasAnother) break;
+              // Preserve tie order and keep the shared geometry list intact.
+              const remaining = this._retryEdges ||= [];
+              let count = 0;
+              for (const edge of candidates) if (edge !== other) remaining[count++] = edge;
+              remaining.length = count;
+              candidates = remaining;
+            }
+            if (candidates !== S) candidates.length = 0;
+          } else if (x !== ox || y !== oy) N.slide++;
+          a.wnx = nx; a.wny = ny; hit = true; N.wall++; }
+        // The centerline can miss a wall end while the walker's shoulder clips it.
+        if (this.fbWalls && !far && (x !== ox || y !== oy)) {
+          const dx = x-ox, dy = y-oy, length2 = dx*dx + dy*dy;
+          if (clipsWallEnd(S, floor, x, y, dx, dy, length2, R)) {
+            x = ox; y = oy; hit = true; near = 0; N.wall++;
+          }
+        }
         const px = x, py = y; let n = 0;
-        for (let it = 0; it < 2; it++) for (const s of S) { const dx = s[2] - s[0], dy = s[3] - s[1], L2 = dx * dx + dy * dy || 1e-9, t = clamp(((x - s[0]) * dx + (y - s[1]) * dy) / L2, 0, 1); let ex = x - (s[0] + dx * t), ey = y - (s[1] + dy * t); const d = Math.hypot(ex, ey); if (d < near) near = d; if (d < R && d > 1e-6) { ex /= d; ey /= d; x += ex * (R - d); y += ey * (R - d); a.wnx = ex; a.wny = ey; n++; } }
-        if (n) { hit = true; if (this.crosses(S, ox, oy, x, y)) { x = px; y = py; if (this.crosses(S, ox, oy, x, y)) { x = ox; y = oy; } } }
+        for (let it = 0; it < 2; it++) for (const s of S) { const dx = s[2] - s[0], dy = s[3] - s[1], L2 = dx * dx + dy * dy || 1e-9, t = clamp(((x - s[0]) * dx + (y - s[1]) * dy) / L2, 0, 1); let ex = x - (s[0] + dx * t), ey = y - (s[1] + dy * t); const d = Math.hypot(ex, ey); if (d < near) near = d; if (aboveMeasuredEdge(s, floor)) continue; if (d < R && d > 1e-6) { ex /= d; ey /= d; x += ex * (R - d); y += ey * (R - d); a.wnx = ex; a.wny = ey; n++; } }
+        if (n) { hit = true; if (this.crosses(S, ox, oy, x, y, floor)) { x = px; y = py; if (this.crosses(S, ox, oy, x, y, floor)) { x = ox; y = oy; } } }
       }
     }
     // round things, people on the ground and cars: out of them, no faster than a body can be moved (so nobody jumps), never over a line
@@ -624,8 +775,35 @@ export class CrowdSim {
     if (hit && this.fbWalls && (x !== a.x || y !== a.y) &&
         (buildingOnWalk(this.nav, a, x, y, ox, oy) ||
          this.crossesFurniture(ox, oy, x, y, undefined, a.z ?? 0, 1.78 * (a.tall ?? 1)) ||
-         this.vehicleAt(x, y, ox, oy, undefined, true, undefined, a, 1.78 * (a.tall ?? 1)))) {
+         this.vehicleAt(x, y, ox, oy, undefined, true, undefined, a, 1.78 * (a.tall ?? 1), undefined, true))) {
       x = ox; y = oy;
+    }
+    if (still && this.fbWalls && !far && m2 > 0) {
+      const dx = x - ox, dy = y - oy, length2 = dx*dx + dy*dy;
+      const obstacle = strideObstacle(c, a, x, y, dx, dy, length2) ||
+        (originCell && strideObstacle(originCell, a, x, y, dx, dy, length2));
+      if (obstacle) {
+        x = ox; y = oy; hit = true; near = 0; N[obstacle]++;
+      }
+    }
+    if (this.fbWalls && !far && this.lying.length && (x !== ox || y !== oy)) {
+      const dx = x-ox, dy = y-oy, length2 = dx*dx + dy*dy;
+      for (const body of this.lying) {
+        if (body.p === a || body.p?.gone || onSeparateLevels(a, body)) continue;
+        const ex = x-body.x, ey = y-body.y;
+        // Resolving an inside landing radially would push across the body if
+        // the stride reached its center or landed on the opposite side.
+        const crossedCenter = (ox !== body.x || oy !== body.y) && ex*ex + ey*ey < 0.55**2 &&
+          (ox-body.x)*ex + (oy-body.y)*ey <= 0;
+        if (crossedCenter || strideCrosses(x, y, dx, dy, length2, body.x, body.y, 0.55)) {
+          x = ox; y = oy; hit = true; near = 0; N.body++; break;
+        }
+      }
+    }
+    if (this.fbWalls && !far && (x !== ox || y !== oy)) {
+      if (this.trafficStrideBlocked(a, ox, oy, x, y)) {
+        x = ox; y = oy; hit = true; near = 0; N.car++;
+      }
     }
     const qx = x, qy = y; let cars = false;
     if (still) {
@@ -695,15 +873,22 @@ export class CrowdSim {
           y = o.y + (distance ? dy / distance : 0) * RR;
           N.soft++; near = 0; } else if (d2 < 4 || (o.parkSolid && d2 < (RR + 1.3) ** 2)) near = Math.min(near, Math.sqrt(d2) - RR + 0.25); }
     }
-    for (const b of this.lying) { if (b.p === a) continue; const ex = x - b.x, ey = y - b.y, d2 = ex * ex + ey * ey; if (d2 < 0.3025 && !(this.fbWalls && onSeparateLevels(a, b))) { const d = Math.sqrt(d2); if (d > 1e-6) { x += (ex / d) * (0.55 - d); y += (ey / d) * (0.55 - d); N.body++; } } }
+    for (const b of this.lying) { if (b.p === a || (this.fbWalls && b.p?.gone)) continue; const ex = x - b.x, ey = y - b.y, d2 = ex * ex + ey * ey; if (d2 < 0.3025 && !(this.fbWalls && onSeparateLevels(a, b))) { const d = Math.sqrt(d2); if (d > 1e-6) { x += (ex / d) * (0.55 - d); y += (ey / d) * (0.55 - d); N.body++; } } }
     if (x !== qx || y !== qy) { const lim = Math.max(0.05, Math.sqrt(m2) * 1.6), dl = Math.hypot(x - qx, y - qy); if (dl > lim) { x = qx + (x - qx) * lim / dl; y = qy + (y - qy) * lim / dl; } }
     const bodyHeight = 1.78 * (a.tall ?? 1);
+    // A push away from a tree, furniture or a fallen body can enter a car's footprint.
+    if (this.fbWalls && (x !== qx || y !== qy) &&
+        this.vehicleAt(x, y, qx, qy, undefined, true, undefined, a, bodyHeight, undefined, true)) {
+      x = qx; y = qy; a.kc = 0;
+    }
     if (still) for (const e of c.cars) {
       if (e.gone) continue;
       if (this.outBox(e, x, y, 0.2, 0, ox, oy)) {
         near = 0;
         if (this.fbWalls && !overlapsVehicleHeight(e, a.z ?? 0, bodyHeight)) continue;
-        x = _o.x; y = _o.y; cars = true;
+        const nextX = _o.x, nextY = _o.y;
+        if (this.fbWalls && this.carPushBlocked(a, x, y, nextX, nextY, bodyHeight, e)) continue;
+        x = nextX; y = nextY; cars = true;
       } else near = Math.min(near, Math.hypot(x - e.x, y - e.y) - e.def.len / 2 - 0.2);
     }
     for (const e of this.tcars) {
@@ -711,11 +896,13 @@ export class CrowdSim {
       if (dx > rr || dx < -rr || dy > rr || dy < -rr) continue;
       if (this.fbWalls && !overlapsVehicleHeight(e, a.z ?? 0, bodyHeight)) continue;
       if (this.outBox(e, x, y, 0.2, Math.abs(e.v || 0), ox, oy)) {
-        x = _o.x; y = _o.y; cars = true;
+        const nextX = _o.x, nextY = _o.y;
+        if (this.fbWalls && this.carPushBlocked(a, x, y, nextX, nextY, bodyHeight, e)) continue;
+        x = nextX; y = nextY; cars = true;
       }
     }
     if (cars) N.car++;
-    if (x !== qx || y !== qy) { hit = true; if (!S) S = this.cellAt(qx, qy).segs; if (S.length && this.crosses(S, qx, qy, x, y)) { x = qx; y = qy; } a.kc = 0; }
+    if (x !== qx || y !== qy) { hit = true; if (!S) S = this.cellAt(qx, qy).segs; if (S.length && this.crosses(S, qx, qy, x, y, floor)) { x = qx; y = qy; } a.kc = 0; }
     else if (still && near > 0.5) a.kc = Math.min(near - 0.4, 0.85);      /* (a cell reaches 1.3 m past its edge) */
     // Resolving a neighboring obstacle can push a walker back inside a park prop.
     if (hit && !far && a.state === 'walk' && c?.circ.some(o => o.on && o.parkSolid)) {
@@ -723,7 +910,9 @@ export class CrowdSim {
         for (const o of c.circ) {
           if (o.on && Math.hypot(px - o.x, py - o.y) < o.r + 0.2 - 1e-8) return true;
         }
-        for (const [ax, ay, bx, by] of c.segs) {
+        for (const edge of c.segs) {
+          if (aboveMeasuredEdge(edge, floor)) continue;
+          const [ax, ay, bx, by] = edge;
           const dx = bx - ax, dy = by - ay;
           const u = clamp(((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy || 1), 0, 1);
           if (Math.hypot(px - ax - u * dx, py - ay - u * dy) < R - 1e-8) return true;
@@ -738,6 +927,51 @@ export class CrowdSim {
       x = qx; y = qy; a.kc = 0;
     }
     a.x = x; a.y = y; if (hit) a.kh = (a.kh || 0) + 1;
+  }
+  trafficStrideBlocked(a, ox, oy, x, y) {
+    const cars = this.tcars, dx = x-ox, dy = y-oy;
+    if (cars.length < 12) {
+      for (const car of cars) if (strideCrossesCar(a, car, x, y, dx, dy)) return true;
+      return false;
+    }
+    // The traffic list is rebuilt each crowd frame. Index vehicle bounds once
+    // so walkers only test cars in the rows touched by their stride.
+    const rows = this.trafficRows ??= new Map();
+    if (this.trafficRowsFrame !== this.frame || !rows.size) {
+      rows.clear();
+      for (const car of cars) {
+        const reach = (car.def.len + car.def.wid)/2 + 0.4;
+        for (let row = Math.floor((car.y-reach)/8); row <= Math.floor((car.y+reach)/8); row++) {
+          if (!rows.has(row)) rows.set(row, []);
+          rows.get(row).push(car);
+        }
+      }
+      this.trafficRowsFrame = this.frame;
+    }
+    for (let row = Math.floor(Math.min(oy,y)/8); row <= Math.floor(Math.max(oy,y)/8); row++) {
+      const nearby = rows.get(row);
+      if (!nearby) continue;
+      for (const car of nearby) if (strideCrossesCar(a, car, x, y, dx, dy)) return true;
+    }
+    return false;
+  }
+  fallenBodyBlocks(a, x, y, nextX, nextY) {
+    if (!this.lying?.length) return false;
+    const dx = nextX - x, dy = nextY - y, length2 = dx*dx + dy*dy;
+    for (const body of this.lying) {
+      if (body.p === a || body.p?.gone || onSeparateLevels(a, body)) continue;
+      const bx = body.x - x, by = body.y - y;
+      const toward = bx*dx + by*dy;
+      if (toward <= 0) continue; // A push out of existing contact can proceed.
+      const t = Math.min(1, toward / length2);
+      if ((bx - t*dx)**2 + (by - t*dy)**2 < 0.55**2 - 1e-10) return true;
+    }
+    return false;
+  }
+  carPushBlocked(a, x, y, nextX, nextY, height, car, radius = 0.2, partialRetreat = true) {
+    if (this.fallenBodyBlocks(a, x, y, nextX, nextY)) return true;
+    return staticPathBlocked(this.g.statics, x, y, nextX, nextY, true, undefined, undefined, radius, a.z ?? 0) ||
+      this.vehicleAt(nextX, nextY, x, y, undefined, true, undefined, a, height, car, partialRetreat);
   }
   // the cars that stand or creep near the camera, each as a box in a way's own axes (s along, l across), once a frame per way that asks
   wayBoxes(w) {
@@ -822,7 +1056,13 @@ export class CrowdSim {
   // who lies on the ground near the camera (twice a second): the crowd's own, the ragdolls of people a car struck (pedhit.js) and of
   // people who were shot (combat/people.js). Read from where those keep them; nothing of theirs is changed.
   findLying() {
-    const L = this.lying, g = this.g; L.length = 0; const add = (x, y, p, bottom, top) => { if (isFinite(x) && isFinite(y) && Math.abs(x - this.cx) < 120 && Math.abs(y - this.cy) < 120 && L.length < 40) L.push({ x, y, p, bottom, top }); };
+    const L = this.lying, g = this.g; L.length = 0; const add = (x, y, p, bottom, top) => { if (isFinite(x) && isFinite(y) && Math.abs(x - this.cx) < 120 && Math.abs(y - this.cy) < 120 && L.length < 40) {
+      if (this.fbWalls && p) {
+        // The agent keeps sliding between samples. Its prone offset stays fixed.
+        const dx = x - p.x, dy = y - p.y;
+        L.push({ get x() { return p.x + dx; }, get y() { return p.y + dy; }, p, bottom, top });
+      } else L.push({ x, y, p, bottom, top });
+    } };
     for (const a of this.agents) if (a.state === 'down' && !a.gone && a.fall > 0.5) add(a.x + Math.cos(a.h) * 0.6, a.y + Math.sin(a.h) * 0.6, a);
     // (a struck person's agent leaves the crowd when pedhit.js takes the body, and combat/scare.js then forgets the place: it is told of the
     // ragdoll once it lies, through its own down(), so people stop, look and turn back there as they do at a shot body)
@@ -985,7 +1225,7 @@ export class CrowdSim {
         see(o.x, o.y, 0, o.r + 0.45, false);
       }
     }
-    for (const b of this.lying) { const dx = b.x - a.x, dy = b.y - a.y; if (dx > 5 || dx < -5 || dy > 5 || dy < -5 || b.p === a || (this.fbWalls && onSeparateLevels(a, b))) continue; see(b.x, b.y, 0, 1.0, false); }      /* people/crowd-walls: nobody walks over someone on the ground */
+    for (const b of this.lying) { const dx = b.x - a.x, dy = b.y - a.y; if (dx > 5 || dx < -5 || dy > 5 || dy < -5 || b.p === a || (this.fbWalls && (b.p?.gone || onSeparateLevels(a, b)))) continue; see(b.x, b.y, 0, 1.0, false); }      /* people/crowd-walls: nobody walks over someone on the ground */
     // the player's standing cars: three circles along the body, passed like street furniture
     for (const q of this.still) { const dx = q.x - a.x, dy = q.y - a.y; if (dx > 8 || dx < -8 || dy > 8 || dy < -8) continue;
       if (this.fbWalls && q.v && !overlapsVehicleHeight(q.v, a.z ?? 0, 1.78 * (a.tall ?? 1))) continue;
@@ -1190,7 +1430,7 @@ export class CrowdSim {
     if (a.v && this.fbWalls && (buildingOnWalk(this.nav, a, x, y) ||
         (this.nav.soft && this.furnitureAtHeight(a.x, a.y, x, y, a.z ?? 0, 1.78 * (a.tall ?? 1), 0.25, true)) ||
         (turningApproach && (this.staticApproachBlocked(a.x, a.y, x, y, undefined, a) ||
-          this.vehicleAt(x, y, a.x, a.y, undefined, true, undefined, a, 1.78 * (a.tall ?? 1)))))) {
+          this.vehicleAt(x, y, a.x, a.y, undefined, true, undefined, a, 1.78 * (a.tall ?? 1), undefined, true))))) {
       a.v = 0;
       return;
     }
@@ -1367,11 +1607,11 @@ export class CrowdSim {
   moveIfClear(a, x, y, pushingCar) {
     const raised = a.z > 1, height = 1.78 * (a.tall ?? 1);
     if (this.fbWalls && (buildingOnWalk(this.nav, a, x, y) ||
-        (raised ? this.g.statics.raycast(a.x, a.y, x, y) < 1 ||
-          staticPathBlocked(this.g.statics, a.x, a.y, x, y, true, undefined, 0.25) ||
-          this.furnitureAtHeight(a.x, a.y, x, y, a.z, height, 0.25, true) :
-          this.staticApproachBlocked(a.x, a.y, x, y, undefined, a)) ||
-        this.vehicleAt(x, y, a.x, a.y, undefined, true, undefined, a, height, pushingCar))) return;
+        this.fallenBodyBlocks(a, a.x, a.y, x, y) ||
+        staticPathBlocked(this.g.statics, a.x, a.y, x, y, true, undefined, raised ? 0.25 : undefined, 0.25, a.z ?? 0) ||
+        (raised ? this.furnitureAtHeight(a.x, a.y, x, y, a.z, height, 0.25, true) :
+          this.crossesFurniture(a.x, a.y, x, y, undefined, a.z ?? 0, height)) ||
+        this.vehicleAt(x, y, a.x, a.y, undefined, true, undefined, a, height, pushingCar, true))) return;
     a.x = x;
     a.y = y;
   }
@@ -1383,9 +1623,13 @@ export class CrowdSim {
     for (const q of this.still) {
       const dx = a.x - q.x, dy = a.y - q.y; if (dx > q.R || dx < -q.R || dy > q.R || dy < -q.R) continue;
       if (this.fbWalls && q.v && !overlapsVehicleHeight(q.v, a.z ?? 0, 1.78 * (a.tall ?? 1))) continue;
-      const blockedPush = (ex, ey, relocating = false) => buildingOnWalk(this.nav, a, ex, ey) ||
-        this.staticApproachBlocked(a.x, a.y, ex, ey, undefined, a) ||
-        this.vehicleAt(ex, ey, a.x, a.y, undefined, relocating, undefined, a, 1.78 * (a.tall ?? 1), relocating ? undefined : q.v);
+      const height = 1.78 * (a.tall ?? 1);
+      const blockedPush = (ex, ey, relocating = false) => {
+        if (buildingOnWalk(this.nav, a, ex, ey)) return true;
+        // A relocated destination must fully exit the car covering the old spot.
+        return this.carPushBlocked(a, a.x, a.y, ex, ey, height, relocating ? undefined : q.v, 0.25, !relocating) ||
+          this.crossesFurniture(a.x, a.y, ex, ey, undefined, a.z ?? 0, height);
+      };
       if (think && (a.state === 'stand' || a.state === 'wait')) { const ux = a.tx - q.x, uy = a.ty - q.y, f = ux * q.c + uy * q.s, s = -ux * q.s + uy * q.c;
         if (Math.abs(f) < q.hl + 0.12 && Math.abs(s) < q.hw + 0.12) { let sd = s >= 0 ? 1 : -1; if (sd > 0 ? !q.okL && q.okR : !q.okR && q.okL) sd = -sd; const pf = q.hl - Math.abs(f), ps = q.hw - s * sd;
           let tx = a.tx, ty = a.ty;

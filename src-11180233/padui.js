@@ -68,7 +68,7 @@ export function install(game) {
     foot: () => [['ls', 'Walk'], ['l3', 'Run'], ['a', 'Jump'], ['y', 'Get in'], ['b', 'Gun'], hook() && ['du', 'Hook'], ['dd', 'Light'], ['back', 'Map'], ['start', 'Menu']],
     armed: () => [['lt', 'Aim'], ['rt', 'Fire'], ['x', 'Reload'], ['lb rb', 'Weapon'], ['b', 'Put away'], ['a', 'Jump'], ['y', 'Get in'], hook() && ['du', 'Hook'], ['back', 'Map']],
     scope: () => [['lt', 'Scope'], ['rt', 'Fire'], ['dud', 'Zoom'], ['x', 'Reload']],
-    car: () => [['rt', 'Gas'], ['lt', 'Brake'], ['ls', 'Steer'], ['a', 'Handbrake'], ['y', 'Get out'], ['dlr', 'Radio'], ['back', 'Map']],
+    car: () => [['rt', 'Gas'], ['lt', 'Brake'], ['ls', 'Steer'], game.combat && game.combat.DRIVEFIRE && game.combat.DRIVEPAD && ['rb', 'Fire'],      /* gameplay/takeover 3 */ ['a', 'Handbrake'], ['y', 'Get out'], ['dlr', 'Radio'], ['back', 'Map']],
     heli: () => [['ls', 'Tilt'], ['lb rb', 'Turn'], ['rt', 'Up'], ['lt', 'Down'], ['x', 'Engine'], game.heli && game.heli.rockets && !game.heli.rockets.dead && ['a', 'Rocket'], ['r3', 'View'], ['du', 'Stability'], ['y', 'Get out'], ['back', 'Map']],
     busy: () => [['ls', 'Move'], ['y', 'Use'], ['back', 'Map']],
   };

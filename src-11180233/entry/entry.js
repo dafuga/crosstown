@@ -33,6 +33,11 @@ const ND_A = 0.30, ND_B = 2.95;         // no door to open: from the hand on the
 const SLIDE = 1.15;                 // seconds (at pace 1) across the seats, passenger's to driver's
 const PASS_LONG = 7, PASS_NEARER = 4;      // metres: the passenger's door is used when the way to the driver's is longer than PASS_LONG and PASS_NEARER longer than the way to the passenger's
 const OPEN = 1.0;                   // door's full swing, radians (57 degrees)
+/* gameplay/takeover 3, Nov 17 (CHIEF: 'Pull the driver out if there is one. Fast, ~0.5 s'; ?takefast=0 = as before): on the fast path (the default since runmount) the door / sit clock
+   runs TK_K times faster again, the car is his from U_TK on (his hips going in; the rest of the sit and the door coming shut play at the wheel, as from U_GO before), and a
+   driver no longer stops that clock: she is out from u = TK_J on, while the door is still swinging, and is carried TK_X m back along the car and TK_Z m out from it as she
+   comes, so she is never where he stands at the door. At the door: 1.6 / (1.35 x 2 x 1.6) = 0.37 s with or without a driver (was 0.85 s empty, 1.35 s with one). */
+const TK_K = 1.6, U_TK = 1.6, TK_J = 0.45, TK_X = 0.9, TK_Z = 0.35;
 const HOT_K = 2.3, U_GO = 2.3;      /* board/car fast: the pace under police pressure, and from U_GO on (seated, door still coming shut) the car is his */
 
 // ---------------------------------------------------------------------------------------------------------------- per car kind
@@ -304,7 +309,7 @@ const _mr = new THREE.Matrix4(), _mt = new THREE.Matrix4(), _c = new THREE.Color
 
 // ---------------------------------------------------------------------------------------------------------------- the feature
 class Entry {
-  constructor(game) { this.g = game; this.P = {}; this.fig = {}; this.D = null; this.cars = null; this.cam = { k: 0, on: false }; this.npc = null; this.speed = +(game.P.get('espeed') || 1.35); this.stats = { enters: 0, exits: 0, jacks: 0, cancels: 0, noway: 0, noroom: 0 }; this.last = null; this.on4 = game.P.get('eround') !== '0'; this.pass = !this.on4 || game.P.get('epass') === '0' ? 0 : game.P.get('epass') === 'block' ? 2 : 1; this.fast = game.P.get('efast') !== '0'; this.rush = +game.P.get('efast') > 1 ? +game.P.get('efast') : null; }
+  constructor(game) { this.g = game; this.P = {}; this.fig = {}; this.D = null; this.cars = null; this.cam = { k: 0, on: false }; this.npc = null; this.speed = +(game.P.get('espeed') || 1.35); this.stats = { enters: 0, exits: 0, jacks: 0, cancels: 0, noway: 0, noroom: 0 }; this.last = null; this.on4 = game.P.get('eround') !== '0'; this.pass = !this.on4 || game.P.get('epass') === '0' ? 0 : game.P.get('epass') === 'block' ? 2 : 1; this.fast = game.P.get('efast') !== '0'; this.TF = game.P.get('takefast') !== '0'; this.rush = +game.P.get('efast') > 1 ? +game.P.get('efast') : null; }
   // h-door: how hurried this get-in or get-out is, 1 = calm. ONE factor: he runs to the door instead of walking, and the open / sit / slide / shut clock runs that much faster.
   // game.entry.rush = a number or a function returning one (the gameplay lane's hook) wins; else heat level 1-2 gives 1.6, 3 and up 1.85. ?efast=0 always calm, ?efast=1.8 forces (QA).
   urgency() { const r = this.rush; try { if (typeof r === 'function') return clamp(+r() || 1, 1, 2.5); if (typeof r === 'number') return clamp(r, 1, 2.5); if (!this.fast) return 1; if (this.hot(true)) return HOT_K;      /* board/car fast: police near or shooting */ const c = this.g.combat, h = c && c.heat, l = h ? h.level | 0 : 0; return l >= 3 ? 1.85 : l > 0 ? 1.6 : 1; } catch (e) { return 1; } }      /* ?eround=0: the walk straight to the door as before board/car 4 */
@@ -388,7 +393,7 @@ class Entry {
     const b = (pl.busy = { sl: 0, pace: this.urgency(), entry: true, kind, v, t: 0, dur: 99, z: 0, x: pl.x, y: pl.y, h: pl.h, phase: kind === 'in' ? 'walk' : 'act', u: kind === 'in' ? 0 : T_IN, w: kind === 'in' ? 0 : 1, moved: false, still: false, path: null, jack: null });
     this.tail = null; b.fast = b.pace >= 2; if (b.fast) this.stats.fast = (this.stats.fast || 0) + 1;      /* board/car fast */
     if (kind === 'in') { b.z = g.statics.onSidewalk(pl.x, pl.y) ? 0.15 : 0; this.handOver(); }      /* board/car: on the pavement he stays on it; the camera eases from whatever view was up (the guns lane's shoulder view cut to the game's in one frame: 0.55 m) */
-    this.last = v; b.far = !!far; { const K = this.cars.kind(v.type); b.nodoor = !K || (b.far && !K.hasP); } this.me.pose.doorMax = b.doorMax = this.doorRoom(v, P, b.far); if (b.far) this.stats[kind === 'in' ? 'passIn' : 'passOut'] = (this.stats[kind === 'in' ? 'passIn' : 'passOut'] || 0) + 1;
+    this.last = v; b.far = !!far; { const K = this.cars.kind(v.type); b.nodoor = !K || (b.far && !K.hasP); } b.tk = this.TF && kind === 'in' && b.fast && !b.far && !b.nodoor; this.me.pose.doorMax = b.doorMax = this.doorRoom(v, P, b.far); if (b.far) this.stats[kind === 'in' ? 'passIn' : 'passOut'] = (this.stats[kind === 'in' ? 'passIn' : 'passOut'] || 0) + 1;
     this.me.pose.zLim = b.zLim = this.on4 ? this.sideRoom(v, P, b.far) : undefined;
     if (kind === 'in') {
       if (!this.on4) b.path = this.route(v, P); else { const w = way; b.path = w && w.pts.length > 1 ? w.pts.slice(1) : w && w.pts.length ? w.pts.slice(-1) : [this.toMap(v, P.xr, (P.zs - 0.41) * (b.far ? -1 : 1), {})];     /* lead, Nov 13: a way of one point (he already stands on the door mark, e.g. F again right after getting out) left the path empty: begin threw and every frame after it too */ b.pp = { t: 0, n: 0, stall: 0, best: 1e9, wait: 0, dirty: false, own: Math.max(0.03, gap(carBox(v), b.path[b.path.length - 1].x, b.path[b.path.length - 1].y) - 0.08) }; } b.wp = 0;
@@ -508,14 +513,16 @@ class Entry {
       pl.speed = sp; g.playerAnim(sp > 3 ? (vis.acts.jog ? 'jog' : 'run') : wk.name); if (vis.mixer) vis.mixer.timeScale = sp > 3 ? sp / (vis.acts.jog ? (g.kit.clipSpeed.jog || 2.6) * ((g.kit.tall && g.kit.tall.player) || 1) : vis.runSpeed || 5) : sp / wk.speed;
       return;
     }
+    if (b.tk) dt *= TK_K;      /* gameplay/takeover 3 */
     pl.speed = 0; b.w = Math.min(1, b.w + dt / 0.28);
     if (this.on4 && this.npc && this.npc.pup) this.npc.pup.pose.zLim = b.zLim;
     if (b.kind === 'in' && b.far && !b.nodoor && b.u >= T_IN) { b.sl += dt / SLIDE; if (b.sl >= 1) { b.sl = 1; this.finish(b); return; } }      /* h-door: seated on the passenger's side with the door shut: across to the wheel */
     else if (b.kind === 'in') {
       const j = b.jack, n = this.npc;
-      if (j && n && n.state !== 'gone' && b.u >= 1.0 && j.t < 1) { j.t += dt / (g.takeMove === false ? 1.7 : 1.35);      /* gameplay/takeover 2 (CHIEF: 'Pull the driver out if there is one. Fast, ~0.5 s'): 0.50 s at the lane's pace of 2, was 0.63 (?takemove=0) */ this.stepJack(dt, b, j, n); if (j.t >= 1) { this.stats.jacks++; } }      // door open: the driver comes out before the player goes on
+      if (b.tk && j && n && n.state !== 'gone' && j.t < 1 && b.u >= TK_J) { n.tk = b.zLim === undefined ? 2 : 1; j.t += dt / 0.6; if (n.state === 'seated') { n.state = 'out'; n.t = 0; } if (j.t >= 1) this.stats.jacks++; }      /* gameplay/takeover 3: she comes out while the door swings and his clock runs on (below) */
+      if (!b.tk && j && n && n.state !== 'gone' && b.u >= 1.0 && j.t < 1) { j.t += dt / (g.takeMove === false ? 1.7 : 1.35);      /* gameplay/takeover 2 (CHIEF: 'Pull the driver out if there is one. Fast, ~0.5 s'): 0.50 s at the lane's pace of 2, was 0.63 (?takemove=0) */ this.stepJack(dt, b, j, n); if (j.t >= 1) { this.stats.jacks++; } }      // door open: the driver comes out before the player goes on
       else { const u0 = b.u; b.u += dt; if (b.nodoor && b.u >= ND_A && b.u < T_IN) { b.u = T_IN; this.skipJack(b); this.me.release(); this.hardDrive(); g.sound.door(); this.finish(b); return; } this.cues(u0, b.u, v, 1); }
-      if (b.fast && !b.far && !b.nodoor && b.u >= U_GO && b.u < T_IN && !(j && j.t < 1 && n && n.state !== 'gone')) { this.tail = { v, u: b.u, k: b.pace }; this.finish(b); return; }      /* fast: seated = the car is his; the door comes shut as it moves (sync) */
+      if (b.fast && !b.far && !b.nodoor && b.u >= (b.tk ? U_TK : U_GO) && b.u < T_IN && !(j && j.t < 1 && n && n.state !== 'gone')) { this.tail = { v, u: b.u, k: b.pace }; this.finish(b); return; }      /* fast: seated = the car is his; the door comes shut as it moves (sync) */
       if (b.u >= T_IN) { if (b.far && !b.nodoor) { b.u = T_IN; b.sl = 0; } else { this.finish(b); return; } }
     } else if (b.far && !b.nodoor && b.sl < 1) { b.sl = Math.min(1, b.sl + dt / SLIDE); }      /* h-door: out on the passenger's side: across the seats first */
     else {
@@ -540,7 +547,7 @@ class Entry {
     if (pp.wait > 0) { pl.speed = 0; g.playerAnim('idle'); if (vis.mixer) vis.mixer.timeScale = 1; return; }      // something has driven across his way: he waits for it
     const wp = b.path[b.wp], dx = wp.x - pl.x, dy = wp.y - pl.y, d = Math.hypot(dx, dy), last = b.wp === b.path.length - 1;
     let rest = d; for (let i = b.wp; i < b.path.length - 1; i++) rest += Math.hypot(b.path[i + 1].x - b.path[i].x, b.path[i + 1].y - b.path[i].y);
-    const sp = b.fast ? Math.min(4.2, Math.max(1.5, rest * 7)) : Math.min(rest > (b.pace > 1 ? 1.2 : 4.5) ? 3.4 : 1.9, Math.max(0.7, rest * 3.2)), stepLen = sp * dt;      /* fast: a sprint whatever the distance (times the pace: about 5.7 m/s) */
+    const sp = b.fast ? Math.min(4.2, Math.max(b.tk ? 3 : 1.5, rest * 7)) : Math.min(rest > (b.pace > 1 ? 1.2 : 4.5) ? 3.4 : 1.9, Math.max(0.7, rest * 3.2)), stepLen = sp * dt;      /* fast: a sprint whatever the distance (times the pace: about 5.7 m/s) */
     const arrive = () => { b.phase = 'act'; b.u = 0; b.w = 0; b.h0 = pl.h; g.playerAnim('idle'); if (vis.mixer) vis.mixer.timeScale = 1; pl.speed = 0; };
     if (d <= Math.max(stepLen, last ? 0.03 : 0.1)) { if (last) { pl.x = wp.x; pl.y = wp.y; arrive(); return; } b.wp++; return; }
     const want = Math.atan2(dy, dx); pl.h += wrapPi(want - pl.h) * Math.min(1, dt * 11);
@@ -618,6 +625,9 @@ class Entry {
     try { const v = n.v, P = this.params(v), vis = n.vis; this.toMap(v, P.xr + 0.55, Math.max(P.zs - 0.85, b.zLim === undefined ? -9 : b.zLim), _o); n.x = _o.x; n.y = _o.y; n.h = v.h + Math.PI / 2 + 0.15; n.state = 'flee'; n.t = 0.3; n.pup.release();
       const run = vis.acts.jog ? 'jog' : vis.acts.run ? 'run' : null; if (run) { for (const k in vis.acts) if (k !== run) vis.acts[k].stop(); vis.acts[run].reset().play(); vis.cur = run; } n.away = v.h + Math.PI - 0.3; n.dir = n.h; } catch (e) { console.log('[entry] driver not put out: ' + (e && e.message)); }
   }
+  /* gameplay/takeover 3: how far the hauled driver is carried from the exit's own line, in the car's frame (x ahead, z to the right): back along the car once her hips are
+     out of the opening, and out from it if nothing stands beside the car (n.tk 2), so she and the player at the door mark are never in one place */
+  aside(n, P) { if (!n.tk) return { x: 0, z: 0 }; return { x: -TK_X * (1 - ss(n.u, 1.35, 2.1)), z: n.tk > 1 ? Math.sign(P.zs || -1) * TK_Z * (1 - ss(n.u, 1.6, 2.6)) : 0 }; }
   stepJack(dt, b, j, n) {
     if (n.state === 'seated' && j.t >= 0.2) { n.state = 'out'; n.t = 0; }
   }
@@ -626,7 +636,7 @@ class Entry {
     if (n.state === 'out') {      // out of the seat fast, hauled by the arm: the exit run at more than twice the pace, ending on his feet beside the door
       n.u = Math.max(1.35, n.u - dt * (n.u > 2.4 ? 5 : 2.2));
       if (n.u < 2.3 && vis.cur === 'drive' && vis.acts.idle) { vis.acts.drive.fadeOut(0.3); vis.acts.idle.reset().fadeIn(0.3).play(); vis.cur = 'idle'; }
-      if (n.u <= 1.351) { n.state = 'flee'; n.t = 0; const P = this.params(v), pose = n.pup.pose; this.toMap(v, pose.hip.x, pose.hip.z, _o); n.x = _o.x; n.y = _o.y; n.h = v.h + pose.yaw; n.pup.release();
+      if (n.u <= 1.351) { n.state = 'flee'; n.t = 0; const P = this.params(v), pose = n.pup.pose, A = this.aside(n, P); this.toMap(v, pose.hip.x + A.x, pose.hip.z + A.z, _o); n.x = _o.x; n.y = _o.y; n.h = v.h + pose.yaw; n.pup.release();
         const run = vis.acts.jog ? 'jog' : vis.acts.run ? 'run' : null; if (run) { vis.acts[vis.cur] && vis.acts[vis.cur].fadeOut(0.25); vis.acts[run].reset().fadeIn(0.25).play(); vis.cur = run; } n.away = v.h + Math.PI - 0.3; n.dir = v.h + Math.PI / 2 + 0.75; }
     } else if (n.state === 'flee') {      // stumbles clear of the door, then runs for it back down the street
       const sp = Math.min(3.6, 1.2 + n.t * 3); if (n.t > 0.55) n.dir = n.away; n.h += wrapPi(n.dir - n.h) * Math.min(1, dt * 7); const nx = n.x + Math.cos(n.dir) * sp * dt, ny = n.y + Math.sin(n.dir) * sp * dt; g.statics.resolve(nx, ny, 0.3, _o); if (this.on4) pushOut(carsNear(g, _o.x, _o.y, 8.5, (this.poolN ||= { boxes: [], pk: [] })), _o, FOOT); n.x = _o.x; n.y = _o.y;
@@ -647,11 +657,11 @@ class Entry {
     if (this.npc) { const n = this.npc, v = n.v, vis = n.vis; if (vis.mixer) vis.mixer.update(dt);
       if (n.state === 'flee') { vis.object.position.set(n.x, g.statics.onSidewalk(n.x, n.y) ? 0.15 : 0, -n.y); vis.object.rotation.set(0, n.h, 0); }
       else if (n.pup.rig) { const CM = this.cars.matrix(v, _cm2, _cq2), P = this.params(v), S = this.seat(v, n.who), pose = entryPoseRaw(n.u, P, S, n.pup.rig, this.ground(v), n.pup.pose);
-        if (n.state === 'out') npcOutPose(pose, n.u);
+        if (n.state === 'out') { npcOutPose(pose, n.u); if (n.tk) { const A = this.aside(n, P); CM.multiply(_mt.makeTranslation(A.x, 0, A.z)); } }
         n.pup.apply(pose, CM, _cq2, 1); } }
     if (b && b.entry && b.phase !== 'walk') {
       if (!me.rig) return; const v = b.v, CM = this.cars.matrix(v, _cm, _cq), pose = this.poseNow(b, v, me.rig);
-      if (n && b.jack && b.jack.t > 0 && b.jack.t < 1 && n.pup.rig) playerJackPose(pose, b.jack.t, n.pup.rig, _m2.copy(CM).invert(), this.params(v), this.seat(v));
+      if (n && b.jack && !b.tk && b.jack.t > 0 && b.jack.t < 1 && n.pup.rig) playerJackPose(pose, b.jack.t, n.pup.rig, _m2.copy(CM).invert(), this.params(v), this.seat(v));
       if (b.w < 1 && b.h0 !== undefined && b.kind === 'in') pose.yaw = wrapPi(b.h0 - v.h) + wrapPi(pose.yaw - wrapPi(b.h0 - v.h)) * b.w;
       if (b.fast) { pose.pitch += 0.24 * bump(b.u, 0.6, 1.3, 2.1); pose.hip.y -= 0.03 * bump(b.u, 0.6, 1.2, 1.9); }      /* fast: head down, diving in */
       me.apply(pose, CM, _cq, b.w);
@@ -661,6 +671,7 @@ class Entry {
       if (tl) { this.cars.set(v, pose.door * OPEN); tl.u += (dt || 0.016) * this.speed * tl.k; if (tl.u >= T_IN || (pose.door <= 0.0005 && tl.u > 2.68)) { this.tail = null; this.cars.clear(); } }      /* fast: he is driving; the last of the beat (door pulled shut, left hand to the rim) plays out at the wheel */
       this.calm(dt);
       this._sa = (this._sa || 0) + (clamp(-(v.steer || 0) * 1.15, -0.42, 0.42) - (this._sa || 0)) * Math.min(1, (dt || 0.016) * 7); const a = this._sa; if (Math.abs(a) > 0.004 && this.params(v).wheelC) { const P = this.params(v); for (const h of [pose.hL, pose.hR]) { h.p.sub(P.wheelC).applyAxisAngle(P.wheelAx, a).add(P.wheelC); h.f.applyAxisAngle(P.wheelAx, a); h.n.applyAxisAngle(P.wheelAx, a); } }
+      if (this.gunHand && this.gunHand.k > 0) { const G = this.gunHand, h = pose.hL; h.p.lerp(G.p, G.k); h.f.lerp(G.f, G.k).normalize(); h.n.lerp(G.n, G.k).normalize(); h.w = Math.max(h.w, G.k); h.curl = 0.9; }      /* gameplay/takeover 3: his left hand out of the window on the gun (combat.js driveShow; ?drivegun=0) */
       me.apply(pose, CM, _cq, 1);
     } else { me.release(); this._sa = 0; if (pl.vehicle && !b) this.calm(dt); }
     this.bailSync(dt); if (this.g.P.has('eview')) this.qaCam();
