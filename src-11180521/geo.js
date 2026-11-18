@@ -331,8 +331,20 @@ export function exitsNearestBoxFace(u, v, endU, endV, length, width, epsilon) {
     (gapV <= gapU + epsilon && away(v,endV) >= width-epsilon);
 }
 
-export function staticPathBlocked(st, x, y, px, py, allObstacles, person, edgeOnlyRadius, radius = 0.25) {
-  const edgeRadius = edgeOnlyRadius ?? radius;
+export function aboveMeasuredEdge(edge, floor) {
+  if (floor === undefined || edge.baseZ == null || !(edge.low > 0)) return false;
+  if (edge.wireTop) {
+    // The lawn wire interpolates between measured samples. Clear the entire panel.
+    if (edge.wireTop.length < 2) return false;
+    for (const top of edge.wireTop) if (!(floor >= top)) return false;
+    return true;
+  }
+  return floor >= edge.baseZ + edge.low;
+}
+
+export function staticPathBlocked(st, x, y, px, py, allObstacles, person, edgeOnlyRadius, radius = 0.25, correctionFloor) {
+  const checkingCorrection = correctionFloor !== undefined;
+  const edgeRadius = checkingCorrection ? 0.25 : edgeOnlyRadius ?? radius;
   const dx = px - x, dy = py - y, length2 = dx * dx + dy * dy;
   const gap2 = (qx, qy, ax, ay, vx, vy, len2) => {
     const u = clamp(((qx - ax) * vx + (qy - ay) * vy) / (len2 || 1), 0, 1);
@@ -346,8 +358,19 @@ export function staticPathBlocked(st, x, y, px, py, allObstacles, person, edgeOn
       const edges = st.segs.get(key);
       if (edges) for (const edge of edges) {
         if (!allObstacles && edge.kind !== 'rock') continue;
+        // Street furniture records its base and height. Keep unmeasured edges conservative.
+        if (aboveMeasuredEdge(edge, correctionFloor)) continue;
         const [ax, ay, bx, by] = edge, vx = bx - ax, vy = by - ay, edge2 = vx * vx + vy * vy;
-        // The raycast handles crossings. For disjoint segments the minimum
+        // A vehicle correction may extend outside the walker's cached fence list.
+        if (checkingCorrection) {
+          const det = dx*vy - dy*vx;
+          if (det !== 0) {
+            const t = ((ax-x)*vy - (ay-y)*vx) / det;
+            const u = ((ax-x)*dy - (ay-y)*dx) / det;
+            if (t > 0 && t < 1 && u >= 0 && u <= 1) return true;
+          }
+        }
+        // Other callers raycast for crossings. For disjoint segments the minimum
         // separation occurs at an endpoint. Allow existing contact to recede.
         const startGap2 = gap2(x, y, ax, ay, vx, vy, edge2);
         if (person && startGap2 < edgeRadius ** 2) person.retreatingFromObstacle = true;
@@ -361,6 +384,8 @@ export function staticPathBlocked(st, x, y, px, py, allObstacles, person, edgeOn
         const circles = index?.get(key);
         if (!circles) continue;
         for (const o of circles) {
+          // Vehicle contact uses oriented boxes for cars and a 20 cm margin for round props.
+          if (checkingCorrection && o.tag?.def && typeof o.tag.h === 'number') continue;
           if (!o.on || !(allObstacles || o.parkSolid || o.set?.startsWith('park:trunks:'))) continue;
           const u = ((o.x - x) * dx + (o.y - y) * dy) / length2;
           if (u <= 0) {

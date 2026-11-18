@@ -69,7 +69,7 @@ export function overlapsVehicleHeight(car, floor, bodyHeight) {
   return floor < base + (car.def.hgt || 1.45) && floor + bodyHeight > base;
 }
 
-export function furnitureCrossing(nav, nearby, px, py, tx, ty, person, radius = 0.25, footZ, upperFootZ = footZ, rise = 0) {
+export function furnitureCrossing(nav, nearby, px, py, tx, ty, person, radius = 0.25, footZ, upperFootZ = footZ, rise = 0, contact) {
   if (!nav?.soft) return false;
   const dx = tx - px, dy = ty - py, length2 = dx*dx + dy*dy;
   if (!length2) return false;
@@ -94,7 +94,10 @@ export function furnitureCrossing(nav, nearby, px, py, tx, ty, person, radius = 
     }
     const u = clamp(((o.x - px)*dx + (o.y - py)*dy) / length2, lo, hi);
     if (person && u === 0 && Math.hypot(px-o.x, py-o.y) < o.h + radius) person.retreatingFromObstacle = true;
-    if (u > 0 && Math.hypot(px + u*dx - o.x, py + u*dy - o.y) < o.h + radius) return true;
+    if (u > 0 && Math.hypot(px + u*dx - o.x, py + u*dy - o.y) < o.h + radius) {
+      if (contact) { contact.x = o.x; contact.y = o.y; }
+      return true;
+    }
   }
   return false;
 }

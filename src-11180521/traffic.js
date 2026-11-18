@@ -602,12 +602,20 @@ function overlapsVehicle(cars, x, y, radius, speedLimit) {
   return false;
 }
 
-function sidewalkFurnitureCrossing(g, furniture, nearby, p, x, y, nx, ny, radius = 0.25) {
-  if (!furniture?.raisedTablesNear) return furnitureCrossing(furniture, nearby, x, y, nx, ny, undefined, radius);
+function crossesPlayer(player, x, y, endX, endY) {
+  const px = player.x-x, py = player.y-y, dx = endX-x, dy = endY-y;
+  if (player.vehicle || Math.abs(px) > Math.abs(dx)+0.7 || Math.abs(py) > Math.abs(dy)+0.7) return false;
+  const length2 = dx*dx+dy*dy;
+  const t = length2 ? clamp((px*dx+py*dy)/length2, 0, 1) : 0;
+  return Math.hypot(px-t*dx, py-t*dy) < Math.min(0.7, Math.hypot(px, py))-1e-9;
+}
+
+function sidewalkFurnitureCrossing(g, furniture, nearby, p, x, y, nx, ny, radius = 0.25, contact) {
+  if (!furniture?.raisedTablesNear) return furnitureCrossing(furniture, nearby, x, y, nx, ny, undefined, radius, undefined, undefined, 0, contact);
   const start = g.statics.onSidewalk(x, y) ? 0.15 : 0;
   const end = g.statics.onSidewalk(nx, ny) ? 0.15 : 0;
   const head = Math.max(start, end) + 1.75 * (p.scale || 1);
-  return furnitureCrossing(furniture, nearby, x, y, nx, ny, undefined, radius, Math.min(start, end), head - radius);
+  return furnitureCrossing(furniture, nearby, x, y, nx, ny, undefined, radius, Math.min(start, end), head - radius, 0, contact);
 }
 
 export class Peds {
@@ -761,12 +769,37 @@ export class Peds {
               p.y += (dy / dd) * step;
             }
           }
+          // A mapped route can graze a facade. Correct shallow contact before testing the stride.
+          if (checkWalls && p.wallRejoined) {
+            p.wallRejoined = !!g.statics.resolvePedestrian(p.x, p.y, 0.251, tmp2);
+            if (p.wallRejoined && Math.hypot(tmp2.x - p.x, tmp2.y - p.y) <= 0.005) {
+              p.x = tmp2.x; p.y = tmp2.y;
+            }
+          }
+          // If furniture cuts across this lane, try one lateral stride before turning back.
+          let furnitureBlocked = checkWalls && furniture && sidewalkFurnitureCrossing(g, furniture, this._walkFurniture ||= [], p, oldX, oldY, p.x, p.y, 0.25, tmp2);
+          if (furnitureBlocked) {
+            const lateralPush = (p.x-tmp2.x)*ty - (p.y-tmp2.y)*tx;
+            const side = Math.abs(lateralPush)>1e-8 ? Math.sign(lateralPush) : (p.off < 0 ? -1 : 1);
+            for (const sign of [side, -side]) {
+              const off = clamp(p.off + sign * p.speed * dt, -1.2, 1.2);
+              const shift = off - p.off, x = oldX + ty*shift, y = oldY - tx*shift;
+              if (!shift || (!pl.vehicle && Math.hypot(x-pl.x,y-pl.y) < 0.7) ||
+                  g.statics.raycast(oldX, oldY, x, y) < 1 || furniture.push(x, y, 0.25, tmp2) ||
+                  sidewalkFurnitureCrossing(g, furniture, this._walkFurniture ||= [], p, oldX, oldY, x, y) ||
+                  this.sidewalkBuilding(x, y, oldX, oldY) || g.statics.resolvePedestrian(x, y, 0.25, tmp2) ||
+                  staticPathBlocked(g.statics, oldX, oldY, x, y, true) ||
+                  vehicleBlocksPath(g, null, oldX, oldY, x, y, 0.25)) continue;
+              p.x = x; p.y = y; p.s = oldS; p.off = off;
+              furnitureBlocked = false;
+              break;
+            }
+          }
           // A prescribed sidewalk loop can cross a facade or a fence. Turn
           // back on the same side and ease onto the return lane from here.
           // Traffic stopped at a light has no parked-car circles.
-          if ((checkWalls && (vehicleBlocksPath(g, null, oldX, oldY, p.x, p.y, 0.25, 2.2) ||
-              staticPathBlocked(g.statics, oldX, oldY, p.x, p.y, true) ||
-              sidewalkFurnitureCrossing(g, furniture, this._walkFurniture ||= [], p, oldX, oldY, p.x, p.y))) ||
+          if ((checkWalls && (crossesPlayer(pl, oldX, oldY, p.x, p.y) || vehicleBlocksPath(g, null, oldX, oldY, p.x, p.y, 0.25, 2.2) ||
+              staticPathBlocked(g.statics, oldX, oldY, p.x, p.y, true) || furnitureBlocked)) ||
               (checkWalls && this.sidewalkBuilding(p.x, p.y, oldX, oldY)) || insideVehicle(g, p.x, p.y, 0.25, 2.2) || furniture?.push(p.x, p.y, 0.25, tmp2) || g.statics.resolvePedestrian(p.x, p.y, 0.25, tmp2) ||
               g.statics.raycast(oldX, oldY, p.x, p.y) < 1) {
             p.x = oldX; p.y = oldY; p.s = p.rejoinStart ?? oldS; p.rejoinStart = undefined;
@@ -781,13 +814,15 @@ export class Peds {
                 g.statics.resolvePedestrian(fromX, fromY, 0.25, tmp2);
               }
               let x = tmp2.x, y = tmp2.y;
-              const clear = () => !(checkWalls && this.sidewalkBuilding(x, y, oldX, oldY)) && !furniture?.push(x, y, 0.25 - 1e-6, tmp) &&
+              const clear = () => {
+                return !(checkWalls && (crossesPlayer(pl, oldX, oldY, x, y) || this.sidewalkBuilding(x, y, oldX, oldY))) && !furniture?.push(x, y, 0.25 - 1e-6, tmp) &&
                   g.statics.raycast(fromX, fromY, x, y) >= 1 &&
                   (!checkWalls || (!staticPathBlocked(g.statics, fromX, fromY, x, y, true) &&
                       !vehicleBlocksPath(g, null, oldX, oldY, x, y, 0.25) &&
                       !sidewalkFurnitureCrossing(g, furniture, this._walkFurniture ||= [], p, oldX, oldY, x, y))) &&
-                  !g.statics.resolvePedestrian(x, y, 0.25, tmp) &&
+                  !g.statics.resolvePedestrian(x, y, 0.25 - 8 * Number.EPSILON * Math.max(1, Math.abs(x), Math.abs(y)), tmp) &&
                   !insideVehicle(g, x, y, 0.25);
+              };
               let recovered = clear();
               if (!recovered && checkWalls && furniture?.push(oldX, oldY, 0.25, tmp)) {
                 // A fence or car can block the shortest way out of a streamed table.
@@ -799,8 +834,26 @@ export class Peds {
                   if (clear()) { recovered = true; break; }
                 }
               }
+              // A narrow aisle can leave only the route tangent open.
+              if (!recovered && checkWalls && furniture?.push(oldX, oldY, 0.25, tmp)) {
+                for (const sign of [-1, 1]) {
+                  for (let distance = 0.1; distance <= 1.21; distance += 0.1) {
+                    x = oldX + sign*distance*tx; y = oldY + sign*distance*ty;
+                    if (furniture.push(x, y, 0.25, tmp)) continue;
+                    recovered = clear();
+                    break;
+                  }
+                  if (recovered) break;
+                }
+              }
               if (recovered) {
                 p.x = x; p.y = y; p.s = p.loop.project(x, y).s;
+                if (checkWalls) {
+                  // Resume on the recovered side instead of steering back into the wall.
+                  p.wallRejoined = true;
+                  p.loop.at(p.s, tmp);
+                  p.off = clamp(((x - tmp.x) * tmp.ty - (y - tmp.y) * tmp.tx) * p.dir, -1.2, 1.2);
+                }
               }
             }
           }
