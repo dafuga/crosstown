@@ -5,7 +5,7 @@
 // No lights are added and nothing is fetched: only the emissive of materials the models already have. ?lmnight=0 = off. window.__lmnight for a look.
 import * as THREE from 'three';
 // Which models: those seen at night with this file and judged right (St Patrick's, the stair tower: stills Nov 17). ?lmnight=all = every lm_ model (to try the rest).
-const ONLY = /^lm_(st_patricks|stair_tower)$/;
+const ONLY = /^lm_(st_patricks|stair_tower|grand_central|library_front)$/;     /* merge lane, Nov 18: + the terminal and the library front (blind night pairs: lit picked; the viaduct, the plaza, the steps and the carrier lost lit and stay as they are) */
 export function install(game) {
   const ALL = new URLSearchParams(location.search).get('lmnight') === 'all';
   const W = game.world; if (!W) return null; const night = W.shared && W.shared.uNightK; if (!night) return null;

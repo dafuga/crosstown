@@ -15,6 +15,10 @@ import * as THREE from 'three';
 const NS = 10;
 const sm = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); }, mix = (a, b, t) => a + (b - a) * t;
 
+/* merge2 round 23: with the stronger lamp light (T.lamp 1.3) the brightest part of each pool is held back to about what it was (x0.58 at the core), so ground that was already bright does not go to 'near-daylight white'; the gain is in the dim reach of each lamp */
+/* merge2 round 24: the street lamps' light on the scene is warmed (x 1.08, 0.94, 0.74): round 23's critic: 'every lamp is the same cold white, so the lit trees and walls look moonlit'. ?warmlamp=0 = as before */
+const WARMLAMP = (() => { try { return new URLSearchParams(location.search).get('warmlamp') !== '0'; } catch (e) { return true; } })();
+const CITYLAMP = (() => { try { return new URLSearchParams(location.search).get('citylamp') !== '0'; } catch (e) { return true; } })();
 const QUAD_VS = 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }';
 const LIGHT_FS = `
 precision highp float; precision highp sampler2D;
@@ -25,7 +29,7 @@ void main(){
   vec4 v = uInvProj * vec4(vUv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0); v /= v.w; vec3 wp = (uCamW * v).xyz;
   vec3 n = normalize(cross(dFdx(wp), dFdy(wp))); if (dot(n, uCamPos - wp) < 0.0) n = -n;
   vec3 lamp = texture2D(tLamp, (wp.xz - uMap.xy) * uMap.zw).rgb;
-  vec3 L = lamp * lamp * uLamp * (1.0 - smoothstep(7.5, 12.0, wp.y)) * clamp(0.55 + 0.45 * n.y, 0.1, 1.0);
+  vec3 L = lamp * lamp * uLamp * ${WARMLAMP ? 'vec3(1.08, 0.94, 0.74) * ' : ''}${CITYLAMP ? '(1.0 - 0.42 * smoothstep(0.5, 0.95, max(lamp.r, max(lamp.g, lamp.b)))) * ' : ''}(1.0 - smoothstep(7.5, 12.0, wp.y)) * clamp(0.55 + 0.45 * n.y, 0.1, 1.0);
   for (int i = 0; i < ${NS}; i++) { if (i >= uSpotN) break; vec3 to = wp - uSpotP[i].xyz; float ds = length(to); vec3 l = to / max(ds, 1e-3); float c = dot(l, uSpotD[i].xyz);
     float cone = smoothstep(0.80, 0.975, c) + 0.10 * smoothstep(0.2, 0.8, c); float att = (1.0 - smoothstep(uSpotP[i].w * 0.55, uSpotP[i].w, ds)) / (1.0 + 0.012 * ds * ds);
     L += vec3(1.0, 0.95, 0.86) * (uHead * uSpotD[i].w * cone * att * mix(0.32, 1.0, max(dot(n, -l), 0.0))); }
@@ -83,7 +87,8 @@ const SKY_FS = `uniform vec3 uMoon; uniform float uN, uDusk, uCloud; uniform vec
 export async function makeKit(game, N) {
   const g = game, w = g.world, P = g.P || new URLSearchParams(location.search), T = N.tune;
   const K = { pass: null, lamps: null, cars: null, sky: null, lampN: 0, spots: 0, carN: 0, patched: !!w.shared.uNightK, map: null };
-  Object.assign(T, { lamp: 0.75, head: 2.2, amb: 1.0, win: 0.55, winFrac: 0.36, glow: 1.0, fx: 4.5 }, Object.fromEntries(['lamp', 'head', 'amb', 'win', 'winFrac', 'glow', 'fx'].filter((k) => P.has('N' + k)).map((k) => [k, +P.get('N' + k)])));
+  /* merge2 round 23 (Nov 18): more street-lamp light on what stands round the lamps and more, brighter lit windows (lamp 0.75 -> 1.3, win 0.55 -> 0.8, winFrac 0.36 -> 0.5; round 19 audit: lamps were 'dots with no pools of light'). ?citylamp=0 = as before */
+  Object.assign(T, P.get('citylamp') === '0' ? { lamp: 0.75, head: 2.2, amb: 1.0, win: 0.55, winFrac: 0.36, glow: 1.0, fx: 4.5 } : { lamp: 1.3, head: 2.2, amb: 1.0, win: 0.8, winFrac: 0.5, glow: 1.0, fx: 4.5 }, Object.fromEntries(['lamp', 'head', 'amb', 'win', 'winFrac', 'glow', 'fx'].filter((k) => P.has('N' + k)).map((k) => [k, +P.get('N' + k)])));
   if (!K.patched) console.log('[night] facade.js / world.js patch not there: windows stay dark');
   // light, Nov 15 (the white patch by the plaza lamps at night): the combat effects' smoke, steam, dust and mist (combat/fx.js) are unlit quads whose colours
   // are fixed DAY numbers times fx.day, and fx.day was 1.0 at all hours: steam off a damaged car's hood is .5 in scene light, a wreck's smoke .16, powder

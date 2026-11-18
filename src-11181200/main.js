@@ -109,7 +109,15 @@ window.world = world; window.THREE = THREE;
 const W = +(P.get('w') || 0), H = +(P.get('h') || 0);
 // live play renders at most ~2.4 million pixels (about 1080p x 1.15): the facade and soft-shadow shaders are paid per pixel, and a retina window at 1.5x was twice that.
 // world.liveScale (game.js lowers it when the frame rate still sags) scales it further.
-function fit() { const w = W || innerWidth, h = H || innerHeight; world.resize(w, h, W ? 1 : Math.min(devicePixelRatio, Math.min(devicePixelRatio, 1.5, Math.sqrt((P.has('px') ? +P.get('px') * 1e6 : window.__safari ? 1.3e6 : 2.4e6) / (w * h))) * (world.liveScale || 1))); }
+// lead (heli-lines), Nov 18: Matt's report 20261115-172742 ("weird vertical lines on the screen maybe when turning", M4 Max, render scale 1.3). Grown to
+// 1.3 the picture lands just under the screen's own pixels (his: 2850 wide on 3024), and the browser stretches the canvas the last 6%. A stretch that
+// close to 1 leaves evenly spaced soft and sharp columns and rows (his: every 17.4 screen pixels), which stand still on the screen while the city turns
+// through them. So when the grown picture (liveScale above 1) comes within 12% of the screen's pixels it takes exactly the screen's pixels: no stretch, no
+// columns. The frame-rate governor still undoes a step up that does not hold. ?prsnap=0 (or world.prSnap = false, then __fit()) = as before.
+function fit() { const w = W || innerWidth, h = H || innerHeight; let pr = W ? 1 : Math.min(devicePixelRatio, Math.min(devicePixelRatio, 1.5, Math.sqrt((P.has('px') ? +P.get('px') * 1e6 : window.__safari ? 1.3e6 : 2.4e6) / (w * h))) * (world.liveScale || 1));
+  if (!W && world.prSnap !== false && (world.liveScale || 1) > 1 && pr < devicePixelRatio && pr >= 0.88 * devicePixelRatio) pr = devicePixelRatio;
+  world.resize(w, h, pr); }
+world.prSnap = P.get('prsnap') !== '0';
 window.__fit = fit;
 const msg = document.getElementById('bootmsg');
 try {
