@@ -21,7 +21,7 @@ function tex(name, srgb) {
   }, undefined, rej));
 }
 async function texArray(names, srgb) {
-  { const kx = window.__ktx2list && window.__ktx2list['array:' + names.join('|')]; if (kx) { const t = await window.__ktx2.loadAsync(kx); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8; t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; return t; } }     /* lead: the same five walls as one Basis array texture (tools/ktxloose.py) */
+  { const kx = window.__ktx2list && window.__ktx2list['array:' + names.join('|')]; if (kx) { const lt = window.__latetex, lo = lt && lt.on ? lt.lo(kx) : null     /* perf lane: late textures (src/latetex.js; ?latetex=0) */, t = await window.__ktx2.loadAsync(lo || kx); if (lo) lt.later(t, kx); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8; t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; return t; } }     /* lead: the same five walls as one Basis array texture (tools/ktxloose.py) */
   const S = 1024, data = new Uint8Array(S * S * 4 * names.length);
   const c = document.createElement('canvas'); c.width = c.height = S; const g = c.getContext('2d', { willReadFrequently: true });
   for (let i = 0; i < names.length; i++) {
@@ -176,6 +176,13 @@ async function lmSlabs(world, build, start, dir = 'light/lm/', wrapS = THREE.Cla
   st.update = (cam) => {
     // a slab that has arrived goes to the card (one a frame), and into the CPU copy three keeps for a lost context
     const a = st.ready.shift(); if (a) { try { for (let L = 0; L < J.levels; L++) { const m = a.c.mipmaps[L]; world.renderer.copyTextureToTexture(a.c, dst, null, v2.set(0, slot(a.n) * m.height), L); if (mips[L].data && mips[L].data.length) mips[L].data.set(m.data, slot(a.n) * m.data.byteLength); } held[slot(a.n)] = a.n; st.loads++; } catch (e) { console.warn('[game] lightmap slab ' + a.n + ' not drawn: ' + e.message); } a.c.dispose(); }
+    const LQ = window.__lateq;     /* perf lane, Nov 18 (src/lateq.js; ?lateq=0 = the lines below, as before): the slabs that come after ready are one lane of the shared queue: 'near' when the wanted slab's edge is within LQ.FAR m of the camera, else 'later' */
+    if (LQ) { st.cam = cam; if (a) LQ.poke(); if (st.lane) return; st.lane = true;
+      const pick = () => { const y = -st.cam.position.z, n1 = idx(y); let w = null, b = 1e9; for (let k = n1 - (S / 2 - 1); k <= n1 + S / 2; k++) if (has.has(k) && held[slot(k)] !== k) { const d = Math.abs(k + 0.5 - (y / hy4 + 0.5) * S); if (d < b) { b = d; w = k; } }
+        if (w == null) return [null, 1e6]; const lo = (w / S - 0.5) * hy4; return [w, Math.max(lo - y, 0, y - (lo + hy4 / S))]; };
+      LQ.lane({ kind: () => (pick()[1] <= LQ.FAR ? 'near' : 'later'), d: () => pick()[1], name: () => dir + 's' + pick()[0] + '.ktx2', more: () => !st.ready.length && performance.now() >= st.failT && pick()[0] != null },
+        (free) => { const w = pick()[0]; if (w == null) return null; free.as(dir + 's' + w + '.ktx2'); st.busy = true; return LQ.ktx(K, A + dir + 's' + w + '.ktx2', free).then((c) => { st.ready.push({ c, n: w }); }, () => { st.failT = performance.now() + 8000; }).finally(() => { st.busy = false; }); });     /* LQ.ktx: the line is given back when the bytes are in, before the transcode */
+      return; }
     if (st.busy || !window.__ready || performance.now() < st.failT) return;
     const n = idx(-cam.position.z); let want = -1, bd = 1e9; for (let k = n - (S / 2 - 1); k <= n + S / 2; k++) if (has.has(k) && held[slot(k)] !== k) { const d = LATE ? Math.abs(k + 0.5 - (-cam.position.z / hy4 + 0.5) * S) : Math.abs(k - n); if (d < bd) { bd = d; want = k; } }
     if (want < 0) return; st.busy = true; get(want).then((c) => { st.ready.push({ c, n: want }); }, () => { st.failT = performance.now() + 8000; }).finally(() => { st.busy = false; });

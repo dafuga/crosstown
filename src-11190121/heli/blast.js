@@ -136,6 +136,13 @@ export class Puffs {
       c.globalCompositeOperation = 'destination-out'; for (let i = 0; i < 26; i++) { const a = i / 26 * 6.283 + Math.random() * 0.3, r0 = 40 + Math.random() * 14; c.globalAlpha = 0.5; c.beginPath(); c.moveTo(64 + Math.cos(a - 0.05) * r0, 64 + Math.sin(a - 0.05) * r0); c.lineTo(64 + Math.cos(a) * 66, 64 + Math.sin(a) * 66); c.lineTo(64 + Math.cos(a + 0.09) * r0, 64 + Math.sin(a + 0.09) * r0); c.fill(); }
       const t = new THREE.CanvasTexture(cv), geo = new THREE.PlaneGeometry(1, 1); geo.rotateX(-Math.PI / 2);
       this.sc = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({ map: t, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6 }), 24); this.sc.count = 0; this.sc.frustumCulled = false; this.sc.renderOrder = 2; this.sc.name = 'heliScorch'; this.scN = 0; this.scene.add(this.sc); }
+    if (this.fx && this.sc.material.color.r !== (this.scK ?? 1)) this.sc.material.color.setScalar(this.scK ?? 1);
+    if (this.fx && ny < 0.5) {      /* helifire-2: a mark on a WALL. The first patch laid it on the wall the height picture knows, which can lie inside the facade that is drawn, and its test case never struck a wall at all (the rockets fell on a roof in front of it): no mark was ever seen. It has its own batch now (twelve, the oldest taken again) whose depth is worked out as if it stood 4 m nearer the eye (its place on the screen is unchanged), so it shows on whatever the facade's drawn face is; 5 m across with a second, smaller one over its middle for a black heart. */
+      if (!this.scW) { const m = this.sc.material.clone(); m.polygonOffset = false; m.side = THREE.DoubleSide; m.onBeforeCompile = (sh) => { sh.vertexShader = sh.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\n  { vec4 mvb = mvPosition; mvb.xyz *= max(0.2, 1.0 - 4.0 / max(length(mvb.xyz), 0.001)); vec4 pb = projectionMatrix * mvb; gl_Position.z = pb.z / pb.w * gl_Position.w; }'); };
+        this.scW = new THREE.InstancedMesh(this.sc.geometry, m, 12); this.scW.count = 0; this.scW.frustumCulled = false; this.scW.renderOrder = 2; this.scW.name = 'heliScorchWall'; this.scWN = 0; this.scene.add(this.scW); }
+      this.scW.material.color.setScalar(0.2 * (this.scK ?? 1));      /* a fifth of the picture's own grey: on a wall in shade its rim stood PALER than the brick (hold 23) */
+      for (const sw of [size || 5, (size || 5) * 0.45]) { const j = this.scWN++ % 12; _sq.setFromUnitVectors(_sv.set(0, 1, 0), _sn.set(nx, ny, nz).normalize()).multiply(_sq2.setFromAxisAngle(_sv, Math.random() * 6.283)); this.scW.setMatrixAt(j, _sm.compose(_sv.set(x + nx * 0.05, y + ny * 0.05, z + nz * 0.05), _sq, _ss.set(sw, 1, sw))); }
+      this.scW.count = Math.min(12, this.scWN); this.scW.instanceMatrix.needsUpdate = true; return; }
     const i = this.scN++ % 24, sz = size || 9 + Math.random() * 4; _sq.setFromUnitVectors(_sv.set(0, 1, 0), _sn.set(nx, ny, nz).normalize()).multiply(_sq2.setFromAxisAngle(_sv, Math.random() * 6.283)); this.sc.setMatrixAt(i, _sm.compose(_sv.set(x + nx * 0.05, y + ny * 0.05, z + nz * 0.05), _sq, _ss.set(sz, 1, sz))); this.sc.count = Math.min(24, this.scN); this.sc.instanceMatrix.needsUpdate = true;
   }
   step(dt) { this.t += dt; { const L = boomAt.lit; if (L) { L.t += dt; const k = Math.max(0, 1 - L.t / 0.55); L.fx.lightI = L.I * k * k; if (k <= 0) boomAt.lit = null; } }     /* the strike's light dies away over half a second (the game's own rule holds it level, then cuts it) */
@@ -149,7 +156,7 @@ export class Puffs {
   }
   sun(r, g, b) { this.sets[0].m.uniforms.uSun.value.set(r, g, b); }
   // how much daylight there is (1 noon, 0.07 deep night): the smoke takes the sky's light, so at night it is dark, and the strike's own light is eased (a dark street needs less)
-  setDay(d) { this.day = d; this.sets[0].m.uniforms.uSun.value.set(d, d, d * (1 + 0.25 * (1 - d))); if (this.fx) this.sets[1].m.uniforms.uGain.value = 0.65 + 0.35 * d; }
+  setDay(d) { this.day = d; this.sets[0].m.uniforms.uSun.value.set(d, d, d * (1 + 0.25 * (1 - d))); if (this.fx) { this.sets[1].m.uniforms.uGain.value = 0.65 + 0.35 * d; this.scK = 0.12 + 0.88 * d; if (this.scW) this.scW.material.color.setScalar(0.2 * this.scK); if (this.sc) this.sc.material.color.setScalar(this.scK); } }      /* helifire-2: the scorch marks are unlit; at night they stood paler than the dark wall round them (fifth blind critic: 'a lit fog patch, not a burn'), so they take the day's measure */
   sunDir(v) { if (v && v.isVector3) this.uSunW.value.copy(v).normalize(); }
 }
 
@@ -198,7 +205,7 @@ export function boomAt(g, heli, puffs, x, y, z, o = {}) {
   for (let i = 0; i < 4; i++) padd(puffs, x + R() * 2, y + 1.5 + Math.random() * 1.5, z + R() * 2, R() * 6, 5 + Math.random() * 4, R() * 6, 4.5, 0.35 + Math.random() * 0.2, 6, 1, 0.25);
   // the black smoke it turns into, rising in a column past the fourth floor and hanging there
   for (let i = 0; i < 9; i++) { const a = Math.random() * 6.283, e = 0.5 + Math.random() * 0.9, sp = 3 + Math.random() * 6; padd(puffs, x + R() * 3, y + 1.2 + Math.random() * 2.5, z + R() * 3, Math.cos(a) * Math.cos(e) * sp, Math.sin(e) * sp + 5 + i * 0.5, Math.sin(a) * Math.cos(e) * sp, 3.6 + Math.random() * 2.6, 4.5 + Math.random() * 3.0, 3.6, 0, 0); }
-  puffs.column(x, y, z, 3.2); if (o.ground) puffs.scorch(x, y, z); else if (WN.on) puffs.scorch(o.wall.px, y, o.wall.pz, o.wall.nx, 0, o.wall.nz, 6.5 + Math.random() * 3);
+  puffs.column(x, y, z, 3.2); if (o.ground) puffs.scorch(x, y, z); else if (WN.on) puffs.scorch(o.wall.px, y, o.wall.pz, o.wall.nx, 0, o.wall.nz, 4.5 + Math.random() * 1.5);
   // the skirt: pale dust thrown out along the ground
   for (let i = 0; i < 10; i++) { const a = i / 10 * 6.283 + Math.random() * 0.4, sp = 16 + Math.random() * 9; padd(puffs, x, y + 0.7, z, Math.cos(a) * sp, 0.5, Math.sin(a) * sp, 2.2, 1.6 + Math.random() * 0.9, 4.2, 0, 0.8); }
   // sparks and burning bits thrown high

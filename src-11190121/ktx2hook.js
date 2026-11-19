@@ -14,14 +14,18 @@ export async function installKTX2(renderer) {
   const parse = GLTFLoader.prototype.parse; GLTFLoader.prototype.parse = function (...a) { if (!this.ktx2Loader) this.setKTX2Loader(k); return parse.apply(this, a); };
   window.__ktx2 = k;
   if (new URLSearchParams(location.search).get('ktx') === '0') return k;
+  // perf lane, Nov 18 (late textures, src/latetex.js): the big relief maps come as a small file of their low levels first and whole right after ready. ?latetex=0 = as before (nothing more is fetched)
+  const ltP = new URLSearchParams(location.search).get('latetex') !== '0' ? import('./latetex.js').then((m) => m.installLateTex(k)).catch((e) => { console.log('[latetex] not used: ' + (e && e.message)); return null; }) : null;
   let list = {}; try { const r = await fetch('assets/ktx2.json'); if (r.ok) list = await r.json(); } catch (e) {}
+  const lt = ltP ? await ltP : null;
   window.__ktx2list = list;
   const norm = (u) => String(u).split('?')[0].replace(/^\.\//, '').replace(/^.*?(assets\/)/, '$1');
   const load = THREE.TextureLoader.prototype.load; THREE.TextureLoader.prototype.load = function (url, onLoad, onProgress, onError) {
     const key = norm((this.path || '') + url); if (!list[key]) return load.apply(this, arguments);
     // the caller gets a texture object at once, as with TextureLoader, and sets wrap / colour space / anisotropy on it; the compressed data is filled in when it arrives
     const t = new THREE.CompressedTexture([], 4, 4, THREE.RGBAFormat); t.generateMipmaps = false;
-    k.load(key.replace(/\.[a-z]+$/, '.ktx2'), (c) => { t.mipmaps = c.mipmaps; t.image = c.image; t.format = c.format; t.type = c.type; t.minFilter = c.mipmaps.length > 1 ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter; t.magFilter = THREE.LinearFilter; t.flipY = false; t.generateMipmaps = false; t.needsUpdate = true; if (onLoad) onLoad(t); }, undefined, (e) => { console.warn('[ktx2] ' + key + ' failed, no fallback: ' + (e && e.message)); if (onError) onError(e); });
+    const full = key.replace(/\.[a-z]+$/, '.ktx2'), lo = lt ? lt.lo(full) : null; if (lo) lt.later(t, full);     /* perf lane: late textures */
+    k.load(lo || full, (c) => { t.mipmaps = c.mipmaps; t.image = c.image; t.format = c.format; t.type = c.type; t.minFilter = c.mipmaps.length > 1 ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter; t.magFilter = THREE.LinearFilter; t.flipY = false; t.generateMipmaps = false; t.needsUpdate = true; if (onLoad) onLoad(t); }, undefined, (e) => { console.warn('[ktx2] ' + key + ' failed, no fallback: ' + (e && e.message)); if (onError) onError(e); });
     return t; };
   return k;
 }

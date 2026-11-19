@@ -100,7 +100,7 @@ function movingMaterial(atlas, sun) {
 class Needle { constructor(w = 14, z = 0.8) { this.x = 0; this.v = 0; this.w = w; this.z = z; this.init = false; }
   step(target, dt) { if (!this.init) { this.x = target; this.init = true; return this.x; } const n = dt > 0.02 ? 2 : 1, h = dt / n; for (let i = 0; i < n; i++) { this.v += (this.w * this.w * (target - this.x) - 2 * this.z * this.w * this.v) * h; this.x += this.v * h; } return this.x; } }
 
-export async function buildCockpit(ctx, model) {
+export async function buildCockpit(ctx, model, late) {     /* perf lane, Nov 15: late = { wait: true } builds without the built cabin's file (it comes after ready), late = { glb } builds with the file already fetched: heli/latecabin.js. No third argument = as before */
   const { DIMS, game, heli } = ctx, world = ctx.world, maxAniso = world && world.renderer ? world.renderer.capabilities.getMaxAnisotropy() : 8;
   const root = new THREE.Group(); root.name = 'cockpit';
 
@@ -148,7 +148,8 @@ export async function buildCockpit(ctx, model) {
   // trim; window light, colour, roughness and relief baked): assets/heli/cockpit/cabin.glb. With it, the code-built fixed cabin and the
   // painted plate are not drawn from the seats, and the live parts (faces, needles, screens, compass card) go to the floors of its wells.
   let glb = null; const wantGlb = (() => { try { const q = new URLSearchParams(location.search).get('cabin'); return q === 'code' ? false : q === 'glb' ? true : CABIN_GLB_DEFAULT; } catch (e) { return CABIN_GLB_DEFAULT; } })();
-  if (wantGlb && !(model && model.standIn)) try { const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js'); glb = await Promise.race([new GLTFLoader().loadAsync(new URL('../../assets/heli/cockpit/' + (new URLSearchParams(location.search).get('cabinfile') || 'cabin.glb'), import.meta.url).href), new Promise((_, no) => setTimeout(() => no(new Error('cabin.glb did not arrive in 30 s')), 30000))]); glb.scene.updateMatrixWorld(true);
+  const lateWait = !!(late && late.wait && wantGlb && !(model && model.standIn));
+  if (wantGlb && !(model && model.standIn) && !lateWait) try { const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js'); glb = late && late.glb ? late.glb : await Promise.race([new GLTFLoader().loadAsync(new URL('../../assets/heli/cockpit/' + (new URLSearchParams(location.search).get('cabinfile') || 'cabin.glb'), import.meta.url).href), new Promise((_, no) => setTimeout(() => no(new Error('cabin.glb did not arrive in 30 s')), 30000))]); glb.scene.updateMatrixWorld(true);
     for (const n of ['panel', 'hood', 'lower', 'trim', 'glass_dials']) { const o = glb.scene.getObjectByName(n); if (!o || !o.isMesh || !o.geometry.attributes.position || !o.geometry.attributes.position.count) throw new Error('no ' + n + ' in the file'); } } catch (e) { console.log('[heli] cockpit: built cabin not used (' + (e && e.message) + ')'); glb = null; }
   const dW = {}; let glbCompass = null;
   if (glb) { const bak = [cab.prints.attributes.position.array.slice(), cab.prints.index ? cab.prints.index.array.slice() : null, cab.screens.attributes.position.array.slice()]; try {
@@ -470,5 +471,5 @@ export async function buildCockpit(ctx, model) {
     if (ctx.shared && ctx.shared.uSunDir) { sceneT -= dt || 0; if (sceneT <= 0) { sceneT = 0.05; api.sceneSunTarget = sceneSunNow(f, ctx.shared.uSunDir.value); } sceneSun += (api.sceneSunTarget - sceneSun) * Math.min(1, (dt || 0.016) * 9); sun.u.uCabScene.value = sceneSun; }
     if (full && world && world.renderer && heli.root) sun.render(world.renderer, heli.root, f.pos, ctx.shared.uSunDir.value, sunSkip); else sun.off();
   }
-  Object.assign(api, { root, update, read, AO, shade: (A) => cab.shade && cab.shade(Object.assign(AO, A)), uHaze, uGl, sceneSunAt: (pos) => sceneSunNow({ pos }, ctx.shared.uSunDir.value), built, uBake, parts: { built, liner, wglass, fixed, moving, fixedLo, movingLo, prints, panel, screens, glass, inst, far, shell }, tris: cab.info.tris, textures: { tAtlas, tDyn, tGrain, tDust }, displays: disp, sun }); return api;
+  Object.assign(api, { lateWait, root, update, read, AO, shade: (A) => cab.shade && cab.shade(Object.assign(AO, A)), uHaze, uGl, sceneSunAt: (pos) => sceneSunNow({ pos }, ctx.shared.uSunDir.value), built, uBake, parts: { built, liner, wglass, fixed, moving, fixedLo, movingLo, prints, panel, screens, glass, inst, far, shell }, tris: cab.info.tris, textures: { tAtlas, tDyn, tGrain, tDust }, displays: disp, sun }); return api;
 }

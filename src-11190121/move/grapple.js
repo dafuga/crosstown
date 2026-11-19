@@ -483,7 +483,13 @@ export function install(game) {
     const fov = C.fov + K.fa; if (Math.abs(cam.fov - fov) > 0.01) { cam.fov = fov; cam.updateProjectionMatrix(); }
   };
   // (laid on in syncVisuals, after the game's updateCamera: a placeCamera wrap is skipped whenever a gun is out, combat.js places its own camera then)
-  const sync0 = g.syncVisuals.bind(g); g.syncVisuals = function (dt) { if (K.on) { try { camLook(dt); } catch (e) { fail('cam', e); } try { unpose(); } catch (e) { fail('unpose', e); } } sync0(dt); try { if (G.phase && pl.vis && pl.vis.object && !pl.vehicle) pl.vis.object.position.y = pl.alt; if (K.on) drawB(dt > 0 ? Math.min(dt, 0.1) : 0.016); else draw(); look(dt); if (G.roof) G.roof.draw(dt); } catch (e) { fail('draw', e); } };
+  // (lead's helper traffic-fix, Nov 18; public error "computeBoundingSphere(): Computed radius is NaN", reports 201520-b9622a and 235729-8e51cc.) pl.alt does not
+  // exist until he has first been off the street, and a line fired from the street leaves it alone while it flies out (phase 'out'): the line below wrote
+  // `undefined` into his figure's height for those 0.8 s. His whole figure, and the launcher, cable and puff that hang on his hand's place, were NaN: he and
+  // the line were NOT DRAWN while the first line of a page load flew out, and whoever next asked the scene for bounds (a roof ray, memfree, the park) logged
+  // three's error for the cable. Now the height is written only when it is a number; syncVisuals has already stood him on the street. ?graltfix=0 = as before.
+  const ALT_OLD = g.P.get('graltfix') === '0';
+  const sync0 = g.syncVisuals.bind(g); g.syncVisuals = function (dt) { if (K.on) { try { camLook(dt); } catch (e) { fail('cam', e); } try { unpose(); } catch (e) { fail('unpose', e); } } sync0(dt); try { if (G.phase && pl.vis && pl.vis.object && !pl.vehicle && (ALT_OLD || pl.alt === +pl.alt)) pl.vis.object.position.y = pl.alt; if (K.on) drawB(dt > 0 ? Math.min(dt, 0.1) : 0.016); else draw(); look(dt); if (G.roof) G.roof.draw(dt); } catch (e) { fail('draw', e); } };
   const _p = new THREE.Vector3(), dia = (c, x, y, r) => { c.beginPath(); c.moveTo(x, y - r); c.lineTo(x + r, y); c.lineTo(x, y + r); c.lineTo(x - r, y); c.closePath(); c.stroke(); };
   const hookHud = () => { const H = g.hud; if (!H || !H.draw || !H.text || !H.panel || G.hud) return; G.hud = true; const d0 = H.draw.bind(H);
     H.draw = function () { d0(); try { if (!H.ctx) return; const c = H.ctx, W = H.w / H.k, Hh = H.h / H.k, no = G.phase ? '' : cannot();

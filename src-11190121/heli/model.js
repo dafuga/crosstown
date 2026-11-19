@@ -185,7 +185,12 @@ export async function buildHeliModel(ctx) {
   const root = new THREE.Group(); root.name = 'heli-model';
   // the camera's shutter: 1/50 s unless ?helishutter=<1/s> says otherwise (a stills camera at 1/1000 nearly freezes the blades). api.shutter may be set while it runs.
   const api = { root, update: null, lods: null, innerTrim: null, exhaust: EXHAUST.slice(), shutter: 1 / Math.max(10, +(P && P.get('helishutter')) || 50) };
-  const [gltf, tNormal, tOrm, tTint] = await Promise.all([loadGLB('heli.glb'), loadTex('normal.png'), loadTex('orm.jpg'), loadTex('tint.jpg', true)]);
+  // perf lane, Nov 18 (late helicopter maps, heli/latemaps.js): the three skin pictures (7.4 MB) are no part of the load: lo/<name> (their own mip level 3, 0.33 MB) is loaded here and the full
+  // picture is put into the SAME texture right after ready. A missing lo/ picture: the full one with the load, as before. ?lateheli=0 = as before (nothing more is fetched); also under ?shot ?capture
+  const lateOn = !!P && P.get('lateheli') !== '0' && !P.has('shot') && !P.has('capture'), lateList = [];
+  const loTex = !lateOn ? loadTex : async (name, srgb) => { const t = await loadTex('lo/' + name, srgb); if (!t) return loadTex(name, srgb); t.userData.keepData = true;     /* memfree.js must not close and lock the small picture before the full one is in */ lateList.push([t, assetURL(name), name]); return t; };
+  const [gltf, tNormal, tOrm, tTint] = await Promise.all([loadGLB('heli.glb'), loTex('normal.png'), loTex('orm.jpg'), loTex('tint.jpg', true)]);
+  if (lateList.length) { const ord = ['normal.png', 'orm.jpg', 'tint.jpg']; lateList.sort((a, b) => ord.indexOf(a[2]) - ord.indexOf(b[2])); import('./latemaps.js').then((m) => m.lateMaps(lateList, W && W.renderer, P.get('lateheli') === 'hold')).catch((e) => console.log('[heli] late maps not started (the small pictures stay): ' + (e && e.message))); }
   // gameplay/board, Nov 13: the three maps go to the card now, one at a time, not in the frame that first draws the near model (?heliup=0 off)
   if (W && W.renderer && W.renderer.initTexture && !/[?&](heliup=0|helitex=img)/.test(location.search)) (async () => { for (const t of [tNormal, tOrm, tTint]) if (t) { await new Promise((r) => setTimeout(r, 40)); try { W.renderer.initTexture(t); } catch (e) {} } })();
 

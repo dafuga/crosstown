@@ -125,14 +125,25 @@ export class Tiles {
   async runLate(cam) {
     this.lateRun = true; const get = (S) => { const g = gunzip(S.dir + S.shells.file, this.rate); g.catch(() => {}); return g; }, frame = () => new Promise((r) => { let done = false; const go = () => { if (!done) { done = true; r(); } }; requestAnimationFrame(go); setTimeout(go, 100); });
     const pick = () => { const p = cam.position; let b = -1, bd = 1e9; this.lateQ.forEach((S, i) => { const d = this.dist({ box: S.wbox }, p.x, p.z); if (d < bd) { bd = d; b = i; } }); return b < 0 ? null : this.lateQ.splice(b, 1)[0]; };
-    let S = pick(), job = S && get(S);
-    while (S) {
-      let buf = null; for (;;) { try { buf = await job; break; } catch (e) { console.log('[tiles] late shells of ' + S.set + ' not loaded, asked again in 8 s: ' + (e && e.message)); await new Promise((r) => setTimeout(r, 8000)); job = get(S); } }
-      const N = pick(), njob = N && get(N), tS = performance.now(), H = parseHead(buf); let worst = 0, acc = 0;
+    // perf lane, Nov 18 (src/lateq.js): add() = the unpacking, as it was inline. With the shared queue the late shells are one lane ('far', by the distance of the nearest waiting
+    // set, which is chosen when the turn comes); the line is free for the next download while a file is unpacked, and files are unpacked one after another, as before.
+    // ?lateq=0 = the loop below, as before.
+    const add = async (S, buf) => { const tS = performance.now(), H = parseHead(buf); let worst = 0, acc = 0;
       for (const m of H.meshes) { const t1 = performance.now(), T = this.byId.get(S.set + '/' + m.name); if (T && !T.pin) { T.shell = this.mesh(T, parseMesh(buf, H.base, m).geometry, false); if (T.full) T.shell.visible = false; this.root.add(T.shell); } acc += performance.now() - t1; if (acc >= (window.__warming || window.__startScreen ? 24 : 5)) { worst = Math.max(worst, acc); acc = 0; await frame(); } }     /* a frame's worth: 5 ms in play, 24 ms behind the start screen */
       S.hasShells = true; S.state = 2; this.sync(); if (this.onSet) try { this.onSet(S); } catch (e) {}
       this.stats.lateShells = (this.stats.lateShells || []).concat([[S.set, +(performance.now() / 1000).toFixed(1), Math.round(performance.now() - tS), Math.round(Math.max(worst, acc))]]);
       console.log('[tiles] late shells of ' + S.set + ' in at ' + (performance.now() / 1000).toFixed(1) + ' s: ' + H.meshes.length + ' shells over ' + Math.round(performance.now() - tS) + ' ms, the longest frame share ' + Math.max(worst, acc).toFixed(0) + ' ms');
+    };
+    const LQ = window.__lateq;
+    if (LQ) { let failT = 0, chain = Promise.resolve(); const nearest = () => { const p = cam.position; let b = 1e9; for (const S of this.lateQ) b = Math.min(b, this.dist({ box: S.wbox }, p.x, p.z)); return b; };
+      LQ.lane({ kind: 'far', d: nearest, name: 'late shells', more: () => this.lateQ.length > 0 && performance.now() >= failT }, async (free) => { const S = pick(); if (!S) return; free.as(S.dir + S.shells.file); let buf;
+        try { buf = await get(S); } catch (e) { console.log('[tiles] late shells of ' + S.set + ' not loaded, asked again in 8 s: ' + (e && e.message)); this.lateQ.push(S); failT = performance.now() + 8000; return; }
+        free(); chain = chain.then(() => add(S, buf)).catch((e) => { console.log('[tiles] late shells of ' + S.set + ' not added: ' + (e && e.message)); }); await chain; });
+      return; }     /* lateRun stays true: the lane lives on */
+    let S = pick(), job = S && get(S);
+    while (S) {
+      let buf = null; for (;;) { try { buf = await job; break; } catch (e) { console.log('[tiles] late shells of ' + S.set + ' not loaded, asked again in 8 s: ' + (e && e.message)); await new Promise((r) => setTimeout(r, 8000)); job = get(S); } }
+      const N = pick(), njob = N && get(N); await add(S, buf);
       S = N; job = njob;
     }
     this.lateRun = false;

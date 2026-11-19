@@ -1715,7 +1715,12 @@ export async function add(game, ctx) {
   // tiles lane: built once per map area, the areas share one copy of every picture (a second area that loaded its own sent them all to the
   // graphics card again in its first drawn frame). world.__groundTex: file + flags -> the promise of its texture.
   const TC = (world.__groundTex = world.__groundTex || new Map()), once = (k, make) => { if (!TC.has(k)) TC.set(k, make()); return TC.get(k); };
-  const load = (f, srgb, rep) => once(f + '|' + !!srgb + '|' + !!rep, () => new Promise((res, rej) => L.load(ctx.A + 'ground/' + f, (t) => {
+  // perf lane, Nov 18 (late ground pictures, streets/lateground.js): the road stone's colour and relief (asph_col, asph_nrm: 2.6 MB) start as lo/ copies of 0.15 MB, and the photographed
+  // crossings' pictures (2.5 MB, the nearest 151 m from the start) as one clear pixel, under which the ordinary road shows; the full pictures come right after ready into the SAME textures.
+  // ?lateground=0 = as before (nothing more is fetched); also under ?shot ?capture. ?lateground=hold = tests: waits for window.__lateGo.
+  const LG = game.P && (game.P.get('lateground') === '0' || game.P.has('shot') || game.P.has('capture')) ? null : await (world.__lateGround = world.__lateGround || import('./lateground.js').then((m) => m.lateGround(game, ctx.A + 'ground/')).catch((e) => { console.log('[ground] late pictures not used: ' + (e && e.message)); return null; }));     /* one for every map area */
+  const load = (f, srgb, rep) => (LG && LG.has(f) ? once('late|' + f + '|' + !!srgb + '|' + !!rep, () => LG.load(f, srgb, rep, loadNow)) : loadNow(f, srgb, rep));
+  const loadNow = (f, srgb, rep) => once(f + '|' + !!srgb + '|' + !!rep, () => new Promise((res, rej) => L.load(ctx.A + 'ground/' + f, (t) => {
     t.wrapS = t.wrapT = rep ? THREE.RepeatWrapping : THREE.ClampToEdgeWrapping; t.anisotropy = srgb ? 16 : 8; t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; res(t);
   }, undefined, () => rej(new Error('ground texture ' + f)))));
   // a grey image as a one-channel texture (a quarter of the memory of RGBA); the shader undoes the sRGB curve itself
@@ -1730,7 +1735,7 @@ export async function add(game, ctx) {
   // Without the memory for it, or if it does not arrive, the 512 px one stays. ?lateasph=0 = with the load, as before; stills and captures (?shot ?capture) too. ?lateasph=hold = tests: waits for window.__lateGo.
   const lateAsph = !(game.P && (game.P.get('lateasph') === '0' || game.P.has('shot') || game.P.has('capture')));
   const lumLate = (f, small) => once('lum|' + f, () => lum(small).then((t) => { if (t.image.width < 2) return t; const hold = game.P && game.P.get('lateasph') === 'hold';
-    const go = async () => { try { const t0 = performance.now(), im = new Image(); im.src = ctx.A + 'ground/' + f; await im.decode(); const t1 = performance.now();
+    const go = async (free) => { try { const t0 = performance.now(); let im; if (free) im = await window.__lateq.img(ctx.A + 'ground/' + f, free);     /* lateq: the line is given back when the bytes are in, before the decode */ else { im = new Image(); im.src = ctx.A + 'ground/' + f; await im.decode(); } const t1 = performance.now();
         const W = im.width, H = im.height, c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d', { willReadFrequently: true }); g.drawImage(im, 0, 0);
         const r = new Uint8Array(W * H), rows = 256; let worst = performance.now() - t1;
         for (let y = 0; y < H; y += rows) { const t2 = performance.now(), n = Math.min(rows, H - y), px = g.getImageData(0, y, W, n).data, o = y * W; for (let i = 0, e = W * n; i < e; i++) r[o + i] = px[i * 4]; worst = Math.max(worst, performance.now() - t2); await new Promise((res) => setTimeout(res, 0)); }
@@ -1738,6 +1743,7 @@ export async function add(game, ctx) {
         console.log('[ground] ' + f + ' in at ' + (performance.now() / 1000).toFixed(1) + ' s (asked at ' + (t0 / 1000).toFixed(1) + ' s), the longest step ' + worst.toFixed(0) + ' ms');
       } catch (e) { console.warn('[ground] ' + f + ' not read after ready (' + (e && e.message) + '): ' + small + ' stays'); } };
     // asked for in the very task that sets ready (main.js sends 'nyc-ready'): the first frames after ready are long, and a timer alone got its turn 2.5 s late. The timer stays for ?lateasph=hold and as a net.
+    if (window.__lateq) { window.__lateq.run({ kind: 'road', d: 1, name: f, gate: () => !hold || !!window.__lateGo }, go); return t; }     /* lateq: asked for through the shared queue (src/lateq.js); ?lateq=0 = the lines below */
     let asked = false; const start = () => { if (asked || !window.__ready || (hold && !window.__lateGo)) return; asked = true; clearInterval(iv); go(); }, iv = setInterval(start, 50); addEventListener('nyc-ready', start, { once: true }); return t; }));
   const [tPack1, tPack2, tDecal, tAsC, tAsN, tPaint, tPhoto, tMacro] = await Promise.all([load('pack1.jpg', false, true), load('pack2.jpg', false, true), load('decals.webp', true, false), load('asph_col.jpg', true, true), load('asph_nrm.jpg', false, true), load('paint.webp', true, true), Promise.resolve(null), lateAsph ? lumLate('asph_macro4k.jpg', 'asph_macro512.jpg') : lum('asph_macro4k.jpg')]);
   const photos = await fetch(ctx.A + 'ground/photo/photos.json').then((r) => (r.ok ? r.json() : [])).catch(() => []);
@@ -1788,7 +1794,7 @@ export async function add(game, ctx) {
   const marks = buildMarks(C); addAll(marks, mats.marks, (m) => { m.renderOrder = 2; }); await turn();
   addAll(hist.under, mats.patch, (m) => { m.renderOrder = -1.5; }); addAll(hist.over, mats.patchOver, (m) => { m.renderOrder = -1.4; }); addAll(hist.plates, mats.plate, (m) => { m.renderOrder = -1.3; });
   // photographed road: one quad per photo over the ground it shows, drawn over the markings (it brings its own), blended at its feathered outline
-  const tHist = photos.some((p) => p.asph2) ? await lum('asph_hist.webp').then((t) => { t.anisotropy = maxAniso; return t; }) : tMacro;      // f8: the aerial scan without its grain (items/road/prep_hist.py)
+  const tHist = photos.some((p) => p.asph2) ? await (LG ? once('late|lum|asph_hist.webp', () => LG.lum('asph_hist.webp')) : lum('asph_hist.webp')).then((t) => { t.anisotropy = maxAniso; return t; }) : tMacro;      // f8: the aerial scan without its grain (items/road/prep_hist.py)
   photos.forEach((p, i) => {
     const acc = new Acc({ position: 3, aQ: 4 }), d = p.world.dir, dl = Math.hypot(d[0], d[1]), dx = d[0] / dl, dy = d[1] / dl, rx = dy, ry = -dx;
     const mz = p.mirror ? p.mirror.z : -1e3, z0 = p.mirror ? p.mirror.to : p.box[2], Y = 0.016 + (p.lift || 0);

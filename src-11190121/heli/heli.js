@@ -166,7 +166,9 @@ class Heli {
     await part('model', (m) => m.buildHeliModel(ctx));
     this.model = this.parts.model || standIn();
     this.root.add(this.model.root);
-    await part('cockpit', (m) => m.buildCockpit(ctx, this.model)); if (this.parts.cockpit && this.parts.cockpit.root && !this.parts.cockpit.root.parent) this.model.root.add(this.parts.cockpit.root);
+    const lateCab = g.P.get('latecabin') === '1';     /* perf lane, Nov 15: ?latecabin=1 = the built cabin's 8 MB file is fetched after ready and swapped in (heli/latecabin.js). OFF unless asked for (Nov 18: its second build can land in the first second of play); off = fetched here, as before */
+    await part('cockpit', (m) => (lateCab ? m.buildCockpit(ctx, this.model, { wait: true }) : m.buildCockpit(ctx, this.model))); if (this.parts.cockpit && this.parts.cockpit.root && !this.parts.cockpit.root.parent) this.model.root.add(this.parts.cockpit.root);
+    if (lateCab && this.parts.cockpit && this.parts.cockpit.lateWait) import('./latecabin.js').then((L) => L.lateCabin(this, ctx)).catch((e) => console.log('[heli] cockpit: late cabin not started (' + (e && e.message) + ')'));
     await part('sound', (m) => new m.HeliSound(ctx));
     await part('wash', (m) => new m.Wash(ctx)); if (this.parts.wash && this.parts.wash.solids) H.solids = this.parts.wash.solids;
     if (g.P.get('hboard') !== '0') try { await (await import('../entry/heliboard.js')).addHeliBoard(this); } catch (e) { console.log('[hboard] not loaded, the old boarding beat stands: ' + (e && (e.stack || e.message))); }     // gameplay lane: getting in and out as a watched beat (walk, door, climb, camera); ?hboard=0 off
