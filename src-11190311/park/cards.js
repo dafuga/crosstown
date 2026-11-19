@@ -42,7 +42,7 @@ function paint(g, cx, cy, seed, dens) {
 }
 
 // makeCards(game) -> { geoLeaf, geoBare, matLeaf, matBare, SX, SY }: unit card sets (x, z in -1..1, y in 0..1) to be scaled by (r * SX, h * SY)
-export async function makeCards(game) {
+export async function makeCards(game, px) {      // px (trees.js, parkx): { u: the clock uniform, glsl: pkxF() } = a card whose tree has just joined or is leaving the near pool dissolves over 0.9 s
   const cv = document.createElement('canvas'); cv.width = CELL * COLS; cv.height = CELL * ROWS; const g = cv.getContext('2d', { willReadFrequently: true });
   const DENS = [0.5, 0.36, 0.26, 0.17];
   for (let c = 0; c < COLS; c++) { paint(g, c * CELL, 0, 101 + c * 17, DENS[c]); await breathe(); paint(g, c * CELL, CELL, 211 + c * 13, 0); await breathe(); }
@@ -59,8 +59,15 @@ export async function makeCards(game) {
     const ge = new THREE.BufferGeometry(); ge.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); ge.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3)); ge.setAttribute('uv', new THREE.Float32BufferAttribute(UV, 2)); ge.setIndex(I);
     ge.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0.5, 0), 1.2); ge.userData.shared = true; return ge; };
   // near: the painted edge as it is; far: coverage by a screen dither (a twig mass thins to a haze, it does not vanish with the small mips)
-  const mat = (key, cutv) => lit(new THREE.MeshStandardMaterial({ map: tex, color: 0xffffff, roughness: 0.86, metalness: 0, side: THREE.DoubleSide, alphaTest: 0.5 }), game.world.shared, { key, spec: 0, night: 1.8      /* handoff-9: the far crowns' x 0.55 comes back at night (mat.js) */,
-    body: `float dd = distance(cameraPosition, vWPos), hv = hash21(gl_FragCoord.xy + 0.37); pkSide = pkAgainstSun(0.3);      /* look pass k2: no highlight on a twig mass; its far side is in its own shade (mat.js) */
+  const PXO = px ? { uniforms: { uPkT: px.u }, vpars: 'uniform float uPkT; varying float vPx; ' + px.glsl, pars: 'varying float vPx;',
+    vbody: `vPx = 1.0;
+          #ifdef USE_INSTANCING_COLOR
+            if (instanceColor.r > 3.0) { bool come_ = instanceColor.r > 7.0; vColor.r = instanceColor.r - (come_ ? 8.0 : 4.0); float f_ = pkxF(instanceColor.g); vColor.g = instanceColor.g - 2.0 * floor(instanceColor.g / 2.0);
+              vPx = come_ ? f_ : 1.0 - f_; if (vPx <= 0.0) gl_Position = vec4(2.0, 2.0, 2.0, 1.0); }
+          #endif` } : {};
+  const PXB = px ? 'if (vPx < 0.999 && hash21(gl_FragCoord.xy + 0.71) > vPx) discard;\n           ' : '';
+  const mat = (key, cutv) => lit(new THREE.MeshStandardMaterial({ map: tex, color: 0xffffff, roughness: 0.86, metalness: 0, side: THREE.DoubleSide, alphaTest: 0.5 }), game.world.shared, { ...PXO, key: key + (px ? 'x2' : ''), spec: 0, night: 1.8      /* handoff-9: the far crowns' x 0.55 comes back at night (mat.js) */,
+    body: PXB + `float dd = distance(cameraPosition, vWPos), hv = hash21(gl_FragCoord.xy + 0.37); pkSide = pkAgainstSun(0.3);      /* look pass k2: no highlight on a twig mass; its far side is in its own shade (mat.js) */
            diffuseColor.a = diffuseColor.a > mix(${cutv}, 0.10 + 0.82 * hv, smoothstep(22.0, 95.0, dd)) ? 1.0 : 0.0;`,
     nbody: 'normal = normalize((viewMatrix * vec4(bakeN, 0.0)).xyz);' });      /* one soft rounded normal for the whole card set, the same from both sides: the tree is lit as a mass */
   console.log('[game] park: tree cards painted ' + cv.width + 'x' + cv.height);

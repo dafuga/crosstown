@@ -237,6 +237,7 @@ export class CityMap {
     const rim = (x, y, col) => { let [mx, my] = scr(x, y); mx -= cx; my -= cy; const d = Math.hypot(mx, my), out = d > R - 12; if (out) { mx *= (R - 12) / d; my *= (R - 12) / d; c.fillStyle = col; c.strokeStyle = '#14161a'; c.lineWidth = 2; c.beginPath(); c.arc(cx + mx, cy + my, 7, 0, 7); c.fill(); c.stroke(); } else this.pin(c, cx + mx, cy + my, col, 0.85); };
     if (M.target) rim(M.target.x, M.target.y, AMBER);
     { const T = g.gps && g.gps.target; if (T) rim(T.x, T.y, g.gps.color); }
+    if (this.finds) this.finds.mini(c, scr, cx, cy, R);     // gameplay lane, finds.js: the icons of the things he has found (and the helicopter)
     this.arrow(c, cx, cy, -(pl.h - yaw));
     c.strokeStyle = 'rgba(12,14,18,0.9)'; c.lineWidth = 5; c.beginPath(); c.arc(cx, cy, R + 0.5, 0, 7); c.stroke(); c.strokeStyle = p.ring; c.lineWidth = 2; c.beginPath(); c.arc(cx, cy, R, 0, 7); c.stroke();
     const nx = cx + Math.sin(rot) * R, ny = cy - Math.cos(rot) * R; c.fillStyle = '#14161a'; c.strokeStyle = p.ring; c.lineWidth = 1.5; c.beginPath(); c.arc(nx, ny, 11.5, 0, 7); c.fill(); c.stroke(); hud.text('N', nx, ny + 5, 13, '#ff5a45', 'center', 800);
@@ -283,6 +284,7 @@ export class CityMap {
     this.lastKey = lk;
     if (M.target) { const q = scr(M.target.x, M.target.y); this.pin(c, q[0], q[1], AMBER, 1.15); this.label(c, 'JOB', q[0], q[1] - 42, 13, AMBER, 0, 800, 2, 'rgba(14,16,20,0.92)'); }
     { const T = g.gps && g.gps.target; if (T) { const q = scr(T.x, T.y); this.pin(c, q[0], q[1], g.gps.color, 1.15); this.label(c, T.name.toUpperCase(), q[0], q[1] - 42, 13, g.gps.color, 0, 800, 1.5, 'rgba(14,16,20,0.92)'); } }     // gps: the waypoint
+    if (this.finds) this.finds.full(c, scr, z, hud, { side, x0, y0 });     // gameplay lane, finds.js: found things' icons, the FOUND n / N line and its legend rows
     { const q = scr(pl.x, pl.y); c.strokeStyle = 'rgba(31,111,238,0.55)'; c.lineWidth = 2; c.beginPath(); c.arc(q[0], q[1], 22 + 4 * Math.sin(performance.now() / 300), 0, 7); c.stroke(); this.arrow(c, q[0], q[1], Math.PI / 2 - pl.h, 1.3); this.label(c, 'YOU', q[0], q[1] + 32, 12.5, '#fff', 0, 800, 2, 'rgba(14,16,20,0.92)'); }
     c.restore(); c.save(); c.shadowBlur = 0;
     c.strokeStyle = 'rgba(255,255,255,0.22)'; c.lineWidth = 1.5; c.beginPath(); c.roundRect ? c.roundRect(x0, y0, x1 - x0, y1 - y0, 10) : c.rect(x0, y0, x1 - x0, y1 - y0); c.stroke();

@@ -30,6 +30,13 @@ const BED = typeof location !== 'undefined' && /[?&]chipbed=1/.test(location.sea
 const WC3 = typeof location === 'undefined' || !/[?&]treesfull=1/.test(location.search) || !/[?&]mulch=(old|path)/.test(location.search);   // kept in round 28 (closeness 44 against 36); ?mulch=old = the Poly Haven scan   // round 28: the mulch is another scan (ambientCG WoodChips003: coarse fresh arborist chips with bark), in its own colour, with its own relief and occlusion maps
 const FRINGE = typeof location !== 'undefined' && /[?&]fringe=1/.test(location.search);   // round 28: the cut-out sprays are drawn a second time as a blended one-pixel fringe outside their hard edge (soft leaf edges without multisampling)
 const LODFADE = typeof location === 'undefined' || !/[?&]lodfade=0/.test(location.search);   // default on from round 28 (seen on pod frames w58..w38: the crown changes over a metre of walking, no pop)
+/* lead helper trees-rads, Nov 18 (Matt: "Trees flicker/change as you approach. They should look good from the start: no visible swap"): a street tree changed form whole, in one
+   frame, at each band distance (boughs or full sprays -> thinned sprays at 17 / 19 m, thinned sprays -> one flat picture of the crown at 44 m). Now each change is a hand-over across the
+   last metres BEFORE that distance: the nearer form goes spray by spray while the further one comes spray by spray (the picture: clump by clump), so no frame shows a whole crown change;
+   and the picture takes the mean light and colour measured on the model beside it. Nothing is drawn further out than before. ?lodx=0 = as before. */
+const LODX = typeof location === 'undefined' || !/[?&]lodx=0/.test(location.search), LODX_W = [qn0('lodxa', 5), qn0('lodxb', 12)];   // metres of hand-over before the first and the last band distance
+const LODX_FAR = qn0('lodxf', 46), LODX_K = LODX ? Math.min(1, qn0('lodxk', 1)) : 0, LODX_Q = qn0('lodxq', 0.8);   // test knobs: metres over which the picture eases back to its far light; how much of the model's light it takes at the hand-over (0 = none); the shell's radius
+function qn0(k, d) { if (typeof location === 'undefined') return d; const m = new RegExp('[?&]' + k + '=([0-9.]+)').exec(location.search); return m ? parseFloat(m[1]) : d; }
 const LODFADE_OLD = typeof location !== 'undefined' && /[?&]lodfade=1/.test(location.search);   // round 28: the scan tree's bands hand over piece by piece across a metre or so of walking (twigs <-> sprays at 4.0-5.4 m, sprays <-> thinned sprays at 8.0-9.6 m) instead of the whole crown changing at once
 const BARK2 = typeof location === 'undefined' || !/[?&]bark=1/.test(location.search);   // kept in round 28 with the mulch; ?bark=1 = the scan's own bark   // round 28: the scan tree's trunk and limbs wear a photographed bark at the tree's real size (Poly Haven Bark Willow 02, laid from three sides in world metres), not the young scan's own bark blown up two times
 const BACK = typeof location !== 'undefined' && /[?&]back=1/.test(location.search);   // round 28: leaves lit from behind stay a saturated yellow-green instead of burning out to white
@@ -110,10 +117,11 @@ function leafMaterial(shared, far, imp, spray) {   // spray: { c, n, mean }: the
   if (spray && spray.geo) { m.alphaTest = 0; m.alphaToCoverage = false; m.defines.GEO = 1; }   // every leaf is its own mesh: no cut-out
   if (spray && spray.fringe) { m.alphaTest = 0; m.alphaToCoverage = false; m.transparent = true; m.depthWrite = false; m.forceSinglePass = true; m.defines.FRINGE = 1; }
   if (spray && spray.fade) m.defines.FADE = 1;
+  if (spray && spray.xf) m.defines.FADEX = 1;
   if (spray && spray.vis8) m.defines.VIS8 = 1;
   const LEAF = imp ? 'iLeaf' : 'vLeaf', SUNF = imp ? 'iSunFace' : 'vSunFace';
   m.onBeforeCompile = (sh) => {
-    Object.assign(sh.uniforms, shared, imp ? { tImpA: { value: imp.a }, tImpN: { value: imp.n } } : {}, spray ? { uMean: { value: new THREE.Vector3(spray.mean[0], spray.mean[1], spray.mean[2]) }, uTrans: { value: spray.trans || 0.85 }, uGlow: { value: spray.glow || 1.0 }, uSelfK: { value: spray.selfK || 1.6 }, uOwn: { value: spray.own ? 1 : 0 }, uSpec: { value: spray.spec || 1.6 }, uSat: { value: spray.sat || 1.0 }, uShade: { value: spray.shade || 1.0 }, uFwd: { value: spray.fwd || 0.0 }, uThru: { value: new THREE.Vector3(...(spray.thru || [1.0, 1.1, 0.55])) }, uFade: { value: new THREE.Vector4(...(spray.fade || [1e9, 2e9, -2, -1])) }, uZoomK: ZOOMK } : {});
+    Object.assign(sh.uniforms, shared, imp ? { tImpA: { value: imp.a }, tImpN: { value: imp.n }, uZoomK: ZOOMK } : {}, spray ? { uMean: { value: new THREE.Vector3(spray.mean[0], spray.mean[1], spray.mean[2]) }, uTrans: { value: spray.trans || 0.85 }, uGlow: { value: spray.glow || 1.0 }, uSelfK: { value: spray.selfK || 1.6 }, uOwn: { value: spray.own ? 1 : 0 }, uSpec: { value: spray.spec || 1.6 }, uSat: { value: spray.sat || 1.0 }, uShade: { value: spray.shade || 1.0 }, uFwd: { value: spray.fwd || 0.0 }, uThru: { value: new THREE.Vector3(...(spray.thru || [1.0, 1.1, 0.55])) }, uFade: { value: new THREE.Vector4(...(spray.fade || spray.xf || [1e9, 2e9, -2, -1])) }, uZoomK: ZOOMK } : {});
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', `#include <common>
         attribute vec4 aLeaf; varying vec4 vLeaf; varying vec3 vWPos; varying vec3 vTint; varying float vSunFace; uniform vec3 uSunDir; varying float vSelf;
@@ -126,9 +134,12 @@ function leafMaterial(shared, far, imp, spray) {   // spray: { c, n, mean }: the
         #ifdef FADE
           attribute float aFd; uniform vec4 uFade; uniform float uZoomK;
         #endif
+        #ifdef FADEX
+          uniform vec4 uFade; uniform float uZoomK;
+        #endif
         bool fdHide = false;
         ${imp ? '' : 'attribute vec3 aCrown;'}
-        ${imp ? 'attribute vec3 iPos; attribute vec4 iA; attribute vec2 iB; attribute vec3 iTint; varying vec2 vIuv; varying vec2 vYaw; float iHw;' : ''}`)
+        ${imp ? 'attribute vec3 iPos; attribute vec4 iA; attribute vec2 iB; attribute vec3 iTint; varying vec2 vIuv; varying vec2 vYaw; float iHw; attribute float iF; varying vec3 vIq; varying vec4 vIs; uniform float uZoomK;' : ''}`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
         vLeaf = aLeaf; vTint = vec3(1.0);
         #ifdef USE_INSTANCING
@@ -144,6 +155,11 @@ function leafMaterial(shared, far, imp, spray) {   // spray: { c, n, mean }: the
         { // bands hand over piece by piece: each piece has its own distance, inside the overlap, at which it comes or goes
           float fd = length(cameraPosition.xz - tM[3].xz) * uZoomK;
           fdHide = fd > uFade.x + aFd * (uFade.y - uFade.x) || fd < uFade.z + aFd * (uFade.w - uFade.z); }
+        #endif
+        #ifdef FADEX
+        { // lodx: the same hand-over for the generated crowns; a spray's own number comes from its brightness and yellowing (one value for the whole spray)
+          float fd = length(cameraPosition.xz - tM[3].xz) * uZoomK, fh = fract(aLeaf.r * 61.7 + aLeaf.g * 23.3);
+          fdHide = fd > uFade.x + fh * (uFade.y - uFade.x) || fd < uFade.z + fh * (uFade.w - uFade.z); }
         #endif
         vSunFace = dot(normalize(mat3(tM) * normal.xyz), uSunDir); vSelf = 1.0;
         ${imp ? '' : `
@@ -171,12 +187,13 @@ function leafMaterial(shared, far, imp, spray) {   // spray: { c, n, mean }: the
           iHw = length(vec2(cos(ak) * iA.z, sin(ak) * iA.w));
           transformed = iPos + vec3(dw.y, 0.0, -dw.x) * (position.x * iHw) + vec3(0.0, mix(iB.x, iB.y, position.y), 0.0);
           vIuv = vec2((k + position.x * 0.5 + 0.5) / ${IMP_VIEWS}.0, (iA.y + position.y) / ${imp.rows}.0);
-          vYaw = vec2(sin(iA.x), cos(iA.x)); vTint = iTint; vWPos = transformed;
+          vYaw = vec2(sin(iA.x), cos(iA.x)); vTint = iTint; vWPos = transformed; vIq = vec3(position.x * iHw, mix(iB.x, iB.y, position.y), iF); vIs = vec4(position.x, position.y * 2.0 - 1.0, dw);
         }` : ''}`);
     sh.vertexShader = sh.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\n if (fdHide) gl_Position = vec4(0.0, 0.0, -2.0, 1.0);');
     if (imp) sh.vertexShader = sh.vertexShader.replace('#include <worldpos_vertex>', `#include <worldpos_vertex>
         #ifdef USE_SHADOWMAP
-          worldPosition.xyz += uSunDir * iHw * 1.25;     // the crown's own shade comes from its normals; the shadow map is asked just outside the crown, toward the sun
+          ${LODX ? `{ float sn = (1.0 - smoothstep(${LOD_CARD[1].toFixed(1)}, ${(LOD_CARD[1] + LODX_FAR).toFixed(1)}, length(cameraPosition.xz - iPos.xz) * uZoomK)) * ${LODX_K.toFixed(2)}; vec2 sd = cameraPosition.xz - iPos.xz; sd /= max(length(sd), 1e-3);
+            worldPosition.xyz += uSunDir * iHw * 1.25 * (1.0 - sn) + vec3(sd.x, 0.0, sd.y) * iHw * 0.55 * sn; }` : 'worldPosition.xyz += uSunDir * iHw * 1.25;'}     // the crown's own shade comes from its normals; the shadow map is asked just outside the crown, toward the sun
         #endif`);
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>
@@ -184,13 +201,19 @@ function leafMaterial(shared, far, imp, spray) {   // spray: { c, n, mean }: the
         #ifdef CARD
           uniform vec3 uMean; uniform float uTrans; uniform float uGlow; uniform float uOwn; uniform float uSpec; uniform float uSat; uniform float uShade; uniform float uFwd; uniform vec3 uThru; float cardAo;
         #endif
-        ${imp ? 'varying vec2 vIuv; varying vec2 vYaw; uniform sampler2D tImpA; uniform sampler2D tImpN; vec4 iLeaf; vec3 iNrmW; float iSunFace;' : ''}
+        ${imp ? 'varying vec2 vIuv; varying vec2 vYaw; uniform sampler2D tImpA; uniform sampler2D tImpN; vec4 iLeaf; vec3 iNrmW; float iSunFace; varying vec3 vIq; varying vec4 vIs; uniform float uZoomK; float iNear = 0.0; float iSv = 1.0;' : ''}
         ${COMMON_FRAG}`)
       .replace('#include <color_fragment>', `
         {
-          ${imp ? `vec4 ta = texture2D(tImpA, vIuv, 0.6); if (ta.a < 0.2) discard; diffuseColor.a = smoothstep(0.2, 0.62, ta.a);
+          ${imp ? `${LODX ? 'if (vIq.z < 0.999) { vec2 qc = floor(vIq.xy / 0.30 + vec2(0.31, 0.77)); if (fract(sin(dot(qc, vec2(127.1, 311.7))) * 43758.5453) > vIq.z) discard; }   // lodx: the picture comes clump by clump while the model in front of it goes' : ''}
+          vec4 ta = texture2D(tImpA, vIuv, 0.6); if (ta.a < 0.2) discard; diffuseColor.a = smoothstep(0.2, 0.62, ta.a);
           iLeaf = vec4(ta.rgb / ta.a, 0.55); vec3 tn = texture2D(tImpN, vIuv, 0.6).rgb / ta.a * 2.0 - 1.0;
-          iNrmW = normalize(vec3(tn.x * vYaw.y + tn.z * vYaw.x, tn.y, -tn.x * vYaw.x + tn.z * vYaw.y)); iSunFace = dot(iNrmW, uSunDir);` : ''}
+          iNrmW = normalize(vec3(tn.x * vYaw.y + tn.z * vYaw.x, tn.y, -tn.x * vYaw.x + tn.z * vYaw.y)); iSunFace = dot(iNrmW, uSunDir);
+          ${LODX ? `{ // lodx: how much of the model's own light the picture takes (all of it at the hand-over), and the crown's shade at this spot of its near shell, worked out as the model's sprays do
+            iNear = (1.0 - smoothstep(${LOD_CARD[1].toFixed(1)}, ${(LOD_CARD[1] + LODX_FAR).toFixed(1)}, length(cameraPosition.xz - vWPos.xz) * uZoomK)) * ${LODX_K.toFixed(2)};
+            float qz = sqrt(max(0.0, 1.0 - dot(vIs.xy, vIs.xy)));
+            vec3 q = ${LODX_Q.toFixed(2)} * (vIs.x * vec3(vIs.w, 0.0, -vIs.z) + vec3(0.0, vIs.y, 0.0) + qz * vec3(vIs.z, 0.0, vIs.w));
+            float qb = dot(q, uSunDir), qc = dot(q, q) - 1.0, qt = max(-qb + sqrt(max(qb * qb - qc, 0.0)), 0.0); iSv = exp(-qt * 1.6); iSv = mix(iSv, max(iSv, 0.6), 0.14); }` : ''}` : ''}
           float br = ${LEAF}.r * 1.25, yel = ${LEAF}.g;
           vec3 c = vTint * br;
           #ifdef CARD
@@ -214,7 +237,7 @@ function leafMaterial(shared, far, imp, spray) {   // spray: { c, n, mean }: the
           #ifndef CARD
           c *= mix(0.72, 1.08, ${LEAF}.a);                      // darker along the midrib, paler toward the edge
           #endif
-          ${imp ? 'c = mix(vec3(dot(c, vec3(0.3, 0.6, 0.1))), c, 0.82) * 0.86;   // a crown seen whole is duller than its sunlit leaves: inner shade and sky show through' : ''}
+          ${imp ? 'c = mix(mix(vec3(dot(c, vec3(0.3, 0.6, 0.1))), c, 0.82) * 0.86, c, iNear);   // a crown seen whole is duller than its sunlit leaves: inner shade and sky show through' : ''}
           diffuseColor.rgb = c;
           ${BAKE_READ}
         }`)
@@ -249,7 +272,7 @@ function leafMaterial(shared, far, imp, spray) {   // spray: { c, n, mean }: the
             #ifdef CARD
             diffuseColor.rgb *= uThru * mix(0.7, 1.0, ${LEAF}.b) * uTrans; roughnessFactor = 1.0;   // sun through a leaf: yellow-green, nearly as bright as the lit face
             #else
-            diffuseColor.rgb *= vec3(1.0, 1.08, 0.6) * mix(0.65, 1.0, ${LEAF}.b) * 0.55; roughnessFactor = 1.0;
+            diffuseColor.rgb *= ${imp ? 'mix(vec3(1.0, 1.08, 0.6) * mix(0.65, 1.0, iLeaf.b) * 0.55, vec3(1.0, 1.1, 0.55) * mix(0.7, 1.0, iLeaf.b) * 0.85, iNear)' : 'vec3(1.0, 1.08, 0.6) * mix(0.65, 1.0, ' + LEAF + '.b) * 0.55'}; roughnessFactor = 1.0;
             #endif   // a leaf passes on about half what it would reflect
           } else {
             // sunlit leaves on the far side of the crown, seen from behind through the gaps: the same transmitted colour
@@ -282,11 +305,11 @@ function leafMaterial(shared, far, imp, spray) {   // spray: { c, n, mean }: the
               reflectedLight.indirectDiffuse *= ${FARFIX ? (far || imp ? 'mix(0.60, 1.0, lAo)' : 'mix(mix(0.16, 0.42, 1.0 - bakeV.g), 0.95, lAo)') : 'mix(0.16, 0.95, lAo)'};
             #endif
           #else
-            reflectedLight.indirectDiffuse *= ${FARFIX ? (far || imp ? 'mix(0.60, 1.0, lAo)' : 'mix(mix(0.10, 0.42, 1.0 - bakeV.g), 0.9, lAo)') : 'mix(0.10, 0.9, lAo)'};
+            reflectedLight.indirectDiffuse *= ${FARFIX ? (imp ? 'mix(mix(0.60, 1.0, lAo), mix(mix(0.16, 0.42, 1.0 - bakeV.g), 0.95, lAo * 0.82), iNear)' : far ? 'mix(0.60, 1.0, lAo)' : 'mix(mix(0.10, 0.42, 1.0 - bakeV.g), 0.9, lAo)') : 'mix(0.10, 0.9, lAo)'};
           #endif
           ${FARFIX ? 'reflectedLight.indirectDiffuse += material.diffuseColor * uSunColor * ' + (far || imp ? '0.05' : '0.03 * (1.0 - bakeV.g)') + ';   // open shade in a street is never black: light off the facades opposite' : ''}
           reflectedLight.indirectSpecular *= lAo * lAo * 0.3;   // leaves are matte enough that the sky must not frost the top of the crown
-          float tFar = ${imp ? '1.0' : 'smoothstep(uShadowFar * 0.72, uShadowFar * 0.95, length(vWPos.xz - uShadowCenter.xz))'};
+          float tFar = ${imp ? 'max(1.0 - iNear, smoothstep(uShadowFar * 0.72, uShadowFar * 0.95, length(vWPos.xz - uShadowCenter.xz)))' : 'smoothstep(uShadowFar * 0.72, uShadowFar * 0.95, length(vWPos.xz - uShadowCenter.xz))'};
           float selfVis = clamp(0.22 + 0.95 * ${SUNF}, 0.04, 1.0) * mix(0.25, 1.0, lAo)${imp ? ' * 0.78' : ''};
           #ifdef GEO
             float sv = ${DEEP ? '0.06 + 0.94' : '0.22 + 0.78'} * smoothstep(${DEEP ? '0.30, 0.58' : '0.22, 0.50'}, vSelf + (fract(vLeaf.r * 91.7 + vLeaf.b * 13.1) - 0.5) * 0.16);   // in the sun or in the shade of the leaves above; an open crown is full of scattered light, so its shade is never dark
@@ -301,6 +324,7 @@ function leafMaterial(shared, far, imp, spray) {   // spray: { c, n, mean }: the
           #ifdef GEO
             float k = mix(mix(0.7, 1.0, lAo) * sv, selfVis, tFar);
           #else
+            ${imp ? 'sv = iSv;' : ''}
             float k = mix(mix(0.3, 1.0, lAo) * sv, selfVis, tFar);
           #endif
           reflectedLight.directDiffuse *= k; reflectedLight.directSpecular *= k * (1.0 - lfFlip) * ${imp ? '0.5' : '1.0'};
@@ -315,7 +339,7 @@ function leafMaterial(shared, far, imp, spray) {   // spray: { c, n, mean }: the
           #endif
         }`);
   };
-  m.customProgramCacheKey = () => 'stTreeLeaf23' + (FARFIX ? 'z' : '') + (DEEP ? 'd' : '') + (far ? 'f' : '') + (imp ? 'i' : '') + (spray ? 'c' : '') + (spray && spray.geo ? 'g' : '') + (spray && spray.fringe ? 'F' : '') + (spray && spray.fade ? 'D' : '') + (spray && spray.vis8 ? 'V' : '') + (SPECFADE ? 'S' : '');
+  m.customProgramCacheKey = () => 'stTreeLeaf23' + (FARFIX ? 'z' : '') + (DEEP ? 'd' : '') + (far ? 'f' : '') + (imp ? 'i' : '') + (spray ? 'c' : '') + (spray && spray.geo ? 'g' : '') + (spray && spray.fringe ? 'F' : '') + (spray && spray.fade ? 'D' : '') + (spray && spray.xf ? 'X' : '') + (imp && LODX ? 'x' : '') + (spray && spray.vis8 ? 'V' : '') + (SPECFADE ? 'S' : '');
   return m;
 }
 
@@ -1342,7 +1366,7 @@ function bakeImpostors(renderer, models) {
   const mk = () => new THREE.WebGLRenderTarget(W, H, { samples: 4, depthBuffer: true, generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, colorSpace: THREE.NoColorSpace });
   const rtA = mk(), rtN = mk();
   const vs = 'attribute vec4 aLeaf; varying vec4 vL; varying vec3 vN; varying vec2 vU; void main(){ vL = aLeaf; vN = normal; vU = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }';
-  const cut = 'uniform sampler2D tC; uniform float uCard; varying vec2 vU;', cutM = 'if (uCard > 0.5 && texture2D(tC, vU).a < 0.36) discard;', cu = () => ({ tC: { value: null }, uCard: { value: 0 } });
+  const cut = 'uniform sampler2D tC; uniform float uCard; varying vec2 vU;', cutM = 'if (uCard > 0.5 && texture2D(tC, vU' + (LODX ? ', -1.5' : '') + ').a < 0.36) discard;', cu = () => ({ tC: { value: null }, uCard: { value: 0 } });
   const matA = new THREE.ShaderMaterial({ uniforms: cu(), vertexShader: vs, fragmentShader: cut + 'varying vec4 vL; varying vec3 vN; void main(){ ' + cutM + ' gl_FragColor = vec4(vL.rgb, 1.0); }', side: THREE.DoubleSide });
   const matN = new THREE.ShaderMaterial({ uniforms: cu(), vertexShader: vs, fragmentShader: cut + 'varying vec4 vL; varying vec3 vN; void main(){ ' + cutM + ' gl_FragColor = vec4(normalize(vN) * 0.5 + 0.5, 1.0); }', side: THREE.DoubleSide });
   const scene = new THREE.Scene(), mesh = new THREE.Mesh(models[0].lods[1].lg, matA), cam = new THREE.OrthographicCamera(); mesh.frustumCulled = false; scene.add(mesh);
@@ -1560,7 +1584,7 @@ export async function add(game, ctx) {
   } catch (e) { console.warn('[trees] leaf sprays not loaded, single leaves instead', e); sprays = null; }
   mark('sprays');
   // whole boughs cut from a scanned tree (tools/trees_mkboughs.py): the near band of the species that name one
-  let boughs = null; const boughMats = {};
+  let boughs = null; const boughMats = {}, boughSpray = {}, xfMats = {};
   if (V2 && BOUGHS && sprays) try {
     for (const slug of ['jacaranda']) {
       const { meta, buf } = await getPk('boughs_' + slug);
@@ -1568,7 +1592,7 @@ export async function add(game, ctx) {
       const list = meta.boughs.map((b) => ({ r0: b.r0, wP: f32(b.wP), wN: f32(b.wN), wUV: f32(b.wUV), wI: u32(b.wI), lP: f32(b.lP), lN: f32(b.lN), lUV: f32(b.lUV), lI: u32(b.lI), lF: u32(b.lF), cen: f32(b.cen) }));
       const [lc, ln, wc, wn] = await Promise.all([tex('bough_' + slug + '_leaf.webp', true), texL('bough_' + slug + '_leaf_n.webp', false, [128, 128, 255]), texL('bough_' + slug + '_wood.webp', true, [92, 82, 72]), texL('bough_' + slug + '_wood_n.webp', false, [128, 128, 255])]);
       for (const t of [lc, ln, wc, wn]) { if (FULL) t.flipY = false; t.anisotropy = 8; t.needsUpdate = true; } for (const t of [lc, ln]) t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
-      const lm = leafMaterial(shared, false, null, { c: lc, n: ln, mean: meta.mean_srgb.map((v) => Math.pow(v, 2.2)), trans: 1.45, glow: 4.0 });
+      boughSpray[slug] = { c: lc, n: ln, mean: meta.mean_srgb.map((v) => Math.pow(v, 2.2)), trans: 1.45, glow: 4.0 }; const lm = leafMaterial(shared, false, null, boughSpray[slug]);
       boughs = boughs || {}; boughs[slug] = { list }; boughMats[slug] = { leaf: lm, wood: woodMaterial(shared, wc, wn, 4, soilC) };
     }
   } catch (e) { console.warn('[trees] boughs not loaded, spray cards instead', e); boughs = null; }
@@ -1700,6 +1724,10 @@ export async function add(game, ctx) {
       const proxy = new THREE.BufferGeometry(); proxy.setAttribute('position', new THREE.BufferAttribute(pp, 3)); proxy.setIndex(new THREE.BufferAttribute(PL.idx, 1));
       const imp = { R: T.info.radius + 0.5, y0: T.info.lo[1] - 0.5, y1: T.info.hi[1] + 0.5 };
       const cards = T.info.cards, m = { sp, spec: SPECIES[sp], info: T.info, lods, foot, proxy, imp, trees: [], id: models.length, spray: cards ? sprays[SPECIES[sp].spray] : null, leafMat: cards ? sprayMat[SPECIES[sp].spray] : leafMat, lodD: T.bough ? [17, 44] : cards ? LOD_CARD : LOD_D };
+      if (LODX && cards) { const D = m.lodD, W = [Math.min(LODX_W[0], D[0] - 2), Math.min(LODX_W[1], D[1] - D[0] - 1)], sk = SPECIES[sp].spray; m.xw = W;      // lodx: each band's own material carries its hand-over range
+        const xm = (base, key, xf) => (xfMats[key + xf] = xfMats[key + xf] || leafMaterial(shared, false, null, Object.assign({}, base, { xf })));
+        lods[0].mat = lods[0].mat && T.bough ? xm(boughSpray[SPECIES[sp].bough], 'b' + SPECIES[sp].bough, [D[0] - W[0], D[0], -2, -1]) : xm(sprays[sk], 's' + sk, [D[0] - W[0], D[0], -2, -1]);
+        lods[1].mat = xm(sprays[sk], 's' + sk, [D[1] - W[1], D[1], D[0] - W[0], D[0]]); }
       models.push(m); bySpecies[sp].push(m); vi++;
     }
   }
@@ -1827,6 +1855,7 @@ export async function add(game, ctx) {
   }
   const NI = trees.length, ig = new THREE.InstancedBufferGeometry();
   ig.setAttribute('position', new THREE.Float32BufferAttribute([-1, 0, 0, 1, 0, 0, 1, 1, 0, -1, 1, 0], 3)); ig.setAttribute('normal', new THREE.Float32BufferAttribute([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1], 3)); ig.setIndex([0, 1, 2, 0, 2, 3]);
+  const iF = new THREE.InstancedBufferAttribute(new Float32Array(NI).fill(1), 1); iF.setUsage(THREE.DynamicDrawUsage); ig.setAttribute('iF', iF);
   const iPos = new THREE.InstancedBufferAttribute(new Float32Array(NI * 3), 3), iA = new THREE.InstancedBufferAttribute(new Float32Array(NI * 4), 4), iB = new THREE.InstancedBufferAttribute(new Float32Array(NI * 2), 2), iTint = new THREE.InstancedBufferAttribute(new Float32Array(NI * 3), 3);
   for (const a of [iPos, iA, iB, iTint]) a.setUsage(THREE.DynamicDrawUsage);
   ig.setAttribute('iPos', iPos); ig.setAttribute('iA', iA); ig.setAttribute('iB', iB); ig.setAttribute('iTint', iTint); ig.instanceCount = 0;
@@ -1842,7 +1871,7 @@ export async function add(game, ctx) {
     const cx = cam.position.x, cz = cam.position.z, zoom = Math.tan(27 * Math.PI / 180) / Math.tan(cam.fov * Math.PI / 360); ZOOMK.value = 1 / Math.max(1, zoom * 0.85);
     const castR = shared.uShadowFar.value * 0.75 + 14;                 // past this the shadow map has faded into the bake
     stats.shown = [0, 0, 0]; stats.tris = 0; stats.shadowTris = 0; stats.casters = 0;
-    let ni = 0;
+    let ni = 0, xf = 1;
     for (const m of models) {
       const nb = m.nb, n = new Array(nb).fill(0), nl = new Array(nb).fill(0); let nf = 0, nc = 0;
       for (const t of m.trees) {
@@ -1854,8 +1883,12 @@ export async function add(game, ctx) {
         if (m.lods[0].rng) { let any = false;   // bands that overlap: a tree inside an overlap is drawn in both, each band showing its share of the pieces
           for (let l = 0; l < nb; l++) { const rg = m.lods[l].rng; if (de >= rg[0] && de < Math.min(rg[1], m.lodD[nb - 1])) { put(l); any = true; } }
           if (any) continue; }
-        else if (de < m.lodD[nb - 1]) { let l = 0; while (de >= m.lodD[l]) l++; put(l); continue; }
-        m.farWood.instanceMatrix.array.set(t.m, nf++ * 16);
+        else if (de < m.lodD[nb - 1]) { let l = 0; while (de >= m.lodD[l]) l++; put(l);
+          if (!m.xw || de < m.lodD[l] - m.xw[l]) continue;      // lodx: inside the hand-over before the band's far edge the next form is drawn as well
+          if (l + 1 < nb) { put(l + 1); continue; }
+          xf = (de - (m.lodD[l] - m.xw[l])) / m.xw[l]; }
+        if (xf >= 1) m.farWood.instanceMatrix.array.set(t.m, nf++ * 16);      // (while the model hands over to the picture its own wood stands)
+        iF.array[ni] = xf; xf = 1;
         const I = m.imp; iPos.array[ni * 3] = t.x; iPos.array[ni * 3 + 1] = 0.15; iPos.array[ni * 3 + 2] = -t.y;
         iA.array[ni * 4] = t.yaw; iA.array[ni * 4 + 1] = m.id; iA.array[ni * 4 + 2] = I.R * t.sc[0]; iA.array[ni * 4 + 3] = I.R * t.sc[2];
         iB.array[ni * 2] = I.y0 * t.sc[1]; iB.array[ni * 2 + 1] = I.y1 * t.sc[1]; iTint.array.set(t.c, ni * 3); ni++;
@@ -1868,7 +1901,7 @@ export async function add(game, ctx) {
       m.farWood.count = nf; m.farWood.visible = nf > 0; if (nf) m.farWood.instanceMatrix.needsUpdate = true; stats.shown[2] += nf; stats.tris += nf * (m.lods[nb].wcount / 3 + 2);
       m.castWood.count = m.castCrown.count = nc; m.castWood.visible = m.castCrown.visible = nc > 0; if (nc) m.castWood.instanceMatrix.needsUpdate = true; stats.casters += nc; stats.shadowTris += nc * m.castTris;
     }
-    ig.instanceCount = ni; impostors.visible = ni > 0; if (ni) { iPos.needsUpdate = iA.needsUpdate = iB.needsUpdate = iTint.needsUpdate = true; }
+    ig.instanceCount = ni; impostors.visible = ni > 0; if (ni) { iPos.needsUpdate = iA.needsUpdate = iB.needsUpdate = iTint.needsUpdate = iF.needsUpdate = true; }
   }
   const render0 = world.render.bind(world);
   world.render = (t, focus) => { PROJ.value = world.camera.projectionMatrix; update(false); return render0(t, focus); };

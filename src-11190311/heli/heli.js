@@ -33,7 +33,7 @@ export class Heights {
   // time. Until then top() answers from the map's footprints there. Before this the whole map was read at load, when a far area had no buildings
   // drawn: its squares read as street (a helicopter passed through that area's buildings) and the load paid for them. bake() = every square in
   // reach now; bake([n, ...]) = those squares.
-  bake(only) {
+  bake(only, soft) {     /* soft (lead fast-start, Nov 19; from pump() below): ONE square, read back without waiting for the card; returns a promise */
     const w = this.g.world, r = w.renderer, N = 1024, TILES = 3, SPAN = 512, half = TILES * SPAN / 2, size = N * TILES;
     /* tiles lane: the picture grows north in whole 512 m squares to cover a playable box that reaches past the old 1.5 km square (city.meta.play); the old city gives the same 3 x 3 picture */
     /* downtown lane, Nov 15 (row A): and SOUTH: the picture's south edge Y0 moves south in whole squares when the box reaches past y -688 (TY0 = -2 squares for a box that
@@ -59,7 +59,7 @@ export class Heights {
     const fresh = !this.hf || this.hfTY !== TY || this.hfTX !== TX || this.hfX0 !== X0 || this.hfY0 !== Y0, hf = fresh ? new Array(TX * TY).fill(null) : this.hf, done = fresh ? new Uint8Array(TX * TY) : this.hfDone, buf = this._hfBuf || (this._hfBuf = new Float32Array(N * N * 4));
     const Tl = w.tiles, sets = Tl && Tl.sets && !Tl.all ? Tl.sets.filter((S) => S.state === 2 && S.wbox) : null;      // wbox = [x0, z0, x1, z1], z = -north
     const reach = (tx, ty) => { if (!sets) return true; const x0 = X0 + tx * SPAN, y0 = Y0 + ty * SPAN; return sets.some((S) => S.wbox[0] < x0 + SPAN && S.wbox[2] > x0 && -S.wbox[3] < y0 + SPAN && -S.wbox[1] > y0); };
-    const gl = r.getContext(), ppfix = !(this.g.P && this.g.P.get('helipp') === '0');
+    let softP = null; const gl = r.getContext(), ppfix = !(this.g.P && this.g.P.get('helipp') === '0');
     /* tiles lane (helper fix4): a taken square can reach into an area whose buildings are NOT in yet (its set comes when the camera nears it): that part read as street
        until the set arrived and the square was taken again. Each square now remembers which sets were drawn when it was taken (a bit per set), and top() answers from the
        map's footprints where a square reads street inside the box of a set that was not (as it does for a square not taken at all). ?helipp=0 = before. */
@@ -83,17 +83,19 @@ export class Heights {
          waiting read binds its buffer again itself when it is ready), and a read that still brought nothing (the mark in buf stays) is not kept: the square is taken again
          a little later, three tries at most. ?helipp=0 = before. */
       if (ppfix) { if (gl.PIXEL_PACK_BUFFER) gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null); buf[3] = -7; }
+      if (soft && only && only.length === 1 && r.readRenderTargetPixelsAsync) { const k = ty * TX + tx, ab = this._hfBufA || (this._hfBufA = new Float32Array(N * N * 4)); softP = r.readRenderTargetPixelsAsync(rt, 0, 0, N, N, ab).then(() => { const sq = hf[k] || (hf[k] = new Uint16Array(N * N)); for (let q = 0, e = N * N; q < e; q++) sq[q] = Math.min(65535, Math.max(0, Math.round(ab[q * 4] * 10))); done[k] = 1; if (inSets) inSets[k] = inMask; if (rk) try { rk.squares(this, [k]); } catch (e) { console.warn('[roofkit] ' + (e && e.message)); } }).finally(() => { rt.dispose(); }); continue; }
       r.readRenderTargetPixels(rt, 0, 0, N, N, buf);
       if (ppfix && buf[3] === -7) { const k = ty * TX + tx, tr = (this.hfTry = this.hfTry || {}); tr[k] = (tr[k] || 0) + 1; this.hfMiss = (this.hfMiss || 0) + 1; if (tr[k] <= 3) later.push(k); continue; }
       // image x runs east, image y runs north (the camera's up is north)
       const sq = hf[ty * TX + tx] || (hf[ty * TX + tx] = new Uint16Array(N * N)); for (let k = 0, e = N * N; k < e; k++) sq[k] = Math.min(65535, Math.max(0, Math.round(buf[k * 4] * 10)));
       done[ty * TX + tx] = 1; if (inSets) inSets[ty * TX + tx] = inMask; rkDone.push(ty * TX + tx);
     }
-    r.setRenderTarget(old.rt); sc.overrideMaterial = old.om; sc.background = old.bg; r.setClearColor(old.cc, old.ca); r.shadowMap.autoUpdate = old.sh; for (const q of marked) q.layers.disable(L); rt.dispose(); mat.dispose();
+    r.setRenderTarget(old.rt); sc.overrideMaterial = old.om; sc.background = old.bg; r.setClearColor(old.cc, old.ca); r.shadowMap.autoUpdate = old.sh; for (const q of marked) q.layers.disable(L); if (!softP) rt.dispose(); mat.dispose();
     this.hf = hf; this.hfDone = done; this.hfTY = TY; this.hfTX = TX; this.hfSq = SPAN; this.hfN = N; this.hfHalf = half; this.hfS = size / (2 * half); this.hfY0 = Y0; this.hfY1 = Y0 + TY * SPAN; this.hfX0 = X0; this.hfX1 = X0 + TX * SPAN;
     if (!only) { let n = 0; for (const sq of hf) if (sq) for (let i = 0; i < sq.length; i += 97) if (sq[i] > 20) n++; if (n < 50) { this.hf = null; throw new Error('height picture came back empty'); } }
     if (rk && rkDone.length) try { rk.squares(this, rkDone); } catch (e) { console.warn('[roofkit] ' + (e && e.message)); }
     if (later.length) this.pump(later);
+    return softP;
   }
   // squares to take (again), one every few frames (each is one small draw and one read-back)
   pump(list) {
@@ -102,7 +104,8 @@ export class Heights {
     const step = () => { if (!window.__ready && !window.__error) { setTimeout(step, 400); return; }     /* not during the load: the squares left for later would only be paid there after all */
       /* facades lane, Nov 17: the square NEAREST the player first (was: in the order they were asked for). On a map of many areas the list is long (71 squares waiting on the battery map after a jump to Grace Church), and the roofs where he stands were read last: until then the helicopter met the map's footprints there and the roof units (roofkit.js) were not drawn. ?hfnear=0 = before */
       let bi = 0; const pl = this.g.player; if (pl && q.length > 1 && this.hfSq && !(this.g.P && this.g.P.get('hfnear') === '0')) { let bd = 1e18; for (let i = 0; i < q.length; i++) { const k = q[i], cx = this.hfX0 + (k % this.hfTX + 0.5) * this.hfSq, cy = this.hfY0 + (Math.floor(k / this.hfTX) + 0.5) * this.hfSq, d = (cx - pl.x) * (cx - pl.x) + (cy - pl.y) * (cy - pl.y); if (d < bd) { bd = d; bi = i; } } }
-      const n = q.splice(bi, 1)[0]; if (n === undefined) { this.hfPump = false; return; } try { this.bake([n]); } catch (e) {} setTimeout(() => requestAnimationFrame(step), 60); };
+      /* lead fast-start, Nov 19: not while far building shells are still on their way (every set that lands asks for its squares again: squares were read two and three times in the first 30 s of play, 81 reads), 40 s at most, and never held while he flies. ?hfwait=0 = as before */ { const Tl = this.g.world.tiles, P = this.g.P; if (Tl && Tl.lateQ && Tl.lateQ.length && !this.piloted && !(P && P.get('hfwait') === '0') && performance.now() / 1000 - (window.__readyAt || 0) < 40) { setTimeout(step, 300); return; } }
+      const n = q.splice(bi, 1)[0]; if (n === undefined) { this.hfPump = false; return; } let pr = null; try { pr = this.bake([n], !(this.g.P && this.g.P.get('hfasync') === '0')); } catch (e) {} const next = () => setTimeout(() => requestAnimationFrame(step), 60); if (pr && pr.then) pr.then(next, next); else next(); };
     requestAnimationFrame(step);
   }
   // a tile set came in during play: its squares are read again, one every few frames (each is one small draw and one read-back)
