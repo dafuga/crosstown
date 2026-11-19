@@ -55,6 +55,7 @@ const FRAG = /* glsl */`
 ${WV.GLSL}
 uniform vec3 uSunDir, uSunColor; uniform samplerCube tStreet; uniform sampler2D tRvField, tRvRip; uniform vec4 uRvBox; uniform float uRvCube, uRvFoam; uniform vec3 uRvDeep, uRvSky;
 uniform vec4 uRvTrail[4]; uniform vec4 uRvHull[4]; uniform vec2 uRvHullH[4];
+uniform vec4 uRvRing[8]; uniform vec4 uRvSwim; uniform vec2 uRvSwimH;      /* Nov 16 (Matt: swimming "does not look super real"): rings thrown by a swimmer's hands, kicks and plunge (x, three z, start time, strength), and the swimmer himself (x, three z, speed, on) with his heading */
 varying vec3 vRvW; varying vec2 vRvRest; varying float vRvFar; varying float vRvShore;
 float rvHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float rvNoise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(rvHash(i), rvHash(i + vec2(1, 0)), f.x), mix(rvHash(i + vec2(0, 1)), rvHash(i + vec2(1, 1)), f.x), f.y); }
@@ -83,6 +84,14 @@ void main() {
   float gust = texture2D(tRvRip, gq * vec2(0.0011, 0.0046) + uWaT * vec2(0.0020, 0.0003)).b * 0.6 + texture2D(tRvRip, gq * vec2(0.0005, 0.0017) - uWaT * vec2(0.0006, 0.0002)).b * 0.4;
   float ruf = mix(0.55, 1.25, smoothstep(0.34, 0.66, gust));      /* round 5: slicks at a tenth read as flat painted blotches; a slick is now half as ruffled, with a soft edge */
   s += gs * (0.45 + 0.55 * uWaSea) * ruf; lostV *= ruf * ruf;
+  float fRing = 0.0, swimD = 99.0, ringH = 0.0;
+  for (int i = 0; i < 8; i++) { vec4 rg = uRvRing[i]; float age = uWaT - rg.z; if (rg.w <= 0.0 || age < 0.0 || age > 5.0) continue; vec2 e = vRvRest - rg.xy; float d = length(e); if (d > 9.0) continue;
+    float rad = 0.15 + 0.85 * age, wdt = 0.22 + 0.16 * age, ph = d - rad, env = exp(-ph * ph / (wdt * wdt)), amp = (0.25 + 0.75 * rg.w) * exp(-age * 0.75) / (1.0 + 0.55 * rad);
+    s += (e / max(d, 0.05)) * (amp * 1.7 * env * sin(ph * 13.0)); ringH += amp * env * cos(ph * 13.0);      /* a packet of two or three short crests riding outward at 0.85 m/s, flattening as it goes */
+    fRing = max(fRing, min(rg.w * 2.5, 1.0) * (1.0 - smoothstep(0.10, 0.45 + 1.1 * rg.w, age)) * (1.0 - smoothstep(0.10, 0.30 + (0.25 + 0.6 * rg.w) * age, d))); }      /* critic 1: "nothing the body does disturbs the water": a patch of bubbles where each hand or foot went in, brightest at once, gone in a second and a half */
+  if (uRvSwim.w > 0.0) { vec2 e = vRvRest - uRvSwim.xy; swimD = length(e); if (swimD < 6.0) { vec2 l = vec2(dot(e, uRvSwimH), dot(e, vec2(-uRvSwimH.y, uRvSwimH.x)));      /* l.x ahead of him, l.y to his side */
+      float sp = clamp(uRvSwim.z / 2.3, 0.0, 1.0); float back = max(-l.x, 0.0), vq = (abs(l.y) - 0.22 - back * 0.32) / (0.10 + back * 0.07), vee = exp(-vq * vq) * exp(-back * 1.3) * step(l.x, 0.3) * sp;
+      s += vec2(-uRvSwimH.y, uRvSwimH.x) * sign(l.y) * vee * 0.35 * uRvSwim.w + (e / max(swimD, 0.05)) * 0.30 * uRvSwim.w * exp(-(swimD - 0.55) * (swimD - 0.55) / 0.048) * sin(swimD * 16.0 - uWaT * 5.0); ringH += 0.25 * uRvSwim.w * exp(-(swimD - 0.55) * (swimD - 0.55) / 0.048) * cos(swimD * 16.0 - uWaT * 5.0) + 0.5 * vee * uRvSwim.w; } }      /* the small V he pushes when he moves, and the lapping against his body */
   vec3 Nn = normalize(vec3(-s.x, 1.0, -s.y));
   float rough = clamp(0.035 + sqrt(lostV) * 1.1, 0.035, 0.30);
   float nv = max(dot(Nn, V), 0.001); float F = 0.02 + 0.98 * pow(1.0 - nv, 5.0);
@@ -105,6 +114,7 @@ void main() {
   // the sun on the water
   vec3 H = normalize(V + uSunDir); float nh = max(dot(Nn, H), 0.0), a2 = rough * rough * 1.8, dd = nh * nh * (a2 * a2 - 1.0) + 1.0;
   col += uSunColor * (a2 * a2 / (3.14159 * dd * dd)) * 0.020 * F * 22.0 * step(0.0, uSunDir.y) * clamp(dot(Nn, uSunDir) * 6.0, 0.0, 1.0);
+  col *= 1.0 + clamp(ringH, -0.4, 0.4) * 0.55;      /* the rings read from above too: their crests a little lighter, their troughs darker */
   // foam: the lap at the shore, the breaking tops of the steepest waves, boat wakes
   float n1 = texture2D(tRvRip, p * 0.047 + uWaT * vec2(0.004, 0.003)).b, n2 = texture2D(tRvRip, p * vec2(0.0131, -0.0117) - uWaT * vec2(0.002, 0.003)).b, n3 = texture2D(tRvRip, p * vec2(-0.21, 0.19) + uWaT * vec2(0.011, -0.007)).b;
   float lap = sin(sd * 1.6 - uWaT * 1.3 + n2 * 5.0) * 0.5 + 0.5;
@@ -115,13 +125,23 @@ void main() {
   float fWake = clamp(smoothstep(0.05, 0.16, wk) * smoothstep(0.42, 0.60, mot) * 0.40 + smoothstep(0.15, 0.26, wk * (0.5 + 1.0 * mot)) * 0.9, 0.0, 1.0);
   // the churned track right behind each boat (boat.js gives the stern's place, heading and how hard it churns)
   float fTrail = 0.0;
-  float foam = clamp(max(max(fShore * 0.16, fCap * 0.25), fWake * 0.6) + fTrail, 0.0, 1.0) * uRvFoam;      /* Nov 16: the shore's lap at 0.55 was a glowing pale band a metre wide along every wall (the shore picture is too coarse for a thin line) */      /* round 5: whitecaps on a river this calm read as stray flecks */
+  float fSwim = 0.0; if (uRvSwim.w > 0.0 && swimD < 4.0) { vec2 e = vRvRest - uRvSwim.xy; vec2 l = vec2(dot(e, uRvSwimH), dot(e, vec2(-uRvSwimH.y, uRvSwimH.x))); float sp = clamp(uRvSwim.z / 2.3, 0.0, 1.0);
+    l.x += 0.40 * sp;      /* his chest is given; flat out, the middle of him lies 0.4 m behind it */
+    float bodyE = length(l / vec2(0.30 + 0.72 * sp, 0.27 + 0.05 * sp)), grainS = rvNoise(mat2(0.80, -0.60, 0.60, 0.80) * vRvRest * 47.0 + uWaT * 2.1) * 0.5 + rvNoise(mat2(0.28, 0.96, -0.96, 0.28) * vRvRest * 113.0 - uWaT * 3.3) * 0.5,      /* two turned layers: one unturned layer showed its lattice as rows of bricks */ fineS = clamp(1.0 - abs((texture2D(tRvRip, vRvRest * vec2(0.53, 0.47) + uWaT * vec2(0.021, -0.013)).b - 0.5) * 5.0), 0.0, 1.0), bq = (bodyE - 0.95) / 0.30;
+    float lead = 0.75 + 0.25 * clamp(l.x / (0.3 + 0.7 * sp), -1.0, 1.0) * sp;      /* more white water on the side he moves toward, less behind */
+    fSwim = exp(-bq * bq) * (0.70 + 0.30 * sp) * lead * smoothstep(0.30, 0.55, grainS * 0.6 + fineS * 0.4 + 0.12 * sp)      /* critic 1: the waterline was "a ruled line, a figure pushed through glass": a band of bubbly broken water where the surface meets him */
+      + (1.0 - smoothstep(0.0, 0.30, abs(l.y) - 0.08)) * smoothstep(-0.7, -1.2, l.x) * exp((l.x + 1.2) * 1.8) * sp * 0.75 * smoothstep(0.32, 0.58, grainS * 0.7 + fineS * 0.3);      /* the boil of the kick just behind his feet, short */
+    fSwim *= uRvSwim.w * (1.0 - smoothstep(1.6, 2.4, swimD)); }
+  { float grainR = rvNoise(mat2(0.60, 0.80, -0.80, 0.60) * vRvRest * 53.0 - uWaT * 2.3) * 0.5 + rvNoise(mat2(0.96, -0.28, 0.28, 0.96) * vRvRest * 127.0 + uWaT * 3.7) * 0.5; fRing *= smoothstep(0.50 - 0.30 * fRing, 0.72 - 0.30 * fRing, grainR); }      /* grains of bubbles (fine hash noise), not ribbons: the ripple picture gave long smeared marble streaks at the chase camera's low angle */
+  float foam = clamp(max(max(max(fShore * 0.16, fCap * 0.25), fWake * 0.6), max(fRing, fSwim) * 0.3) + fTrail, 0.0, 1.0) * uRvFoam;      /* Nov 16: the shore's lap at 0.55 was a glowing pale band a metre wide along every wall (the shore picture is too coarse for a thin line) */      /* round 5: whitecaps on a river this calm read as stray flecks */
   vec3 foamCol = vec3(0.80, 0.84, 0.85) * (up * 0.9 + dot(uSunColor, vec3(0.3333)) * max(uSunDir.y, 0.0) * 2.4) * (0.7 + 0.6 * n3);
   foamCol = mix(vec3(0.34, 0.38, 0.31) * (up * 0.9 + dot(uSunColor, vec3(0.3333)) * max(uSunDir.y, 0.0) * 2.0), foamCol, smoothstep(0.35, 0.85, foam));      // thin foam is aerated green water, thick foam white
   col = mix(col, foamCol, clamp(foam * (0.35 + 0.9 * n3), 0.0, 1.0));
+  { float fw = clamp(max(fRing, fSwim), 0.0, 1.0) * uRvFoam; if (fw > 0.0) col = mix(col, min(vec3(0.80, 0.84, 0.85) * (up * 0.9 + dot(uSunColor, vec3(0.3333)) * max(uSunDir.y, 0.0) * 2.4), vec3(0.95)), fw * 0.92); }      /* the swimmer's own white water is white (the river's thin foam is an olive wash) */
   // contacts: the wall's foot and each hull keep the sky off the water beside them
   float shade = mix(0.50, 1.0, smoothstep(0.0, 2.4 + dist * 0.022, sd));      // the dark line under a shore: from far off it is the bank's own dark reflection, tens of metres wide
   for (int i = 0; i < 4; i++) { vec4 hb = uRvHull[i]; if (hb.z <= 0.0) continue; vec2 e = vRvRest - hb.xy, l = vec2(dot(e, uRvHullH[i]), dot(e, vec2(-uRvHullH[i].y, uRvHullH[i].x))) / (hb.zw + vec2(0.5, 0.45)); shade *= 1.0 - 0.28 * (1.0 - smoothstep(0.7, 1.25, length(l))); }
+  if (uRvSwim.w > 0.0) shade *= 1.0 - 0.38 * uRvSwim.w * (1.0 - smoothstep(0.20, 1.3, swimD));      /* critic 2: "no reflection and no shadow on the water, pasted on": a darker patch of water round him */
   col *= shade;
   gl_FragColor = vec4(col, 1.0);
   #include <fog_fragment>
@@ -133,12 +153,16 @@ export function buildRiver(game, field) {
   const U = Object.assign(THREE.UniformsUtils.clone(THREE.UniformsLib.fog), WV.uniforms(), {
     uRvC: { value: new THREE.Vector3() }, uRvLevel: { value: level }, uRvLevelF: { value: level }, uRvBox: { value: new THREE.Vector4(field.box[0], field.box[1], field.box[2] - field.box[0], field.box[3] - field.box[1]) },
     tRvField: { value: ft }, tRvRip: { value: rippleTexture() }, tStreet: world.shared.tStreet, uSunDir: world.shared.uSunDir, uSunColor: world.shared.uSunColor, uRvCube: { value: 1 }, uRvFoam: { value: 1 },
-    uRvDeep: { value: new THREE.Color().setRGB(0.080, 0.078, 0.056) }, uRvHull: { value: new Float32Array(16) }, uRvHullH: { value: new Float32Array(8) }, uRvSky: { value: new THREE.Color().setRGB(0.62, 0.68, 0.80) }, uRvTrail: { value: [new THREE.Vector4(), new THREE.Vector4(), new THREE.Vector4(), new THREE.Vector4()] },
+    uRvDeep: { value: new THREE.Color().setRGB(0.080, 0.078, 0.056) }, uRvHull: { value: new Float32Array(16) }, uRvHullH: { value: new Float32Array(8) }, uRvSky: { value: new THREE.Color().setRGB(0.62, 0.68, 0.80) }, uRvTrail: { value: [new THREE.Vector4(), new THREE.Vector4(), new THREE.Vector4(), new THREE.Vector4()] }, uRvRing: { value: Array.from({ length: 8 }, () => new THREE.Vector4(0, 0, -99, 0)) }, uRvSwim: { value: new THREE.Vector4(0, 0, 0, 0) }, uRvSwimH: { value: new THREE.Vector2(1, 0) },
   });
   const mat = new THREE.ShaderMaterial({ uniforms: U, vertexShader: VERT, fragmentShader: 'uniform float uRvLevelF;\n' + (P.get('riverabove') === '1' ? FRAG : FRAG.replace('0.85 * smoothstep(0.55, 0.95, nv)', '0.0')), fog: true, depthWrite: false });      /* merge lane, batch 4c: hand-over 3's lighter river seen from above is OFF unless ?riverabove=1 (a blind critic called it slightly worse than before in both pairs, 230 m up, by day: lanes/merge/batch-4c/README.md) */
   if (P.get('waterwire') === '1') mat.wireframe = true;
   const mesh = new THREE.Mesh(gridGeometry(), mat); mesh.name = 'river_surface'; mesh.frustumCulled = false; mesh.renderOrder = 40; mesh.matrixAutoUpdate = false; mesh.castShadow = false; mesh.receiveShadow = false;
-  const R = { mesh, mat, U, field, level, t: 0 };
+  const R = { mesh, mat, U, field, level, t: 0, ringN: 0, rings: 0 };
+  // a ring on the water at (x, y) in map metres, k 0..1 how hard the water was struck (a hand 0.3, a kick 0.2, a man going in 1); eight live at a time, the oldest is reused
+  R.ripple = (x, y, k = 0.4) => { if (!(k > 0) || !isFinite(x) || !isFinite(y)) return; U.uRvRing.value[R.ringN].set(x, -y, WV.state.t, Math.min(1.5, k)); R.ringN = (R.ringN + 1) % 8; R.rings++; };
+  // the swimmer, each frame: where he is (map metres), his heading, his speed (m/s); on = false when nobody is in the water
+  R.swimmer = (x, y, h, speed, on) => { const v = U.uRvSwim.value; if (!on) { v.w = 0; return; } v.set(x, -y, Math.abs(speed) || 0, 1); U.uRvSwimH.value.set(Math.cos(h), -Math.sin(h)); };
   mesh.onBeforeRender = (r, s, cam) => {
     // the grid's centre: under the eye, in whole metres (the 1 m cells never slide under the waves); drawn into the mirror cube it stays where the main view put it
     if (cam === world.camera) U.uRvC.value.set(Math.round(cam.position.x), 0, Math.round(cam.position.z));
