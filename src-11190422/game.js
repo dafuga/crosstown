@@ -13,6 +13,7 @@ import { LookCtl } from './look.js';
 import { imp as lrImp } from './loadretry.js';     // progress lane, Nov 15: a code file that failed to download is asked for again (src/loadretry.js; ?loadretry=0 off)
 import { waterAt } from './streets/water.js';
 import { fcOf, fcDrive, fcDrag, install as fcInstall } from './move/fastcars.js';
+import { camPull } from './move/campull.js';     // gameplay lane, Nov 19: the chase camera comes in front of a bus or truck that stands between it and the player's car (public note Nov 18; ?campull=0)
 // downtown lane, Nov 15 (shore guard): the shore's wall is two thin lines; at the narrow end of a pier (the Skyport pier, x 1,173, y -1,056) a car-size circle gets
 // through them (lanes/downtown/tools/shore-flood.mjs). Whatever the walls did, a move of the player or of a car that would END in the water from a place on land is
 // not made. One point-in-outline test a step, only on a city that lists water. ?waterguard=0 off.
@@ -570,11 +571,12 @@ export class Game {
     const hd = d * Math.cos(pitch); let hit = 1; for (const sd of [0, 0.45, -0.45]) hit = Math.min(hit, this.statics.raycast(C.tx, C.ty, C.tx + bx * (hd + 0.6) - by * sd, C.ty + by * (hd + 0.6) + bx * sd));
     if (this.player.alt > 2) hit = 1;     // heli lane: on a roof the street-level walls are below you
     const want = hit < 1 ? Math.max(0.9, d * hit - 0.35) : d; if (!dt || C.clip === undefined) C.clip = want; else C.clip += (want - C.clip) * Math.min(1, dt * (want < C.clip ? 22 : 2.2)); d = Math.min(d, C.clip);
-    let cx = C.tx + bx * d * Math.cos(pitch), cy = C.ty + by * d * Math.cos(pitch), cz = C.tz + C.h + d * Math.sin(pitch);
+    const vp = this.player.vehicle && this.P.get('campull') !== '0' ? camPull(this, C, bx, by, d, pitch, dt) : null; if (vp) d = vp.d;     // gameplay campull: a vehicle in the way (null, and nothing changed, when none is)
+    let cx = C.tx + bx * d * Math.cos(pitch), cy = C.ty + by * d * Math.cos(pitch), cz = C.tz + C.h + d * Math.sin(pitch); if (vp) cz += vp.up;
     if (cz < 0.4) cz = 0.4;
     const sh = C.shake * C.shake * 0.25, n = this.frame;
     cam.position.set(cx + Math.sin(n * 1.7) * sh, cz + Math.sin(n * 2.3) * sh, -cy + Math.cos(n * 1.3) * sh);
-    const ahead = this.player.vehicle ? 2.2 : 0;
+    const ahead = this.player.vehicle ? (vp ? vp.ahead : 2.2) : 0;     // (pulled in, the view keeps about the chase view's angle: the horizon stays in the picture)
     cam.lookAt(C.tx + Math.cos(C.yaw) * ahead, C.tz + (this.player.vehicle ? 0.1 : 0.15), -(C.ty + Math.sin(C.yaw) * ahead));
     // looking up: the camera orbits the player and looks at them, so its lowest orbit was also the highest the view could tilt (14 degrees below the horizon)
     { const extra = -0.25 - C.pitch; if (extra > 0) { const d = cam.getWorldDirection(this._vd || (this._vd = new THREE.Vector3())), hl = Math.hypot(d.x, d.z) || 1, e = Math.min(1.4, Math.asin(clamp(d.y, -1, 1)) + extra);
