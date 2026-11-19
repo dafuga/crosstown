@@ -373,7 +373,6 @@ export async function install(g) {
       const nb = near(C.cx, C.cy); for (const b of C.bikes) { draw(b, b.x, b.y, 0.15, b.h, b.lean, null); if (b.sit) put(nb && PP ? PP.astride[b.sit.pv] : RD['astride' + b.sit.gear], bikeMat(b.x, b.y, 0.15, b.h, b.lean), b.sit.tr); }
       for (const q of C.men) { if (q.fall) { if (q.fall.t > 9) continue; _q.setFromAxisAngle(AY, q.h); _q2.setFromAxisAngle(AX, q.fall.sg * 1.5 * Math.min(1, q.fall.t * 4)); _q.multiply(_q2); _m.compose(_p.set(q.x, kerbZ(q.x, q.y) + 0.14, -q.y), _q, ONE); } else { _q.setFromAxisAngle(AY, q.h); _m.compose(_p.set(q.x, 0.15, -q.y), _q, _s.set(q.sc, q.sc, q.sc)); }
         put(nb && PP ? PP[q.pose][q.pv] : RD[q.pose + q.gear], _m, q.tr); } }
-    if (out.tb) out.tb.draw(near);      // gameplay/takeover bike: bikes the player has taken, and the men put off them
     if (loose.length) looseDraw();
     let n = 0; for (const b of batches) { b.im.count = b.n; b.im.visible = b.n > 0; n += b.n; if (b.n) { b.im.instanceMatrix.needsUpdate = true; b.tint.needsUpdate = true; } } out.stats.drawn = n; out.stats.syncSum = (out.stats.syncSum || 0) + performance.now() - tS;
   }
@@ -393,6 +392,5 @@ export async function install(g) {
   out._t = { furnHit, toBike };
   if (CLUMPS) buildClumps(); else furn(); people(); hours(); out.populate(g.focus.x, g.focus.y);
   console.log('[riders] on: ' + out.list.length + ' riding of ' + TARGET + ', ' + out.clumps.length + ' parked clumps');
-  /* gameplay/takeover bike, Nov 18: F takes a bicycle or e-bike (takebike.js; ?takebike=0 = off) */ if (!(P && P.get('takebike') === '0')) import('./takebike.js').then((m) => m.install(g, out, { draw, fig: (o, x, y, z, h, nb) => put(nb && PP ? PP.stand[o.pv] : RD['stand' + o.gear], bikeMat(x, y, z, h, 0), o.tr), box: (o, x, y, z, h) => { _l.makeRotationZ(-0.08).setPosition(-0.25, 1.2, 0); put(BX, _m2.multiplyMatrices(bikeMat(x, y, z, h, 0), _l), o.tx); } })).catch((e) => console.log('[takebike] not loaded: ' + (e && (e.stack || e.message))));
   return out;
 }

@@ -283,7 +283,6 @@ export function addPerch(heli, ctx) {
       c.fillStyle = '#d8281e'; c.beginPath(); c.arc(cx, cy, 1.8, 0, 7); c.fill(); c.restore();
       const A = S.C && S.C.aim, am = S.C && S.C.ammo && S.C.ammo[S.C.slot];
       hud.text([3, 6, 12][S.zoom] + 'x', cx + R * 0.5, cy + R * 0.62, 20, '#fff', 'left', 700, 1);
-      if (S.C && S.C.snipHud) S.C.snipHud(hud, cx, cy, R);      /* gameplay/sniphit: the hit mark, drawn after the mask */
       if (A && A.ok && A.kind !== 'none') hud.text(Math.round(A.t) + ' m', cx + R * 0.5, cy + R * 0.62 + 26, 16, A.ped ? '#ff5a45' : '#ffb82e', 'left', 700, 1);
       if (am) hud.text(am.mag + ' / ' + am.reserve, cx - R * 0.5, cy + R * 0.62, 20, am.mag ? '#fff' : '#ff5a45', 'right', 700, 1);
     } else if (!g.capture && S.C) {

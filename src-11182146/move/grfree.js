@@ -32,8 +32,6 @@ export function install(g, G, X) {
   // chute lane, Nov 17 (CHIEF: 'a fall from more than about 12 m ragdolls the player, then he gets up, with no death; SPACE during a fall from more than about 30 m opens it'):
   // ?chute=0 = no parachute at all; ?fallrag=0 = no going down after a long fall (the 0.5 s stumble as before). A fall never kills: it leaves him 10 health at least.
   const CHUTE = !(g.P && g.P.get('chute') === '0'), FALLRAG = !(g.P && g.P.get('fallrag') === '0');
-  // Matt, Nov 18: "When I'm on a parachute I literally cannot move my camera up and down." Under the canopy the view's pitch is the player's own (mouse, touch look, the pad's right stick: g.cam.pitch, the range on foot); ?chutepitch=0 = the fixed view as before.
-  const CPITCH = !(g.P && g.P.get('chutepitch') === '0');
   const hurtBy = (n) => { const c = g.combat; if (!(n > 0)) return; X.hurtBy(c && c.health > 0 ? Math.min(n, Math.max(0, c.health - 10)) : 0); };
   const F = (G.free = { on: true, a: null, last: null, mx: 0, my: 0, vx: 0, vy: 0, blockT: 0, stum: 0, spaceWant: false, jumpWas: false, fails: 0, cw: 0, col: null, log: null,
     stats: { walked: 0, jumped: 0, hopped: 0, flings: 0, blocked: 0, grabs: 0, pulledUp: 0, letGo: 0, chutes: 0, streams: 0, cuts: 0, bumps: 0, cars: 0, walls: 0, lips: 0, roofLands: 0, streetLands: 0, settled: 0 } });
@@ -210,16 +208,12 @@ export function install(g, G, X) {
   const _ct = V3();
   const chase = (sx, sy, sz, ch, grab, yaw, d, snap) => {
     const rg = !ch && !grab && !!F.rag, hiK = ch ? clamp((sz - Math.max(0, top(sx, sy)) - 6) / 14, 0, 1) : 0, back = ch ? 8 : grab ? 5 : rg ? 5.4 : 7, up = ch ? 0.9 - 1.9 * hiK : rg ? 2.5 : 2.3; let ok = false; _ct.set(sx, sz + (ch ? 2.9 : rg ? 0.45 : 1.2), -sy);      // handover-2: under canopy nearer and, with air under him, from below his feet so he and the wing stand against the sky; down on the ground it looks at the body F.cyaw = null;
-    // the pitched view: he looks DOWN by vd (g.cam.pitch, 0.12 taken off so the view on foot and the gun's pose agree with it). The camera rides a circle round his chest from 43 degrees below him to 34 above; past those stops the view tilts on in place, to 56 degrees down (the street under him is in the picture) and 80 up (the canopy from below).
-    const cp = ch && CPITCH && !!g.cam && typeof g.cam.pitch === 'number', vd = cp ? clamp(g.cam.pitch - 0.12, -1.4, 1.05) : 0, el = clamp(vd, -0.75, 0.6), cb = Math.cos(el), sb = Math.sin(el);
-    if (cp) F.cvd = vd;
     out: for (const f of [1, 0.8, 0.62, 0.46, 0.32]) for (const dy of f > 0.5 ? [0, 0.45, -0.45, 0.9, -0.9] : [0, 0.45, -0.45, 0.9, -0.9, 1.6, -1.6, 2.4, -2.4, 3.14]) {
-      const bk = cp ? back * cb : back, x = sx - Math.cos(yaw + dy) * bk * f, y = sy - Math.sin(yaw + dy) * bk * f; let z = sz + (ch ? up + (1 - f) * 1.2 : up * (0.6 + 0.4 * f)); if (cp) { z = sz + 1.6 + back * f * sb; const gz = top(x, y); if (gz < sz + 1 && z < Math.max(0, gz) + 0.6) z = Math.max(0, gz) + 0.6; }      /* never under the street or a roof below him */ if (sees(x, y, z, sx, sy, sz)) { _ca.set(x, z, -y); ok = true; if (dy) F.cyaw = yaw + dy; break out; } }
+      const x = sx - Math.cos(yaw + dy) * back * f, y = sy - Math.sin(yaw + dy) * back * f, z = sz + (ch ? up + (1 - f) * 1.2 : up * (0.6 + 0.4 * f)); if (sees(x, y, z, sx, sy, sz)) { _ca.set(x, z, -y); ok = true; if (dy) F.cyaw = yaw + dy; break out; } }
     if (!ok) { F.blind = (F.blind || 0) + 1; for (const dy of [0, 0.8, -0.8, 1.6, -1.6, 2.4, -2.4, 3.14]) { const x = sx - Math.cos(yaw + dy) * 1.3, y = sy - Math.sin(yaw + dy) * 1.3; if (clearAt(x, y, sz + 2.3)) { _ca.set(x, sz + 2.3, -y); ok = true; break; } }
       if (!ok) _ca.set(sx - Math.cos(yaw) * 0.9, Math.max(sz, top(sx, sy)) + 2.4, -(sy - Math.sin(yaw) * 0.9)); }
-    if (cp) { let hx = sx - _ca.x, hz = -sy - _ca.z; const hl2 = Math.hypot(hx, hz); if (hl2 > 0.3) { hx /= hl2; hz /= hl2; } else { hx = Math.cos(yaw); hz = -Math.sin(yaw); } const cv = Math.cos(vd); _ct.set(_ca.x + hx * cv * 10, _ca.y - Math.sin(vd) * 10, _ca.z + hz * cv * 10); } else
     if (ch) { const dd = Math.hypot(_ca.x - sx, _ca.z + sy); _ct.y = sz + 1.2 + 1.3 * clamp((dd - 2) / 4, 0, 1); }      /* helper 4: a camera pushed close by a wall looks at him, not up into the cloth */
-    if (snap || !d) { _ck.copy(_ca); _cc.copy(_ct); } else { const r = Math.min(1, d * (cp ? 14 : 7)); _cc.lerp(_ct, r); _ck.lerp(_ca, r); if (!clearAt(_ck.x, -_ck.z, _ck.y)) _ck.copy(_ca); } };
+    if (snap || !d) { _ck.copy(_ca); _cc.copy(_ct); } else { const r = Math.min(1, d * 7); _cc.lerp(_ct, r); _ck.lerp(_ca, r); if (!clearAt(_ck.x, -_ck.z, _ck.y)) _ck.copy(_ca); } };
   const camClear = () => { const cam = g.world && g.world.camera; if (!cam || !(F.a || F.camOn || (pl.roof && pl.alt > 1 && onFoot() && !G.phase))) return;      // (stage H) whoever placed it (ours, the blend, the game's own on a roof)
     const p = cam.position, hs = hl && hl.heights, keep = hs && hs.last; try { if (clearAt(p.x, -p.z, p.y)) return; const a = F.a, sx = a ? a.x : pl.x, sy = a ? a.y : pl.y, sz = (a ? a.z : pl.alt) + 1.5;
       for (const f of [0.85, 0.7, 0.55, 0.42, 0.3, 0.2, 0.1]) { const x = sx + (p.x - sx) * f, y = sy + (-p.z - sy) * f, z = sz + (p.y - sz) * f; if (clearAt(x, y, z)) { p.set(x, z, -y); F.pulls = (F.pulls || 0) + 1; return; } } F.shut = (F.shut || 0) + 1; } finally { if (hs) hs.last = keep; } };
@@ -359,7 +353,7 @@ export function install(g, G, X) {
       sync0(dt);
       try { pose(d); } catch (e) { fail('pose', e); } try { drawCanopy(d); } catch (e) { fail('canopy', e); } }; }
   F.K = K; F.build = build; F.drawCanopy = drawCanopy; F.camF = camF;
-  F.CHUTE = CHUTE; F.FALLRAG = FALLRAG; F.CPITCH = CPITCH; F.N = { CH_MIN, RAG_V, T_TUM, T_LIE, T_UP2, SINK, GLIDE, TURN, FLARE };
+  F.CHUTE = CHUTE; F.FALLRAG = FALLRAG; F.N = { CH_MIN, RAG_V, T_TUM, T_LIE, T_UP2, SINK, GLIDE, TURN, FLARE };
   console.log('[grfree] on: no fence on roofs; SPACE on a roof jumps, SPACE in the air with 30 m under him opens the parachute (again = cut away; ?chute=0 off); a 12 m fall puts him down and he gets up (?fallrag=0 off); ?grfree=0 = all off');
   return F;
 }

@@ -54,7 +54,6 @@ export async function addCombat(game) {
   const C = new Combat(game); await C.init(); return C;
 }
 
-const SNIP_PERSON = { ped: 1, crowd: 1, cop: 1, rider: 1 };
 export class Combat {
   constructor(game) {
     this.g = game; if (game.P.get('gall') === '0') ORDER = ['pistol', 'rifle', 'unarmed']; for (const k in WEAPONS) { const i = ORDER.indexOf(k); WEAPONS[k].key = i >= 0 ? 'Digit' + (i + 1) : null; } this.slot = 'unarmed'; this.last = 'pistol'; this.ammo = {}; for (const k in WEAPONS) this.ammo[k] = { mag: WEAPONS[k].mag, reserve: WEAPONS[k].reserve };
@@ -65,7 +64,6 @@ export class Combat {
     { const q = game.P.get('gshake'); this.gs = q === null || q === '' || !isFinite(+q) ? 1 : clamp(+q, 0, 1); }      /* ?gshake=0..1: scale of the camera's shake, kick, zoom punch and lens pulse per shot, and of half the recoil climb (1 = the default, already far gentler than before Nov 11; 0 = a still camera) */
     this.deadDrv = []; this.headT = 0;
     /* players, Nov 14: ?ghz=0 = the old upright cylinder for people and head shots that only count four times; ?gacc=0 = the old spread (pistol 1.5 degrees from the hip, 0.3 aimed) */
-    this.SNIPHIT = game.P.get('sniphit') !== '0';      /* gameplay/sniphit, Nov 18 (Matt: 'Sniper from the roof: shots never seem to hit people'): see castAir, zone(), snipFeed, snipHud; ?sniphit=0 = as before */
     this.HZ = game.P.get('ghz') !== '0'; this.ACC = game.P.get('gacc') !== '0'; this.DRIVEFIRE = game.P.get('drivefire') !== '0'; this.DRIVEGUN = game.P.get('drivegun') !== '0'; this.DRIVEPAD = game.P.get('drivepad') !== '0'; this.AIRFIRE = game.P.get('airfire') !== '0'; this.BUSFIRE = game.P.get('busfire') === '1'; this.HELIFIRE = game.P.get('helifire') !== '0';      /* gameplay/takeover fire: ?airfire=0 = no gun above 2 m, ?helifire=0 = no hand gun in the helicopter (each as before); the bus passenger's gun is OFF until it has been run in a browser: ?busfire=1 = on */      /* gameplay/takeover 3: ?drivegun=0 = no gun drawn at the window, no larger flash, no sure tracer, no draw on the click; ?drivepad=0 = R1 / RB does not fire at the wheel */ this._zp = new Float64Array(8);
     /* ?gl2=0 = car glass that needs three rounds and stickers on the two-box stand-in; ?gpad2=0 = the controller's stick as game.js reads it and the hint for 12 s only; ?gdmg=0 = flat tyres that do not slow the car, lamps that cannot be shot out */
     this.GL2 = game.P.get('gl2') !== '0'; this.PAD2 = game.P.get('gpad2') !== '0'; this.RELRUN = game.P.get('relrun') !== '0'; this.MAPWHEEL = game.P.get('mapwheel') !== '0';      /* players, Nov 15: sprint while reloading (?relrun=0 as before), the wheel over the open map is the map's (?mapwheel=0 as before) */ this.DMG = game.P.get('gdmg') !== '0'; this.kbT = -1;
@@ -151,7 +149,6 @@ export class Combat {
     const P = (this.pad ||= { aim: false, fire: false, b: {}, seen: false, t: -99 }); let gp = null; if (this._padF) return P; this._padF = true;      /* perf, Nov 12: the controller is read once a drawn frame, not once a step (the flag is cleared in syncVisuals) */
     try { const all = typeof navigator !== 'undefined' && navigator.getGamepads ? navigator.getGamepads() : []; for (const q of all) if (q && q.connected && q.axes.length >= 2 && q.buttons.length >= 4 && (!gp || (q.mapping === 'standard' && gp.mapping !== 'standard'))) gp = q; } catch (e) { gp = null; }
     P.gp = !!gp; if (gp && this.PAD2) { let any = false; for (let i = 0; i < gp.buttons.length && !any; i++) { const b = gp.buttons[i]; if (b && (b.pressed || b.value > 0.3)) any = true; } for (let i = 0; i < 4 && !any; i++) if (Math.abs(gp.axes[i] || 0) > 0.35) any = true; if (any) { P.useT = this.t; if (!P.seen) { P.seen = true; P.t = this.t; } } }
-    if (gp && this.mapUp() && this.g.hud && this.g.hud.cmap && this.g.hud.cmap.pan2 && this.g.P.get('padmap') !== '0') { for (const i of [1, 2, 4, 5, 14, 15]) { const b = gp.buttons[i]; P.b[i] = !!(b && (b.pressed || b.value > 0.5)); } P.aim = P.fire = false; return P; }      /* gameplay map handover-3: while the styled map is open the pad is the map's (R1 / L1 zoom it, citymap2.js): no button fires, aims, reloads or changes the gun, on foot or at the wheel (R1 fired there since takeover 3); what is held is remembered, so nothing switches as the map shuts; ?padmap=0 as before */
     if (gp && this.DRIVEPAD && this.DRIVEFIRE && this.g.player.vehicle && !this.g.player.busy && !(this.g.fly && this.g.fly.on) && !(typeof window !== 'undefined' && window.__startScreen)) {      /* gameplay/takeover 3: at the wheel R2 is the gas and L2 the brake, so R1 / RB fires (the camera, turned by the right stick, aims) */
       const b5 = gp.buttons[5], d = !!(b5 && (b5.pressed || b5.value > 0.5)); P.aim = false; if (d && !P.fire) K.tap = 0.45; P.fire = d; P.b[5] = d; return P; }
     if (!gp || !this.canCarry() || (this.g.fly && this.g.fly.on) || (typeof window !== 'undefined' && window.__startScreen)) { P.aim = P.fire = false; return P; }
@@ -192,10 +189,6 @@ export class Combat {
     for (let i = 0; i < 12 && h.kind === 'wall'; i++) { const b = h.t, z = oz + dz * b; if (z < 2.2 || Math.max(top(b - 0.5), top(b + 0.5)) > z - 0.2) break; h = base.call(this, ox, oy, oz, dx, dy, dz, b + 0.05, tmax); this.stats.airOver = (this.stats.airOver || 0) + 1; }
     const end = Math.min(h.t, 160); for (let t = t0 + 0.6; t < end; t += 0.6) { const z = oz + dz * t; if (z < 0.7) break; if (!(top(t) > z + 0.05)) continue;
       let lo = t - 0.6, hi = t; for (let k = 0; k < 6; k++) { const m = (lo + hi) / 2; if (top(m) > oz + dz * m + 0.05) hi = m; else lo = m; }
-      /* sniphit: the height picture is ONE layer seen from above in cells of about a metre: a tree's crown, an awning, a lamp's head and the cell beside a facade all stand in it as solid
-         down to the street. A round that the street's own walls let through to a PERSON is not stopped by such a block: one whose top is under 14 m (leaves, canvas, a lamp), or one
-         within 1.6 m of the person (the facade's cell lying over the sidewalk). A roof of 14 m or more further off still stops it. */
-      if (this.SNIPHIT && SNIP_PERSON[h.kind] && (top(hi + 0.05) < 14 || Math.hypot(h.x - ox - dx * hi, h.y - oy - dy * hi) < 1.6)) { this.stats.snipPass = (this.stats.snipPass || 0) + 1; continue; }
       const flat = dz < -0.02 && top(hi) - (oz + dz * hi) < 0.6; h.kind = 'wall'; h.t = hi; h.x = ox + dx * hi; h.y = oy + dy * hi; h.z = oz + dz * hi; h.nx = flat ? 0 : -dx; h.ny = flat ? 0 : -dy; h.nz = flat ? 1 : 0; h.obj = null; h.part = undefined; this.stats.airRoof = (this.stats.airRoof || 0) + 1; break; }
     return h;
   }
@@ -373,11 +366,7 @@ export class Combat {
   shoot(W, am) {
     const g = this.g, C = g.cam, cam = g.world.camera, pl = g.player, kind = this.slot;
     am.mag--; this.fireCd = 60 / W.rpm; this.shots++; this.stats.fired++; this.stanceT = 0;
-    /* sniphit 2 (Nov 18; measured 0 hits in 38 scoped rounds): a round is fired in the step, after the step has put the camera back behind his shoulder (placeCamera, above: it looks 0.08 rad = 4.6 degrees
-       ABOVE the aim angle, from 1.3 m behind and beside him), while the scope's picture is the eye at the rifle along the aim angle itself (perch.js sync). perch's cast wrap moves a round onto the scope's
-       line only within 3 degrees of it, so every scoped round left along the shoulder camera's line: over the target, or into his own roof edge. Through the roof scope the round now leaves from the scope's
-       eye along the scope's line (the same sum as perch's sync; the drawn frame's own eye and line when they agree with it), and the muzzle's second ray is not cast (it could only leave that line). */
-    const sc9 = this.subCam(), sn = this.SNIPHIT && !sc9 ? this.snipLine() : null, cp9 = sn ? sn.eye : sc9 ? this._scP : cam.position, cd = sn ? sn.dir.clone() : sc9 ? _v.set(0, 0, -1).applyQuaternion(this._scQ).clone() : cam.getWorldDirection(_v).clone(), cr = new THREE.Vector3().crossVectors(cd, UP).normalize(), cu = new THREE.Vector3().crossVectors(cr, cd);
+    const sc9 = this.subCam(), cp9 = sc9 ? this._scP : cam.position, cd = sc9 ? _v.set(0, 0, -1).applyQuaternion(this._scQ).clone() : cam.getWorldDirection(_v).clone(), cr = new THREE.Vector3().crossVectors(cd, UP).normalize(), cu = new THREE.Vector3().crossVectors(cr, cd);
     const ox = cp9.x, oy = -cp9.z, oz = cp9.y, tmin = Math.max(0.5, Math.hypot(pl.x - ox, pl.y - oy));
     const mz = this.muzzleWorld(new THREE.Vector3(), _v5), mdir = _v5.clone(), spr = this.spreadOf(W) * D2R;
     let anyPed = false, killed = false;
@@ -388,13 +377,12 @@ export class Combat {
       // the bullet itself leaves the muzzle: something between the gun and that point takes it instead
       const m9 = sc9 ? this.subMuzzle(mz.x, -mz.z) : null, mx9 = m9 ? m9[0] : mz.x, my9 = m9 ? m9[1] : -mz.z, bx = h.x - mx9, by = h.y - my9, bz = h.z - mz.y, bl = Math.hypot(bx, by, bz);
       const bikeHit = g.P.get('bikehit') !== '0';
-      if (!sn && bl > (bikeHit ? 1e-6 : 0.6)) { const h2 = this.cast(mx9, my9, mz.y, bx / bl, by / bl, bz / bl, bikeHit ? 0 : 0.05, bikeHit ? bl : bl - 0.25); if (h2.kind !== 'none') h = h2; h.dx = bx / bl; h.dy = by / bl; h.dz = bz / bl; } else { h.dx = dx / L; h.dy = -dz / L; h.dz = dy / L; }
-      const r2 = this.hit(h, this.HZ && h.kind === 'cop' && h.part === 'head' ? ((this._Wh ||= {})[kind] ||= Object.assign({}, W, { dmg: 500 })) : W, i === 0);      /* an officer's head: down at once with any gun (heatcore's hitCop counts W.dmg x 4 against 100) */ if (i === 0) { this._snR = r2; this._snH = h; } if (r2 === 'ped') anyPed = true; if (r2 === 'kill') { anyPed = true; killed = true; }
+      if (bl > (bikeHit ? 1e-6 : 0.6)) { const h2 = this.cast(mx9, my9, mz.y, bx / bl, by / bl, bz / bl, bikeHit ? 0 : 0.05, bikeHit ? bl : bl - 0.25); if (h2.kind !== 'none') h = h2; h.dx = bx / bl; h.dy = by / bl; h.dz = bz / bl; } else { h.dx = dx / L; h.dy = -dz / L; h.dz = dy / L; }
+      const r2 = this.hit(h, this.HZ && h.kind === 'cop' && h.part === 'head' ? ((this._Wh ||= {})[kind] ||= Object.assign({}, W, { dmg: 500 })) : W, i === 0);      /* an officer's head: down at once with any gun (heatcore's hitCop counts W.dmg x 4 against 100) */ if (r2 === 'ped') anyPed = true; if (r2 === 'kill') { anyPed = true; killed = true; }
       this.shove(mz, h, W);
       if (W.tracer && rnd() < W.tracer) this.fx.tracer(mz, _v2.set(h.x, h.z, -h.y));
     }
     if (anyPed) this.hitT = 0.16; if (killed) this.killT = 0.4;
-    if (this.SNIPHIT && this._snH && g.heli && g.heli.perch && g.heli.perch.scoped) { try { this.snipFeed(this._snR, this._snH); } catch (e) {} } this._snH = null;
     this.fx.muzzle(mz, mdir, kind, cam.position);
     if (W.shells) this.pumpT = 0; else { this.slideT = 0.085; this.eject(kind); }
     // recoil: the view climbs and wanders, most of the climb is given back; the gun punches into the shoulder; the lens breathes
@@ -637,16 +625,13 @@ export class Combat {
     /* PLAYERS, Nov 14 ('im shooting this guy in the head but its not doing anything', 'the damage is distance-based'): with ?ghz=0 unset, a person is the figure that is
        DRAWN: the head is a ball round the drawn head (the figure's own head bone; for a crowd person the same baked pose its instance is drawn from: zonesInit, crowdPts),
        the trunk a capsule from the hips to the neck, the legs a capsule from the hips to the ground. The cylinder above stays for a figure with no bones to ask. */
-    /* sniphit: through the roof scope a body is a few pixels wide (0.4 m at 200 m and 6x = 16 of 1080): the trunk and the legs take a round that passes within 0.10 m (near) to 0.22 m (300 m and beyond) of them: about half a body's width at most. The head's ball is left as it is. */
-    const snipS = this.SNIPHIT && g.heli && g.heli.perch && g.heli.perch.scoped ? g.world.camera.position : null;
     const Z = this.HZ ? this._zp : null, zone = (p, kind, sc) => {
-      const sp = snipS ? Math.min(0.22, 0.10 + 0.0004 * Math.hypot(Z[3] - snipS.x, Z[4] + snipS.z, Z[5] - snipS.y)) : 0;
       const m0 = Z[0] - ox, m1 = Z[1] - oy, m2 = Z[2] - oz, al = m0 * dx + m1 * dy + m2 * dz; if (al < -1 || al > H.t + 1) return; if (m0 * m0 + m1 * m1 + m2 * m2 - al * al > 6.3) return;
       let bt = 1e9, part = null, cx = Z[0], cy = Z[1], th = -1; const rh = this.T('hzr', 0.15) * sc + Math.max(0, al - 25) * this.T('hzf', 0.0012);      /* the head's ball: three or four centimetres wider than the head, and past 25 m wider by about a pixel of the picture (at 100 m a head is two and a half pixels across) */
       { const q = rh * rh - (m0 * m0 + m1 * m1 + m2 * m2 - al * al); if (q > 0) { const t = al - Math.sqrt(q); if (t >= tmin) th = t; else if (bikeHit && al + Math.sqrt(q) >= tmin) th = tmin; } }
       const hl = Math.hypot(Z[0] - Z[3], Z[1] - Z[4], Z[2] - Z[5]) || 1, nk = Math.max(0, 1 - 0.22 * sc / hl), gz = Math.min(Z[5] - 0.2, (p.z !== undefined && kind !== 'ped' ? p.z || 0 : st.onSidewalk(p.x, p.y) ? 0.15 : 0) + 0.12 * sc);
       for (let k = 0; k < 2; k++) {      /* 0: hips -> neck, 1: hips -> the ground under them */
-        const ax = Z[3], ay = Z[4], az = Z[5], ux = k ? 0 : (Z[0] - ax) * nk, uy = k ? 0 : (Z[1] - ay) * nk, uz = k ? gz - az : (Z[2] - az) * nk, r = (k ? 0.17 : 0.2) * sc + sp;
+        const ax = Z[3], ay = Z[4], az = Z[5], ux = k ? 0 : (Z[0] - ax) * nk, uy = k ? 0 : (Z[1] - ay) * nk, uz = k ? gz - az : (Z[2] - az) * nk, r = (k ? 0.17 : 0.2) * sc;
         const wx = ox - ax, wy = oy - ay, wz = oz - az, b = dx * ux + dy * uy + dz * uz, c = ux * ux + uy * uy + uz * uz, dd = dx * wx + dy * wy + dz * wz, e = ux * wx + uy * wy + uz * wz, D = c - b * b, s = D < 1e-9 ? 0 : clamp((e - b * dd) / D, 0, 1), tc = b * s - dd;
         const qx = wx + dx * tc - ux * s, qy = wy + dy * tc - uy * s, qz = wz + dz * tc - uz * s, q = r * r - (qx * qx + qy * qy + qz * qz); if (bikeHit) {
           const u = c ? clamp((e + b*tmin)/c, 0, 1) : 0;
@@ -695,34 +680,6 @@ export class Combat {
     smp(c, a.ph, 0); if (a.blend > 0.004 && C[a.clipB]) { smp(C[a.clipB], a.phB, 6); for (let j = 0; j < 6; j++) L[j] += (L[6 + j] - L[j]) * a.blend; }
     const cs = Math.cos(a.h), sn = Math.sin(a.h); for (let j = 0; j < 6; j += 3) { const x = L[j], y = L[j + 1], z = L[j + 2]; out[j] = a.x + (cs * x + sn * z) * k; out[j + 1] = a.y - (-sn * x + cs * z) * k; out[j + 2] = (a.z || 0) + y * k; }
     out[6] = k * Zt.hs[ci]; return isFinite(out[0] + out[2] + out[5]) && Math.abs(out[2] - out[5]) < 2.2;
-  }
-
-  /* sniphit 2: the roof scope's eye and line now (three.js axes), or null when he is not looking through it */
-  snipLine() {
-    const g = this.g, P = g.heli && g.heli.perch, pl = g.player; if (!P || !P.on || !P.scoped || !P.eye || !P.dir) return null;
-    const c = g.cam, cp = Math.cos(c.pitch), L = (this._snL ||= { eye: new THREE.Vector3(), dir: new THREE.Vector3() });
-    L.dir.set(Math.cos(c.yaw) * cp, -Math.sin(c.pitch), -Math.sin(c.yaw) * cp).normalize(); const hl = Math.hypot(L.dir.x, L.dir.z) || 1; L.eye.set(pl.x + L.dir.x / hl * 0.35, pl.alt + 1.58, -pl.y + L.dir.z / hl * 0.35);
-    if (L.dir.dot(P.dir) > 0.9998 && L.eye.distanceTo(P.eye) < 1) { L.dir.copy(P.dir); L.eye.copy(P.eye); }      /* the frame he saw (it carries the last round's kick while that lasts) */
-    this.stats.snipLine = (this.stats.snipLine || 0) + 1; return L;
-  }
-  /* sniphit: what a round fired through the roof scope tells the player. A person struck: the flesh sound as if near (the real one is silent at 200 m) and a mark kept for the scope's
-     own picture (snipHud). Ground, wall or a street thing: a puff of dust sized to the range, so it is seen through the glass and the next round can be walked on. Nothing gory. */
-  snipFeed(r, h) {
-    const cam = this.g.world.camera.position, d = Math.hypot(h.x - cam.x, h.y + cam.z, h.z - cam.y), man = r === 'kill' || r === 'ped';
-    this.snip = { t0: this.t, r: r === 'kill' ? 'kill' : man ? 'hit' : h.kind === 'none' ? 'none' : 'miss', d, head: man && h.part === 'head', kind: h.kind }; this.stats.snipFeed = (this.stats.snipFeed || 0) + 1;
-    if (man) { this.snd('impact', 'flesh', { dist: 6, pan: 0 }); return; }
-    if (h.kind !== 'ground' && h.kind !== 'wall' && h.kind !== 'prop') return;
-    const s = clamp(d * 0.0045, 0.35, 1.6), day = this.fx.day ?? 1;
-    for (let i = 0; i < 8; i++) this.fx.spawn({ x: h.x + h.nx * 0.06, y: h.z + h.nz * 0.06 + 0.04, z: -h.y - h.ny * 0.06, vx: (h.nx * 0.9 + rs(0.5)) * s, vy: (h.nz * 0.9 + 0.5 + rnd() * 0.9) * s, vz: (-h.ny * 0.9 + rs(0.5)) * s, life: 0.9 + rnd() * 0.7, s0: s * 0.3, s1: s * (0.9 + rnd() * 0.5), r: 0.66 * day, g: 0.62 * day, b: 0.55 * day, a: 0.55, frame: i % 4, drag: 2.6, rotv: rs(1.2), fin: 0.04 });
-  }
-  /* drawn by heli/perch.js AFTER its scope mask and reticle, so nothing lies over it: a cross round the reticle's middle (white = struck, red = down, gold = the head) with the range under it; a miss says where the round ended */
-  snipHud(hud, cx, cy, R) {
-    const s = this.snip; if (!this.SNIPHIT || !s) return; const age = this.t - s.t0, c = hud.ctx; if (age < 0 || age > 1.1 || s.r === 'none') return;
-    if (s.r === 'miss') { c.globalAlpha = Math.min(1, (1.1 - age) * 3); hud.text('MISS · ' + (s.kind === 'ground' ? 'STREET' : s.kind === 'wall' ? 'WALL' : 'OBJECT') + ' ' + Math.round(s.d) + ' m', cx, cy + R * 0.3, 16, '#ffb82e', 'center', 700, 1); c.globalAlpha = 1; return; }
-    const life = s.r === 'kill' ? 0.95 : 0.55, u = 1 - age / life, col = s.head ? '#ffd23f' : s.r === 'kill' ? '#ff3b2f' : '#ffffff';
-    if (u > 0) { const r0 = 16 + (1 - u) * 9, r1 = r0 + 17; c.save(); c.globalAlpha = Math.min(1, u * 2.2); c.lineCap = 'round';
-      for (const [st, lw] of [['rgba(0,0,0,0.65)', 7.5], [col, 4]]) { c.strokeStyle = st; c.lineWidth = lw; for (const [sx, sy] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) { c.beginPath(); c.moveTo(cx + sx * r0, cy + sy * r0); c.lineTo(cx + sx * r1, cy + sy * r1); c.stroke(); } } c.restore(); }
-    c.globalAlpha = Math.min(1, (1.1 - age) * 3); hud.text((s.head ? 'HEADSHOT' : s.r === 'kill' ? 'DOWN' : 'HIT') + ' · ' + Math.round(s.d) + ' m', cx, cy + R * 0.3, 20, col, 'center', 800, 1); c.globalAlpha = 1;
   }
 
   // ------------------------------------------------------------------ what a hit does

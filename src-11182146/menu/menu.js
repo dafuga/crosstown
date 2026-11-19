@@ -11,9 +11,8 @@ import { Settings } from './settings.js';
 import { Keys, MOUSE } from './keys.js';
 import { padSvg, PAD_MODES, PAD_NAMES, readPad, padStyle } from './pad.js';
 
-const PRESET = { lowest: { scale: 0.45, ao: false, detail: 0.35, lowest: true },      /* lead smallfix, Nov 18 (public players still at about 13 fps on Low): one step under Low; see lowest() below. ?lowest=0 = the choice is not offered */
-  low: { scale: 0.57, ao: false, detail: 0.5 }, medium: { scale: 0.8, ao: true, detail: 0.8 }, high: { scale: 1.3, ao: true, detail: 1 } };
-const QNAME = { auto: 'Auto', lowest: 'Lowest', low: 'Low', medium: 'Medium', high: 'High' };
+const PRESET = { low: { scale: 0.57, ao: false, detail: 0.5 }, medium: { scale: 0.8, ao: true, detail: 0.8 }, high: { scale: 1.3, ao: true, detail: 1 } };
+const QNAME = { auto: 'Auto', low: 'Low', medium: 'Medium', high: 'High' };
 const BUS = { engine: 0.8, effects: 1, sirens: 0.8, heli: 0.8, ambience: 0.8, radio: 1 };      // what each bus plays at with its slider at 100% (0.8: what game.sound.out gave before)
 const PASS = new Set(['KeyM', 'Digit0', 'Backslash', 'KeyB']);      // keys that still reach the game while the menu is open: sound, frame-rate counter, full screen, feedback
 const DEFAULTS = { quality: 'auto', 'hud.fps': false, 'look.sens': 1, 'look.invertY': false, 'pad.sens': 1, 'pad.style': 'auto', 'audio.master': 1, 'audio.engine': 1, 'audio.effects': 1, 'audio.sirens': 1, 'audio.heli': 1, 'audio.ambience': 1, 'audio.radio': 0.8, 'subs.on': true, 'subs.size': 1, keys: {} };
@@ -93,18 +92,10 @@ export function install(g) {
   // sets game.qPin, which stops the governor, and pins all three. ?px= ?ao= ?detail= in the address still win over a preset, as they do over the governor.
   const redraw = () => { if (g.paused) requestAnimationFrame(() => { try { g.world.render(g.t || 0); g.hud.draw(); } catch (e) {} }); };      // paused: nothing draws, and a resize clears the picture
   const pin = (scale, ao, detail) => { const w = g.world; try { if (!P.has('px') && window.__fit) { w.liveScale = scale; window.__fit(); } if (w.gtao && !P.has('ao')) w.gtao.enabled = ao; if (!P.has('detail')) g.setDetail(detail); } catch (e) { console.log('[menu] quality: ' + (e && e.message)); } redraw(); };
-  // Lowest (lead smallfix, Nov 18): what Low sets, further (picture 0.45, detail 0.35: fewer small things, shorter shadow and people distances, a third of the
-  // crowd), and four things no other choice touches: the sun-shadow map is redrawn every 4th frame and the street mirror in paint and glass a face every 24th
-  // (the two levers of lowtier.js, which never acts while a quality is pinned), and half the moving cars and half the nearby walkers (the lists run down by
-  // themselves as cars and people leave; nobody is taken off the street in view). All four are put back by any other choice.
-  const lowest = (on) => { const w = g.world, t = g.traffic, pd = g.peds; try {
-    if (on) { st.lowest = true; w.shadowEvery = 4; w.streetEvery = 24; if (t && t.target > 0) { if (!st.t0) st.t0 = t.target; t.target = Math.round(st.t0 * 0.5); } if (pd && pd.target > 0) { if (!st.p0) st.p0 = pd.target; pd.target = Math.round(st.p0 * 0.5); } }
-    else if (st.lowest) { st.lowest = false; w.shadowEvery = g.tier && g.tier.low ? 4 : 1; if (w.streetEvery === 24 && !(g.tier && g.tier.low)) w.streetEvery = 6; if (t && st.t0) t.target = st.t0; if (pd && st.p0) pd.target = st.p0; }
-  } catch (e) { console.log('[menu] lowest: ' + (e && e.message)); } };
   const applyQuality = (first) => {
     const q = S.get('quality'), p = PRESET[q]; st.fpsS.length = 0; st.liveAt = performance.now();
-    if (p) { g.qPin = true; pin(p.scale, p.ao, p.detail); lowest(!!p.lowest); return; }
-    g.qPin = false; lowest(false); if (first) return;      // Auto from the start: nothing is touched, the game behaves as it always has
+    if (p) { g.qPin = true; pin(p.scale, p.ao, p.detail); return; }
+    g.qPin = false; if (first) return;      // Auto from the start: nothing is touched, the game behaves as it always has
     // back to Auto from a fixed preset: start again from the full picture (a weak graphics card: from its floor) and let the governor move it
     g._ceil = 0; g._aoCeil = 0; g._upAt = 0; g._slow = g._slow2 = g._slowD = g._fast = g._fastD = 0; g._govT = Math.min(g._govT || 0, 4);
     if (g.weakGpu) pin(0.57, false, 0.5); else pin(1, true, 1);
@@ -128,14 +119,7 @@ export function install(g) {
   const blip = (k) => { const s = g.sound; try { if (!s || !s.on || !s.ac || s.muted || s.ac.state !== 'running') return; const ac = s.ac, t = ac.currentTime; if (t - (st.blipT || 0) < 0.11) return; st.blipT = t; const lvl = clamp(+S.get('audio.master'), 0, 1) * (k === 'master' ? 1 : clamp(+S.get('audio.' + k), 0, 1)); if (lvl < 0.002) return;
     const o = ac.createOscillator(), gn = ac.createGain(); o.type = 'triangle'; o.frequency.value = 660; gn.gain.setValueAtTime(0.1 * lvl, t); gn.gain.exponentialRampToValueAtTime(0.0006, t + 0.16); o.connect(gn); gn.connect(ac.destination); o.start(t); o.stop(t + 0.18); } catch (e) {} };
   if (g.sound) { const s = g.sound, un0 = s.unlock.bind(s), tg0 = s.toggle.bind(s); s.unlock = function () { un0(); if (!s.bus) setupAudio(); }; s.toggle = function () { tg0(); applyAudio(); if (st.open && st.page === 'audio') showPage('audio', true); }; }
-  // Sharper motion (lead smallfix, Nov 18; public players: 'everything that moves looks blurry'). The picture is smoothed over time (camera.js: each frame is
-  // blended into a carried history, a tenth new each frame), and the history is carried by the CAMERA's move only: a thing that moves by itself (a car, a
-  // walker, his own running figure) is blended with what stood behind it and goes soft. On = that smoothing is off and edges are smoothed inside each frame
-  // instead (FXAA, the helicopter's chain since Nov 12): moving things sharp, fine lines far away shimmer more. Off (the default) = as before.
-  S.def('aa.sharp', false);
-  const applyAA = () => { try { const wc = g.world && g.world.cam; if (!wc || !wc.taa) return; wc.userSharp = !!S.get('aa.sharp'); const want = !wc.userSharp && !wc.isOld && !wc._heli; if (wc.taa.enabled !== want) { wc.taa.enabled = want; if (wc._rs) g.world.resize(...wc._rs); redraw(); } } catch (e) { console.log('[menu] sharper motion: ' + (e && e.message)); } };
-  S.on('aa.sharp', applyAA);
-  const applyAll = () => { applyLook(); applySubs(); applyAudio(); applyAA(); fpsChip(); };
+  const applyAll = () => { applyLook(); applySubs(); applyAudio(); fpsChip(); };
   S.on('quality', () => applyQuality(false)); for (const k of ['look.sens', 'look.invertY', 'pad.sens']) S.on(k, applyLook); for (const k of ['subs.on', 'subs.size']) S.on(k, applySubs); for (const k in BUS) S.on('audio.' + k, applyAudio); S.on('audio.master', applyAudio);
 
   // ------------------------------------------------------------------ the frame-rate readout
@@ -204,14 +188,13 @@ export function install(g) {
   S.on('*', () => { if (st.open) for (const r of st.rows) if (r._sync) r._sync(); });
 
   // ------------------------------------------------------------------ the built-in pages
-  const LOWEST = !P.has('lowest') || P.get('lowest') !== '0', fpsSubs = () => (LOWEST ? ['auto', 'lowest', 'low', 'medium', 'high'] : ['auto', 'low', 'medium', 'high']).map((q) => (st.fpsBy[q] ? st.fpsBy[q] + ' fps' : '–'));
+  const fpsSubs = () => ['auto', 'low', 'medium', 'high'].map((q) => (st.fpsBy[q] ? st.fpsBy[q] + ' fps' : '–'));
   pages.push({ id: 'graphics', title: 'Graphics', order: 10, build(p) {
     const q = S.get('quality'), last = st.fpsBy[q];
     p.append(h('p', { className: 'good', id: 'ctq-now', textContent: (last ? 'Frame rate just before you paused: ' + last + ' fps on ' + QNAME[q] + '. ' : 'Frame rate: not measured yet on ' + QNAME[q] + ' (play a few seconds). ') + 'Now: ' + nowLine() + '.' }));
-    row(p, { key: 'quality', label: 'Quality', hint: 'Under each choice: the frame rate measured on it in this session', type: 'choice', options: [['auto', 'Auto', '–']].concat(LOWEST ? [['lowest', 'Lowest', '–']] : [], [['low', 'Low', '–'], ['medium', 'Medium', '–'], ['high', 'High', '–']]), subs: fpsSubs, onChange: () => setTimeout(() => { const n = document.getElementById('ctq-now'); if (n) n.textContent = 'Now: ' + nowLine() + '. Resume and play a few seconds to see its frame rate here.'; }, 60) });
-    p.append(h('p', { className: 'note', textContent: 'Auto: the game changes picture size, shading and detail by itself to hold about 60 frames a second. Low: fast (small picture, no shading, fewer small things and people).' + (LOWEST ? ' Lowest: for a computer still slow on Low (smaller picture again, shadows and reflections updated less often, half the traffic and fewer people).' : '') + ' Medium: in between. High: sharpest (full picture size, everything drawn); it stays there even if the frame rate drops.' }));
+    row(p, { key: 'quality', label: 'Quality', hint: 'Under each choice: the frame rate measured on it in this session', type: 'choice', options: [['auto', 'Auto', '–'], ['low', 'Low', '–'], ['medium', 'Medium', '–'], ['high', 'High', '–']], subs: fpsSubs, onChange: () => setTimeout(() => { const n = document.getElementById('ctq-now'); if (n) n.textContent = 'Now: ' + nowLine() + '. Resume and play a few seconds to see its frame rate here.'; }, 60) });
+    p.append(h('p', { className: 'note', textContent: 'Auto: the game changes picture size, shading and detail by itself to hold about 60 frames a second. Low: fastest (small picture, no shading, fewer small things and people). Medium: in between. High: sharpest (full picture size, everything drawn); it stays there even if the frame rate drops.' }));
     row(p, { key: 'hud.fps', label: 'Show the frame rate while playing', hint: 'Top right, with the quality in use', type: 'toggle' });
-    row(p, { key: 'aa.sharp', label: 'Sharper motion', hint: 'On: moving cars, people and your own figure stay sharp; fine lines far away shimmer a little more', type: 'toggle' });
     button(p, 'Full screen on / off', () => { try { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen(); } catch (e) {} });
   } });
   const keyRow = (p, a) => {

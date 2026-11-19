@@ -12,7 +12,6 @@ import { Fly } from './fly.js';
 import { LookCtl } from './look.js';
 import { imp as lrImp } from './loadretry.js';     // progress lane, Nov 15: a code file that failed to download is asked for again (src/loadretry.js; ?loadretry=0 off)
 import { waterAt } from './streets/water.js';
-import { fcOf, fcDrive, fcDrag, install as fcInstall } from './move/fastcars.js';
 // downtown lane, Nov 15 (shore guard): the shore's wall is two thin lines; at the narrow end of a pier (the Skyport pier, x 1,173, y -1,056) a car-size circle gets
 // through them (lanes/downtown/tools/shore-flood.mjs). Whatever the walls did, a move of the player or of a car that would END in the water from a place on land is
 // not made. One point-in-outline test a step, only on a city that lists water. ?waterguard=0 off.
@@ -40,10 +39,10 @@ export class Vehicle {
     let vf = this.vx * c + this.vy * s, vs = this.vx * s - this.vy * c;   // forward, rightward
     const maxSteer = lerp(0.62, 0.10, clamp(Math.abs(vf) / 42, 0, 1) ** 0.7);
     this.steer += ((inp.lock !== undefined ? inp.lock : inp.steer * maxSteer) - this.steer) * Math.min(1, dt * (inp.lock !== undefined ? 26 : 7));     // inp.lock: the player's wheel angle in radians (readInput); traffic and the autopilot still give steer -1..1
-    let acc = 0; const fc = fcOf(this, inp, g);     /* gameplay lane, Nov 18: quicker cars (move/fastcars.js; ?fastcars=0): fc is null for every car but the player's */
-    if (inp.throttle > 0) acc += vf < -0.5 ? 16 * inp.throttle : fc ? fcDrive(fc, this, vf, inp.throttle) : inp.throttle * sp.acc * Math.max(0, 1 - (vf / sp.top) ** 2) * (vf < 8 ? 1.15 : 1);
+    let acc = 0;
+    if (inp.throttle > 0) acc += vf < -0.5 ? 16 * inp.throttle : inp.throttle * sp.acc * Math.max(0, 1 - (vf / sp.top) ** 2) * (vf < 8 ? 1.15 : 1);
     if (inp.brake > 0) { if (vf > 0.6) acc -= 15 * inp.brake; else acc -= inp.brake * sp.acc * 0.6 * Math.max(0, 1 + vf / 11); }
-    acc -= fc ? fcDrag(fc, vf, inp.throttle, inp.brake) : 0.12 * vf + 0.0042 * vf * Math.abs(vf) + (inp.throttle === 0 && inp.brake === 0 ? Math.sign(vf) * 0.5 : 0);
+    acc -= 0.12 * vf + 0.0042 * vf * Math.abs(vf) + (inp.throttle === 0 && inp.brake === 0 ? Math.sign(vf) * 0.5 : 0);
     if (!g.statics.onRoadFast) { /* placeholder for surface */ }
     const onWalk = g.statics.onSidewalk(this.x, this.y);
     if (inp.handbrake) acc -= Math.sign(vf) * Math.min(Math.abs(vf) / dt, 5.5);
@@ -239,7 +238,6 @@ export class Game {
     if (this.P.get('surprises') !== '0') try { await (await import('./surprises/index.js')).install(this); } catch (e) { console.log('[surprises] not loaded: ' + (e && (e.stack || e.message))); }     // surprises lane: hidden New York moments (src/surprises/; ?surprises=0 off)
     try { (await import('./feedback.js')).install(this); } catch (e) { console.log('[game] feedback not loaded: ' + (e && e.message)); }     // lead: Feedback link + session trace (src/feedback.js)
     if (this.P.get('cars') !== '0') try { (await import('./cars/cars.js')).install(this); } catch (e) { console.log('[cars] not loaded: ' + (e && (e.stack || e.message))); }     /* progress lane, Nov 14: each kind of car drives differently; damage carries through to a burnt wreck (src/cars/cars.js); ?cars=0 off */
-    try { fcInstall(this, Vehicle); } catch (e) { console.log('[fastcars] not loaded: ' + (e && e.message)); }     /* gameplay lane, Nov 18: quicker cars with real top speeds (src/move/fastcars.js: the pull and drag asked for in Vehicle.step above, and a fast car stepped in pieces); ?fastcars=0 off */
     try { (await import('./padui.js')).install(this); } catch (e) { console.log('[padui] not loaded: ' + (e && e.message)); }     /* gameplay lane, Nov 17 (Matt: "If I'm using a controller, show the controller controls"): prompts follow the last input (keys or the pad's own button names), pad buttons for the hook, flashlight, map and full screen, and a corner full-screen button (src/padui.js); ?padui=0 = prompts as before, ?padbtn=0 = no new pad buttons, ?fsbtn=0 = no corner button */
     try { (await import('./horn.js')).install(this); } catch (e) { console.log('[horn] not loaded: ' + (e && e.message)); }     /* gameplay lane, Nov 18 (CHIEF's list): the horn at the wheel, G or L3; traffic ahead moves over, people in the road clear; ?horn=0 */
     if (this.P.get('runhint') !== '0') try { (await import('./runhint.js')).install(this); } catch (e) { console.log('[runhint] not loaded: ' + (e && e.message)); }     /* progress lane, Nov 15: says "Hold SHIFT to run" in play to a player who has walked 8 s and never run (three players never found it); ?runhint=0 off */
@@ -620,7 +618,7 @@ export class Game {
     const loop = (now) => {
       requestAnimationFrame(loop); const now0 = performance.now();
       let el = Math.max(0, Math.min(0.1, (now - last) / 1000));
-      { const wc = this.world && this.world.cam; if (wc && wc.taa) { const h = this.cam.mode === 'heli'; if (h !== !!wc._heli) { wc._heli = h; wc.taa.enabled = !h && !wc.isOld && !wc.userSharp     /* lead smallfix, Nov 18: the menu's 'Sharper motion' keeps it off */; if (wc._rs) this.world.resize(...wc._rs); } } }     /* lead, Nov 12: the camera lane's anti-aliasing history smears the cockpit (it moves with the camera), so in the helicopter the picture goes back to FXAA */ last = now; ft += el; fc++; if (ft > 0.5) { this.fps = fc / ft; fc = 0; ft = 0;
+      { const wc = this.world && this.world.cam; if (wc && wc.taa) { const h = this.cam.mode === 'heli'; if (h !== !!wc._heli) { wc._heli = h; wc.taa.enabled = !h && !wc.isOld; if (wc._rs) this.world.resize(...wc._rs); } } }     /* lead, Nov 12: the camera lane's anti-aliasing history smears the cockpit (it moves with the camera), so in the helicopter the picture goes back to FXAA */ last = now; ft += el; fc++; if (ft > 0.5) { this.fps = fc / ft; fc = 0; ft = 0;
         if (!this.qPin) {     /* progress lane: a fixed Quality preset (Low / Medium / High in the menu, src/menu/menu.js) pins picture size, AO and detail; everything the governor does, down to the closing brace marked qPin, runs only on Auto */
         // live play keeps its frame rate first: screen-space ambient occlusion (a second full geometry pass) steps down when the machine can't hold ~50 fps
         // audit item 12: the governor used to count the slow first seconds (shaders compiling, textures going up) and could only step down, so

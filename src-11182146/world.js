@@ -190,7 +190,7 @@ export class World {
     this.camera = new THREE.PerspectiveCamera(55, 16 / 9, 0.25, 6000); this.fixedNear = +Q.get('near') || 0; this.zK = +Q.get('zk') || 6; this.zN = 0;     /* ?near=0.25 pins the near plane (the old state) */
     this.shared = {
       uSunColor: { value: new THREE.Color() }, uSunDir: { value: new THREE.Vector3() }, uShadowFar: { value: LIGHT.shadowR }, uShadowCenter: { value: new THREE.Vector3() },
-      ...panelUniforms(), uWallFar: { value: Q.get('wallfar') === '0' ? 0 : 1 },     /* lead (heli-lines): far walls lose their repeat grid, facade.js; ?wallfar=0 */ uTime: { value: 0 }, uWetK: { value: new THREE.Vector4(0, 0, 0, 0) },     /* progress/night: wet roads (sky/rain.js) */ uNightK: { value: new THREE.Vector3(1, 0, 0) },     /* progress/night: lit windows (sky/nightkit.js) */ tStreet: { value: null }, tWallA: { value: null }, tWallN: { value: null }, tSign: { value: null }, tLight: { value: null }, uHalf: { value: new THREE.Vector2() },
+      ...panelUniforms(), uTime: { value: 0 }, uWetK: { value: new THREE.Vector4(0, 0, 0, 0) },     /* progress/night: wet roads (sky/rain.js) */ uNightK: { value: new THREE.Vector3(1, 0, 0) },     /* progress/night: lit windows (sky/nightkit.js) */ tStreet: { value: null }, tWallA: { value: null }, tWallN: { value: null }, tSign: { value: null }, tLight: { value: null }, uHalf: { value: new THREE.Vector2() },
     };
     installSunShadows();
     this.q = { shadow: LIGHT.shadowMap, gtao: true, bloom: true, msaa: Q.has('msaa') ? +Q.get('msaa') : 4 };
@@ -583,7 +583,7 @@ export class World {
     { const cam = this.camera, n = this.fixedNear || Math.min(6, Math.max(0.25, (cam.position.y - 4) * 0.03)); if (this.fixedNear ? cam.near !== n : Math.abs(cam.near - n) > 0.01 * n) { cam.near = n; cam.updateProjectionMatrix(); } }
     { const no = this.nearObject || null; if (no !== this._nearNow) {
         if (this._nearNow) this._nearNow.traverse((o) => { if (o.userData._lm !== undefined) { o.layers.mask = o.userData._lm; delete o.userData._lm; } });
-        if (no) { no.traverse((o) => { o.userData._lm = o.layers.mask; o.layers.set(5); }); { const all = Q.get('nearlamps') === '0', cl = this.camera.layers; this.scene.traverse((o) => { if (o.isLight && (all || o.layers.test(cl))) o.layers.enable(5); }); } }      /* lead smallfix, Nov 18 (Matt: 'pressing C for cockpit view freezes the screen for a bit'): only the lamps the game's camera already counts are given the cabin pass's layer. Every lamp was given it, and the game's camera sees layer 5 too (the aircraft's), so the first look from the seat brought the subway's two lamps (a layer of their own) into the city's picture for good: every lit program in view was built again inside that frame (149 programs, 13.9 s on a MacBook that had not seen them), and the city was lit by the station's lamps from then on. ?nearlamps=0 = as before */
+        if (no) { no.traverse((o) => { o.userData._lm = o.layers.mask; o.layers.set(5); }); this.scene.traverse((o) => { if (o.isLight) o.layers.enable(5); }); }
         this._nearNow = no; this.nearPass.enabled = !!no; }
       if (no) { const c = this.nearCam, m = this.camera; c.position.copy(m.position); c.quaternion.copy(m.quaternion); c.fov = m.fov; c.aspect = m.aspect; c.near = 0.1; c.far = 40; c.updateProjectionMatrix(); c.updateMatrixWorld(); } }
     // audit item 6: three redraws the sun shadow map on every renderer.render() call (the scene pass, and again for the AO pass); once a frame is enough

@@ -252,7 +252,7 @@ export function makeFacadeMaterial(shared, defs) {
         #define PMIXH ${PMIXH.toFixed(1)}
 ${fcDefs}
         varying vec2 vFuv; varying vec2 vFst; varying vec2 vLay; varying vec2 vLay2; varying vec3 vWPos; varying vec3 vWNrm; varying vec3 vBake;
-        uniform sampler2DArray tWallA; uniform sampler2DArray tWallN; uniform float uWallFar; uniform sampler2D tSign; uniform samplerCube tStreet; uniform sampler2DArray tPanel; uniform sampler2DArray tPanelR; uniform sampler2DArray tPanelH; uniform float uPanelH[32]; uniform float uPanelMix[32]; uniform float uGood[20]; uniform float uGoodN[5]; uniform vec4 uPanel[32]; uniform vec2 uStyleP[5];
+        uniform sampler2DArray tWallA; uniform sampler2DArray tWallN; uniform sampler2D tSign; uniform samplerCube tStreet; uniform sampler2DArray tPanel; uniform sampler2DArray tPanelR; uniform sampler2DArray tPanelH; uniform float uPanelH[32]; uniform float uPanelMix[32]; uniform float uGood[20]; uniform float uGoodN[5]; uniform vec4 uPanel[32]; uniform vec2 uStyleP[5];
         uniform vec3 uSunColor; uniform vec3 uSunDir; uniform float uShadowFar; uniform vec3 uShadowCenter; uniform float uTime; uniform vec3 uNightK;
 #ifdef FC_X9
  uniform float uFcLod;
@@ -417,25 +417,20 @@ ${fcDefs}
 
           // ---------------- masonry
           float lsc = layer == 4 ? 0.36 : (layer == 3 ? 0.6 : (layer == 0 ? 0.8 : 1.0)); vec2 tuv = uv / (texScale * lsc) + seed * 7.0;
-          // lead (heli-lines), Nov 18: Matt from the helicopter, 'vertical lines ... when I look at the brown building'. The wall picture repeats every metre or so; seen from
-          // a few hundred metres one repeat is 10 to 40 screen pixels and its blotches and joins line up into an even grid of pale lines over a blank brick wall.
-          // Once a repeat is under about 80 pixels the picture is read from smaller and smaller copies of itself, until under 20 pixels it is the wall's own even
-          // colour. Near walls (bricks you can count) are untouched. ?wallfar=0 = as before.
-          float wfB = uWallFar * 6.0 * smoothstep(1.0 / 80.0, 1.0 / 20.0, max(fwidth(tuv.x), fwidth(tuv.y)));
           
 #ifdef FC_X1
 bool fcPan = uStyleP[int(style)].y > 0.5 && !store && kind < 1.5 && fi >= 0.0 && fi < nFloors; bool fcGT = glassTower && !store && kind < 4.5; bool fcNoW = fcPan || fcGT;
           vec3 alb = vec3(0.5); vec3 nt = vec3(0.0, 0.0, 1.0);
-          if (!fcNoW) { alb = texture(tWallA, vec3(tuv, float(layer)), wfB).rgb * tint; nt = texture(tWallN, vec3(tuv, float(layer)), wfB).xyz * 2.0 - 1.0; }
+          if (!fcNoW) { alb = texture(tWallA, vec3(tuv, float(layer))).rgb * tint; nt = texture(tWallN, vec3(tuv, float(layer))).xyz * 2.0 - 1.0; }
 #else
-vec3 alb = texture(tWallA, vec3(tuv, float(layer)), wfB).rgb * tint;
+vec3 alb = texture(tWallA, vec3(tuv, float(layer))).rgb * tint;
 #endif
 
           
 #ifdef FC_X1
 
 #else
-vec3 nt = texture(tWallN, vec3(tuv, float(layer)), wfB).xyz * 2.0 - 1.0;
+vec3 nt = texture(tWallN, vec3(tuv, float(layer))).xyz * 2.0 - 1.0;
 #endif
 
           if (layer == 1) { float m_ = dot(alb, vec3(0.333)); alb = mix(vec3(m_), alb, 0.45); alb = mix(vec3(dot(tint, vec3(0.333)) * 0.55), alb, 0.5); nt.xy *= 0.5; }      // ashlar: pale, even, fine-jointed

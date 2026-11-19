@@ -12,7 +12,7 @@ import { AimRig } from './rig.js';
 import { Vehicle } from '../game.js';
 import { SCRIPTS, Script } from './scripts.js';
 
-const TH = [0, 1, 3, 7, 12, 18], PMAX = 20, COPRUN = 6.0, SPOTK = 0.6, LOOKS = 2, TURNS = 9;
+const TH = [0, 1, 3, 7, 12, 18], PMAX = 20, COPRUN = 6.0;
 /* seconds unseen to lose one step, and the search radius, per step */
 const COOL = [0, 10, 13, 16, 20, 24], AREA = [0, 40, 52, 64, 76, 90];
 /* officers alive at once, and seconds between dispatches, per step */
@@ -33,7 +33,7 @@ const HANG = [[0, 0], [20, 28], [22, 30], [45, 60], [30, 42], [28, 38]];
 const LULL = [[0, 0], [26, 32], [26, 32], [30, 36], [36, 44], [36, 44]], CORN = [0, 7, 6, 5, 4, 3];
 /* the most police fire takes off the car he is in, a second, per step */
 const CARDPS = [0, 10, 10, 10, 10, 11];
-/* gameplay lane, Nov 18 (move/fastcars.js; ?fastcars=0 = 24-29 and 4.2 as before): the player's cars are quicker, so a patrol car in a chase may go faster and pulls 5.5 m/s2 (0-60 mph in 4.9 s; the new sedan takes 6.0) */ const FASTQ = new URLSearchParams(location.search).get('fastcars') !== '0', VCAP = FASTQ ? [32, 32, 34, 38, 42, 46] : [24, 24, 24, 26, 27.5, 29], CPULL = FASTQ ? 5.5 : 4.2;
+const VCAP = [24, 24, 24, 26, 27.5, 29];
 const RAMCD = [[9, 9], [9, 9], [9, 9], [6.5, 9.5], [6, 9], [5, 8]];
 const LETH = [0, 0.6, 0.7, 0.85, 1, 1.15], WIDE = [1, 1.15, 1.1, 1.05, 1, 0.92];
 /* how officers shoot: error (degrees, one sigma), share of the weapon's damage that reaches the player, burst and pause */
@@ -69,13 +69,7 @@ export class Heat {
   constructor(game, combat) {
     this.g = game; this.c = combat; this.t = 0; this.pts = 0; this.level = 0; this.seen = false; this.unseenT = 0; this.coolT = 0; this.lkp = { x: 0, y: 0, h: 0 }; this.lastCrimeT = -99; this.lastShotT = -99; this.lastCarHitT = -99;
     this.cops = []; this.cars = []; this.units = 0; this.dispT = 0; this.sightT = 0; this.pending = []; this.sub = null; this.subT = -9; this.inds = []; this.hurtT = 0; this.lastHurtT = -99; this.dead = null; this.fade = 0; this.note = null; this.chal = null; this.pulse = 0;
-    this.seed = (20261110 + 7919 * (+game.P.get('heatseed') || 0)) >>> 0; this.log = game.P.has('heatlog'); this.fast = game.P.has('heatfast'); this.pool = []; this.corpses = []; this.god = game.P.has('heatgod'); this.stopD = +game.P.get('heatstop') || 22; /* arrive 2: officers' run speed, measured in node against a 7.0 m/s sprint (README of arrive handover-1); ?coprun=4.4 or ?footchase=0 = as before */ this.footOn = game.P.get('footchase') !== '0'; this.copRun = +game.P.get('coprun') || (!this.footOn ? 4.4 : COPRUN) /* merge2 batch 38 (CHIEF 04:43 Nov 18): the foot chase OFF by default; arrive handover-2 (CHIEF Nov 18): ON by default now that a corner shakes them, ?footchase=0 = off */;
-    /* the corner escape (arrive handover-2, Nov 18). A man on foot who runs and TURNS A CORNER can shake them: for turnS seconds after his heading swings more than about 50 degrees (and for as long after that
-       as the police do not have him), an officer who does not have him in his own sight (he lost him behind the building corner, or has just arrived) needs him within spotK of the step's sight range and in a
-       clear line for a look-around of lookS seconds (x 0.75-1.25) before he has him; within 10 m he has him at once. A driving patrol car picks him out the same way while the police do not have him (?copcar=0 =
-       as before). An officer who HAS him keeps him as before (to 1.2 x the range). A man who runs STRAIGHT is seen exactly as before: full range, no look time. A man who stops or walks is seen as before.
-       ?copturn=<s> (0 = no corner rule at all), ?copspot=<0-1> (1 = the full range), ?coplook=<s> (0 = no look-around); ?copmid=0 = cars may stop in a crossing ahead of a runner; with ?footchase=0 none applies. */
-    this.spotK = game.P.has('copspot') ? +game.P.get('copspot') : SPOTK; this.lookS = game.P.has('coplook') ? +game.P.get('coplook') : LOOKS; this.turnS = game.P.has('copturn') ? +game.P.get('copturn') : TURNS; this.lookT = -9; this.midblock = game.P.get('copmid') !== '0'; this.carSpot = game.P.get('copcar') !== '0'; this.half = game.P.get('heathalf') !== '0'; /* how far the nose swings across the lane as a car brakes into the scene: 1 = broadside (the crew fights from behind the car), about 0.3 = nose toward him at an angle, both doors open, each man behind his own door */ this.swingK = game.P.has('heatswing') ? +game.P.get('heatswing') : 1;
+    this.seed = (20261110 + 7919 * (+game.P.get('heatseed') || 0)) >>> 0; this.log = game.P.has('heatlog'); this.fast = game.P.has('heatfast'); this.pool = []; this.corpses = []; this.god = game.P.has('heatgod'); this.stopD = +game.P.get('heatstop') || 22; /* arrive 2: officers' run speed, measured in node against a 7.0 m/s sprint (README of arrive handover-1); ?coprun=4.4 or ?footchase=0 = as before */ this.copRun = +game.P.get('coprun') || (game.P.get('footchase') !== '1' ? 4.4 : COPRUN) /* merge2 batch 38 (CHIEF 04:43 Nov 18): the foot chase is OFF by default, ?footchase=1 = on */; this.half = game.P.get('heathalf') !== '0'; /* how far the nose swings across the lane as a car brakes into the scene: 1 = broadside (the crew fights from behind the car), about 0.3 = nose toward him at an angle, both doors open, each man behind his own door */ this.swingK = game.P.has('heatswing') ? +game.P.get('heatswing') : 1;
     this.stats = { crimes: {}, copShots: 0, copHits: 0, dmgIn: 0, copsDown: 0, deaths: 0, arrests: 0, escapes: 0, maxLevel: 0, arrive: [], levelT: {}, tCov: 0, tOpenLow: 0, tOpenUp: 0, tStill: 0, blocked: 0, contactT: null, pairT: null, pairHp: null };
   }
   rnd() { this.seed = (this.seed * 1664525 + 1013904223) >>> 0; return this.seed / 4294967296; }
@@ -205,15 +199,8 @@ export class Heat {
   airOn() { const hl = this.g.heli; if (!hl || !hl.piloted || !hl.f || hl.f.onGround || !hl.f.pos || !this.level || this.g.P.get('heliheat') === '0') return null; if (this.HA) return this.HA; if (!this._haP) this._haP = import('./heatheli.js').then((m) => { this.HA = m.addHeliHeat(this, { WIDE, D2R }); }).catch((e) => this.oops('heatheli', e)); return null; }
   sight() {
     const g = this.g, pl = g.player; let seen = false; const hl = g.heli, up = !!(hl && hl.piloted && hl.f && hl.f.pos && hl.f.pos.y > 22) /* in the air above the roofs nobody on the street has him */, A = this.airOn();
-    /* the corner escape: has he turned a corner in the last turnS seconds (his heading against 1.2 s ago), or is he still lost since such a turn? Only then does the look-around apply. */
-    const run = !A && this.turnS > 0 && this.fleeing(); if (run) { const r = this.runV, a = Math.atan2(r.y, r.x), Hd = (this._hd ||= []); Hd.push(a); if (Hd.length > 13) Hd.shift(); let da = Math.abs(a - Hd[0]); if (da > Math.PI) da = 2 * Math.PI - da; if (Hd.length > 12 && da > 0.9) this.lookT = this.t + this.turnS; else if (!this.seen && this.t < this.lookT) this.lookT = Math.max(this.lookT, this.t + 3); } else { if (this._hd) this._hd.length = 0; this.lookT = -9; }
-    const flee = run && this.t < this.lookT, spotR = this.eyeR(80) * this.spotK;
-    for (const k of this.cops) { if (k.hp <= 0) continue; const d = Math.hypot(k.x - pl.x, k.y - pl.y); k.dist = d; k.see = A ? A.sees(k, d) : !up && d < this.eyeR(80) * (k.saw ? 1.2 : 1) && this.los(k.x, k.y, pl.x, pl.y) && (this.und(k) || this.stairLine(k.x, k.y, (k.z || 0) + 0.55 + 1.05 * (k.up ?? 1)) !== false);
-      /* the look-around (see the constructor) */ if (!k.see) k.spotT = 0; else if (flee && !k.saw && d > 10) { if (d > spotR) k.see = false; else { k.spotT = (k.spotT || 0) + 0.1; if (k.spotT < (k.spotN ||= this.rr(0.75, 1.25) * this.lookS)) k.see = false; else k.spotN = 0; } }
-      if (k.see) { seen = true; k.onT += 0.1; if (!k.saw) k.thinkT = Math.min(k.thinkT, 0.12); } else k.onT = 0; k.saw = k.see; }
-    for (const car of this.cars) { let cs = A ? A.carSees(car) : !up && car.drive && !car.away && !car.wreck && Math.hypot(car.x - pl.x, car.y - pl.y) < (pl.vehicle && !this.swapK ? Math.max(62, this.eyeR(80)) : this.eyeR(60) * (flee && !this.seen && this.carSpot ? this.spotK : 1)) && this.los(car.x, car.y, pl.x, pl.y) && this.stairLine(car.x, car.y, 1.25) !== false;
-      /* a driving crew's look-around for a running man the police have lost after a turn: the same seconds as an officer's; at once when he is within 6 m of the car */ if (!cs) car.spotT = 0; else if (flee && !this.seen && this.carSpot && Math.hypot(car.x - pl.x, car.y - pl.y) > 6) { car.spotT = (car.spotT || 0) + 0.1; if (car.spotT < (car.spotN ||= this.rr(0.75, 1.25) * this.lookS)) cs = false; else car.spotN = 0; }
-      if (cs) seen = true; }
+    for (const k of this.cops) { if (k.hp <= 0) continue; const d = Math.hypot(k.x - pl.x, k.y - pl.y); k.dist = d; k.see = A ? A.sees(k, d) : !up && d < this.eyeR(80) * (k.saw ? 1.2 : 1) && this.los(k.x, k.y, pl.x, pl.y) && (this.und(k) || this.stairLine(k.x, k.y, (k.z || 0) + 0.55 + 1.05 * (k.up ?? 1)) !== false); if (k.see) { seen = true; k.onT += 0.1; if (!k.saw) k.thinkT = Math.min(k.thinkT, 0.12); } else k.onT = 0; k.saw = k.see; }
+    for (const car of this.cars) if (A ? A.carSees(car) : !up && car.drive && !car.away && !car.wreck && Math.hypot(car.x - pl.x, car.y - pl.y) < (pl.vehicle && !this.swapK ? Math.max(62, this.eyeR(80)) : this.eyeR(60)) && this.los(car.x, car.y, pl.x, pl.y) && this.stairLine(car.x, car.y, 1.25) !== false) seen = true;
     if (A && A.eye()) seen = true;
     if (this.level === 0) seen = false;
     if (seen && !this.seen) {
@@ -386,9 +373,7 @@ export class Heat {
      man on foot going over 4.5 m/s whom they have in sight (or lost under 2.5 s ago). For him: a car on its way aims 4 s ahead of him and stops when it is ahead of him or right on him, not where he was;
      the next car and the next pair on foot come out ahead of him, out of his sight; officers who see him run after him instead of closing by bounds; parked cars and officers he has left over 60-70 m
      behind do not count against the next unit. Break the line of sight for 2.5 s and all of it stops: they go to where he was last seen, as before. ?footchase=0 = as before (and officers run 4.4). */
-  runner() { const r = this.runV; return r && !this.g.player.vehicle && this.level >= 1 && (this.seen || this.unseenT < 2.5) && r.x * r.x + r.y * r.y > 20 && this.footOn ? r : null; }
-  /* a wanted man on foot who is running, seen or not */
-  fleeing() { const r = this.runV; return !!r && !this.g.player.vehicle && this.level >= 1 && this.footOn && r.x * r.x + r.y * r.y > 20; }
+  runner() { const r = this.runV; return r && !this.g.player.vehicle && this.level >= 1 && (this.seen || this.unseenT < 2.5) && r.x * r.x + r.y * r.y > 20 && this.g.P.get('footchase') === '1' ? r : null; }
   tgt() { return !this.seen && this.est && this.g.player.vehicle ? this.est : this.lkp; }
   /* in the player's picture? (in front of the camera, or near enough to be heard passing) */
   inPic(x, y) { const g = this.g, pl = g.player, d = Math.hypot(x - pl.x, y - pl.y); if (d < 38) return true; try { const m = g.world.camera.matrixWorld.elements, l = Math.hypot(m[8], m[10]); if (l > 0.2) return (-m[8] / l * (x - pl.x) + m[10] / l * (y - pl.y)) / d > -0.25; } catch (e) {} return true; }
@@ -454,15 +439,14 @@ export class Heat {
     else if (v.vf < 1.2 && gap < 5) { D.blockT += dt; if (D.blockT > 0.9 && !D.off) { D.off = v.sideSgn * 3.3; D.offT = 5; } if (D.blockT > 1.3 && !D.stop && (moving || dScene >= 80) /* held up near the scene of a man on foot: the crew gets out there, as before */ && this.t - (D.revAt || -9) > 3 && !(dPl > 95 || !this.los(pl.x, pl.y, v.x, v.y))) { D.revAt = this.t; D.revT = 1.25; D.revN = (D.revN || 0) + 1; D.off = (D.revN % 2 ? 1 : -1) * v.sideSgn * 3.3; D.offT = 6; D.blockT = 0; } if (D.blockT > 0.8 && (dPl > 95 || !this.los(pl.x, pl.y, v.x, v.y))) { D.ghost = 2.5; D.blockT = 0; } if (D.blockT > 3.2) { D.blockT = 0; /* through it only where he cannot see it happen; in his sight the crew gets out here and comes on foot */ if (dPl > 95 || !this.los(pl.x, pl.y, v.x, v.y)) D.ghost = 2.5; else if (dScene < 80 && !moving) D.stop = D.jam = true; else D.off = -(D.off || v.sideSgn * 3.3), D.offT = 4; } } else D.blockT = Math.max(0, D.blockT - dt * 0.5);
     if (D.off) { D.offT -= dt; if (D.offT <= 0) D.off = 0; }
     /* at the scene: brake, and swing the nose across the lane */
-    /* ahead of a runner a car stops in the block, not in a crossing where its crew would see down four streets (?copmid=0 = anywhere) */ const xing = rn && this.midblock ? (() => { const ne = g.roads.nearestEdge(v.x, v.y, 30); return !!ne && ne.e.len > 60 && (ne.s < 20 || ne.s > ne.e.len - 20); })() : false;
-    const arrive = rn ? (!xing && dPl < 40 && (v.x - pl.x) * rn.x + (v.y - pl.y) * rn.y > 6 * Math.hypot(rn.x, rn.y) && this.los(v.x, v.y, pl.x, pl.y)) || dPl < 13 || last /* a runner: stop ahead of him or right on him, never where he was */ : moving || (!v.goal && plv && ((plSp > 6 && this.unseenT < 20) || this.est)) ? false : (dScene < this.stopD && this.los(v.x, v.y, G0.x, G0.y)) || dScene < Math.min(16, this.stopD) || last
+    const arrive = rn ? (dPl < 40 && (v.x - pl.x) * rn.x + (v.y - pl.y) * rn.y > 6 * Math.hypot(rn.x, rn.y) && this.los(v.x, v.y, pl.x, pl.y)) || dPl < 13 || last /* a runner: stop ahead of him or right on him, never where he was */ : moving || (!v.goal && plv && ((plSp > 6 && this.unseenT < 20) || this.est)) ? false : (dScene < this.stopD && this.los(v.x, v.y, G0.x, G0.y)) || dScene < Math.min(16, this.stopD) || last
       /* a car coming up on one that has already stopped at the scene stops a length short of it, beside it, not behind or in it */
       || (dScene < this.stopD + 14 && this.cars.some((o) => o !== v && !o.drive && o.out && !o.wreck && Math.hypot(o.x - v.x, o.y - v.y) < 10.5 && (o.x - v.x) * cs + (o.y - v.y) * sn > 0));
     if (arrive && !D.stop) { D.stop = true; this.stats.arrive.push(+(this.t - D.t0).toFixed(1)); this.say((v.heavy ? 'heavy unit ' : 'car ') + v.id + ' on scene after ' + (this.t - D.t0).toFixed(1) + ' s (' + Math.round(D.d0) + ' m out)'); }
     if (D.stop) want = 0; const rev = D.revT > 0 && !D.stop; if (rev) want = -3.4;
     if (v.vf < 0.6 && gap < 2.2 && (D.gw === 2 || D.gw === 4) && !D.stop) { D.jamT = (D.jamT || 0) + dt; if (D.jamT > (D.vis ? 4 : 1.2)) { D.jam2 = 3; D.jamT = 0; D.jamN = (D.jamN || 0) + 1; } } else D.jamT = Math.max(0, (D.jamT || 0) - dt);
     D.want = want; D.gap = gap; D.turn = turn; D.mov = moving; D.ram = ram;
-    const acc = clamp(want - v.vf, -(D.stop ? 13 : 9) * dt, CPULL * dt); v.vf = Math.max(rev ? -3.4 : 0, v.vf + acc); v.braking = acc < -0.05 || v.vf < 0.3;
+    const acc = clamp(want - v.vf, -(D.stop ? 13 : 9) * dt, 4.2 * dt); v.vf = Math.max(rev ? -3.4 : 0, v.vf + acc); v.braking = acc < -0.05 || v.vf < 0.3;
     const maxYaw = Math.max(0, Math.min(v.vf / 4.6, 7.5 / Math.max(v.vf, 1))); let yaw = clamp(dh * 3.2, -maxYaw, maxYaw); if (v.vf < 0) yaw = Math.sign(D.off || v.sideSgn) * 0.32 * Math.min(1, -v.vf / 2); if (D.stop && v.vf > 0.6) yaw = v.sideSgn * Math.min(1.7, 0.5 + v.vf / 3.5) * this.swingK; /* the nose swings across the lane as it brakes */
     v.yawV = yaw; v.h = wrapPi(v.h + yaw * dt); v.steer = clamp(Math.atan(yaw * v.def.wheelbase / Math.max(v.vf, 2)), -0.6, 0.6);
     const x0 = v.x, y0 = v.y, h0 = v.h - yaw * dt;

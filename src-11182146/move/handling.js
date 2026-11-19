@@ -17,7 +17,6 @@
 // brake mid-turn moves weight forward; the handbrake takes most of the rear's grip. Arcade help: a held key asks for as much lock as the front
 // tyres can use at that speed, the wheel turns at a hand's rate (a tap is a small correction), the front wheels ease toward a slide of the tail.
 // Along the car (pull, brakes, drag, top speed) and walls, poles and parked cars: the lead's own formulas and the lead's own collision code.
-import { fcOf, fcDrive, fcDrag } from './fastcars.js';
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v)), lerp = (a, b, t) => a + (b - a) * t, wrapPi = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 
 // the plain car's numbers (the base sedan); every other kind is these, moved by cars.js's own class numbers in numbers() below.
@@ -54,10 +53,9 @@ export function drive(H, v, dt, inp, g, cmd, byKey) {
   // ---- along the car: the lead's formulas, unchanged (game.js Vehicle.step)
   let acc = 0;
   const tsOn = _TSQ && inp.throttle > 0 && vf > 0, tsTop = sp.top * (_TSQ ? 1.15 : 1);
-  const fc = fcOf(v, inp, g);     /* gameplay lane, Nov 18: quicker cars (move/fastcars.js; ?fastcars=0) */
-  if (inp.throttle > 0) acc += vf < -0.5 ? 16 * inp.throttle : fc ? fcDrive(fc, v, vf, inp.throttle) : inp.throttle * sp.acc * Math.max(0, 1 - (vf / tsTop) ** 2) * (vf < 8 ? 1.15 : 1);
+  if (inp.throttle > 0) acc += vf < -0.5 ? 16 * inp.throttle : inp.throttle * sp.acc * Math.max(0, 1 - (vf / tsTop) ** 2) * (vf < 8 ? 1.15 : 1);
   if (inp.brake > 0) { if (vf > 0.6) acc -= 15 * inp.brake; else acc -= inp.brake * sp.acc * 0.6 * Math.max(0, 1 + vf / 11); }
-  acc -= fc ? fcDrag(fc, vf, inp.throttle, inp.brake) : (tsOn ? 0.05 : 0.12) * vf + (tsOn ? 0.0012 : 0.0042) * vf * Math.abs(vf) + (inp.throttle === 0 && inp.brake === 0 ? Math.sign(vf) * 0.5 : 0);
+  acc -= (tsOn ? 0.05 : 0.12) * vf + (tsOn ? 0.0012 : 0.0042) * vf * Math.abs(vf) + (inp.throttle === 0 && inp.brake === 0 ? Math.sign(vf) * 0.5 : 0);
   if (hb) acc -= Math.sign(vf) * Math.min(Math.abs(vf) / dt, 5.5);
   if (T.scrub && vf > 2) acc -= T.scrub * Math.abs(S.sw) * clamp((T.scrubV - av) / 3, 0, 1);
   vf += acc * dt;
@@ -65,7 +63,7 @@ export function drive(H, v, dt, inp, g, cmd, byKey) {
   // ---- grip at each axle now
   const shift = clamp(-S.ax * K.lt, -0.12, K.ltMax);     // braking: + (weight forward)
   let capF = 0.5 * aG * (1 + 0.5 * shift), capR = 0.5 * aG * K.bal * (1 - shift);
-  if (inp.throttle > 0 && vf > -0.5) { const u = fc ? fcDrive(fc, v, vf, inp.throttle) / fc.aT : inp.throttle * Math.max(0, 1 - (vf / tsTop) ** 2), cut = 1 - 0.5 * K.pw * u * u; capF *= cut; capR *= cut; }
+  if (inp.throttle > 0 && vf > -0.5) { const u = inp.throttle * Math.max(0, 1 - (vf / tsTop) ** 2), cut = 1 - 0.5 * K.pw * u * u; capF *= cut; capR *= cut; }
   if (inp.brake > 0 && vf > 0.6) { const b = Math.min(1, inp.brake); capF *= 1 - 0.10 * b; capR *= 1 - 0.10 * b; }
   if (hb) capR *= K.hb;
   // ---- the wheel: a key is a hand turning it; the most it asks for is what the fronts can use at this speed
