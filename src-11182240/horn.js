@@ -7,7 +7,7 @@
 // let go, a tap = a short beep (0.14 s at least).
 // THE SOUND, by what he drives: car / taxi (the traffic's own recorded horn clip when sfx has it, its steady middle looped while held,
 // else two saw notes a major third apart as drivers.js makes them), truck and van (the truck clip, or the notes an octave down), bus (an
-// air horn: the truck clip slowed, or three low notes), motorcycle (a thin high beep), a police car (a siren yelp). Through the game's
+// air horn: the truck clip slowed, or three low notes), motorcycle (a thin high beep), a taken bicycle or e-bike (a bell: one ding), a police car (a siren yelp). Through the game's
 // own audio context and the "Sirens and horns" slider (game.sound.bus.sirens). Nothing is fetched; no new asset.
 // WHAT REACTS (once on the press, again every 0.9 s while it is held):
 //   traffic   cars of game.traffic going his way, directly ahead (within 2.2 m of his line) and within 25 m, stopped or under 9 m/s:
@@ -34,7 +34,7 @@ export function install(game) {
   const fail = (e) => { if (!S.err) { S.err = String((e && (e.stack || e.message)) || e).slice(0, 400); console.log('[horn] ' + S.err); } };
 
   // ---------------------------------------------------------------- what he is driving
-  const kindOf = (v) => { const d = v.def || {}, ty = String(d.type || v.type || ''); if (v.moto || ty === 'moto') return 'moto'; if (v.police || /police|cruiser|patrol/i.test(ty + ' ' + (d.name || ''))) return 'police'; if (ty === 'bus') return 'bus'; if (/truck|van|box|semi/.test(ty) || d.len > 6) return 'truck'; return ty === 'taxi' ? 'taxi' : 'car'; };
+  const kindOf = (v) => { const d = v.def || {}, ty = String(d.type || v.type || ''); if (v.bike) return 'bell';      /* gameplay/takeover bike: a bicycle or e-bike he has taken rings a bell */ if (v.moto || ty === 'moto') return 'moto'; if (v.police || /police|cruiser|patrol/i.test(ty + ' ' + (d.name || ''))) return 'police'; if (ty === 'bus') return 'bus'; if (/truck|van|box|semi/.test(ty) || d.len > 6) return 'truck'; return ty === 'taxi' ? 'taxi' : 'car'; };
   const driving = () => { const g = game, pl = g.player, v = pl && pl.vehicle, h = g.heli; if (!v || !v.def || pl.busy || g.demo || g.paused || (g.fly && g.fly.on) || (h && (h.piloted || h.busy)) || (typeof window !== 'undefined' && window.__startScreen)) return null; return v; };
   const typing = () => { try { const a = document.activeElement; return !!(a && a.closest && a.closest('input,textarea,#fbbox')); } catch (e) { return false; } };
   const padDown = () => { try { const all = navigator.getGamepads ? navigator.getGamepads() : []; let gp = null; for (const q of all) if (q && q.connected && q.axes.length >= 2 && q.buttons.length >= 4 && (!gp || (q.mapping === 'standard' && gp.mapping !== 'standard'))) gp = q; const b = gp && gp.mapping === 'standard' && gp.buttons[S.pad]; return !!(b && (b.pressed || b.value > 0.5)); } catch (e) { return false; } };
@@ -42,14 +42,18 @@ export function install(game) {
   // ---------------------------------------------------------------- the sound: one voice, started on the press, let go on the release
   const VO = { car: { clip: ['horn.long.0', 'horn.car.0'], rate: 1, f: [392, 494], lp: 5200 }, taxi: { clip: ['horn.long.0', 'horn.car.0'], rate: 1.07, f: [430, 542], lp: 5200 },
     truck: { clip: ['horn.truck.0'], alt: 0.72, rate: 1, f: [185, 233], lp: 3600 }, bus: { clip: ['horn.truck.0'], alt: 0.62, rate: 0.84, f: [155, 196, 233], lp: 3000 },
-    moto: { clip: ['horn.car.0'], rate: 1.55, f: [560], hp: 800, lp: 6500, vol: 0.7, wave: 'square' }, police: { yelp: true, lp: 4200 } };
+    moto: { clip: ['horn.car.0'], rate: 1.55, f: [560], hp: 800, lp: 6500, vol: 0.7, wave: 'square' }, police: { yelp: true, lp: 4200 }, bell: { bell: true, f: [2093, 3136, 5274], lp: 9000, vol: 1.1 } };
   function start(kind) {
     const s = game.sound; if (!s || !s.on || !s.ac || !s.out || game.capture || s.ac.state !== 'running') return null;
     const a = s.ac, now = a.currentTime, V = VO[kind] || VO.car, out = (s.bus && s.bus.sirens) || s.out, gain = a.createGain(), lp = a.createBiquadFilter(), src = [];
     lp.type = 'lowpass'; lp.frequency.value = V.lp || 5000; let head = lp; if (V.hp) { const hp = a.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = V.hp; hp.connect(lp); head = hp; }
     const vol = 0.2 * (V.vol || 1); gain.gain.value = 0; gain.gain.setValueAtTime(0, now); gain.gain.linearRampToValueAtTime(vol, now + 0.016); lp.connect(gain); gain.connect(out);
-    const B = !SYNTH && !V.yelp && s.sfx && s.sfx.buf; let buf = null, rate = V.rate || 1;
+    const B = !SYNTH && !V.yelp && !V.bell && s.sfx && s.sfx.buf; let buf = null, rate = V.rate || 1;
     if (B) { for (const n of V.clip) if (B[n]) { buf = B[n]; break; } if (!buf && V.alt && B['horn.car.0']) { buf = B['horn.car.0']; rate = V.alt; } }
+    if (V.bell) {      // a bicycle bell: one struck ding (three sine partials dying away over a second); it rings out whether the key is held or tapped
+      V.f.forEach((f, i) => { const o = a.createOscillator(), g2 = a.createGain(); o.type = 'sine'; o.frequency.value = f; g2.gain.setValueAtTime([1, 0.5, 0.22][i] || 0.2, now); g2.gain.exponentialRampToValueAtTime(0.001, now + 1.1 - i * 0.25); o.connect(g2); g2.connect(head); o.start(now); o.stop(now + 1.15); src.push(o); });
+      src[0].onended = () => { try { gain.disconnect(); } catch (e) {} }; S.stats.sounds++; return { a, gain, src, t0: now, vol, bell: true };
+    }
     if (buf && buf.duration >= 0.3) {      // the recorded horn: its attack as recorded, then its steady middle goes round while the button is down
       const b = a.createBufferSource(), g2 = a.createGain(); b.buffer = buf; b.playbackRate.value = rate; b.loop = true; b.loopStart = buf.duration * 0.3; b.loopEnd = buf.duration * 0.7; g2.gain.value = 5; b.connect(g2); g2.connect(head); b.start(now); src.push(b);
     } else if (V.yelp) {      // a siren's yelp: one saw swept up and down three times a second through a horn's body
@@ -62,7 +66,7 @@ export function install(game) {
     S.stats.sounds++; return { a, gain, src, t0: now, vol };
   }
   function stop(vc) {
-    if (!vc) return; try { const a = vc.a, te = Math.max(a.currentTime, vc.t0 + MIN_BEEP), G = vc.gain.gain; G.cancelScheduledValues(te); G.setValueAtTime(vc.vol, te); G.linearRampToValueAtTime(0, te + 0.045);
+    if (!vc || vc.bell) return; try { const a = vc.a, te = Math.max(a.currentTime, vc.t0 + MIN_BEEP), G = vc.gain.gain; G.cancelScheduledValues(te); G.setValueAtTime(vc.vol, te); G.linearRampToValueAtTime(0, te + 0.045);
       for (const o of vc.src) o.stop(te + 0.08); const last = vc.src[vc.src.length - 1]; if (last) last.onended = () => { try { vc.gain.disconnect(); } catch (e) {} }; } catch (e) { fail(e); }
   }
   const release = () => { if (S.voice) { stop(S.voice); S.voice = null; } S.held = false; if (watch) { clearInterval(watch); watch = 0; } };

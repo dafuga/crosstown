@@ -32,7 +32,7 @@ const mk = (w, h) => { const c = document.createElement('canvas'); c.width = w; 
 
 export class CityMap {
   constructor(game, hud) {
-    this.g = game; this.hud = hud; this.full = false; this.zoomF = 0; this.miniZ = 0.42; this.n = 0; this.miniLabels = []; this.miniMarks = []; this.takesHeat = true; this.heat = null; this.pan2 = true; this.moved = false; this.spr = new Map(); this.layN = 0;
+    this.g = game; this.hud = hud; this.full = false; this.zoomF = 0; this.miniZ = 0.42; this.n = 0; this.miniLabels = []; this.miniMarks = []; this.takesHeat = true; this.heat = null; this.pan2 = true; this.moved = false; this.spr = new Map(); this.layN = 0; this.N2 = !(game.P && game.P.get('mapnames') === '0');     // handover-3: the minimap's naming rule (own street + cross street first); ?mapnames=0 = the rule before it
     const city = game.city, M0 = city.meta, pb = M0.play || [-M0.px, -M0.py, M0.px, M0.py], mgx = M0.hx - M0.px, mgy = M0.hy - M0.py, P = game.P;
     const B = (this.box = [pb[0] - mgx, pb[1] - mgy, pb[2] + mgx, pb[3] + mgy]); this.play = pb; this.S = 1;
     { const fx = Math.min(mgx, 0.15 * (pb[2] - pb[0]) + 80), fy = Math.min(mgy, 0.15 * (pb[3] - pb[1]) + 80); this.fr = [pb[0] - fx, pb[1] - fy, pb[2] + fx, pb[3] + fy]; }     // what the full map's frame shows: on a small map with a wide margin (Brooklyn) the frame hugs the map
@@ -165,6 +165,7 @@ export class CityMap {
   drawMini(cx, cy) {
     const hud = this.hud, c = hud.ctx, g = this.g, R = hud.mapR, pl = g.player, yaw = g.cam.yaw, M = g.missions, p = PAL[this.pal()], k = hud.k || 1;
     if (!this.full) this.wasFull = false;
+    { const H = g.__horn; if (H && typeof H.pad === 'number') { const sw = this.full && !(g.P && g.P.get('padmap') === '0'); if (sw && H.pad >= 0) { this.hornPad = H.pad; H.pad = -1; } else if (!sw && H.pad < 0 && this.hornPad >= 0) H.pad = this.hornPad; } }     // handover-3: with this map open the pad is the map's, so horn.js (if it is in) is given no pad button to read (L3 does not honk); put back as the map shuts. The G key is untouched
     this.made = 0; this.tMs = 0;     // a new frame: the tile budget starts again (the full map draws after this one)
     const sp = pl.vehicle ? Math.hypot(pl.vehicle.vx, pl.vehicle.vy) : 0, want = 0.42 - 0.14 * Math.min(1, sp / 30); this.miniZ += (want - this.miniZ) * 0.04; const z = this.miniZ, rot = yaw - Math.PI / 2, rw = R / z;
     c.save(); c.shadowBlur = 0; c.beginPath(); c.arc(cx, cy, R, 0, 7); c.clip(); c.fillStyle = p.land; c.fillRect(cx - R, cy - R, 2 * R, 2 * R);
@@ -179,14 +180,54 @@ export class CityMap {
     const cs = Math.cos(rot), sn = Math.sin(rot), scr = (x, y) => { const dx = (x - pl.x) * z, dy = -(y - pl.y) * z; return [cx + dx * cs - dy * sn, cy + dx * sn + dy * cs]; };
     // a street's name as a segment in map pixels about the player (the map turns about him, so this does not change as the camera turns): its ends' and nearest point's distance from the centre
     const seg = (L) => { const hw = (L.t.length * (L.ave ? 7.4 : 6.3) + 8) / 2, dx = (L.x - pl.x) * z, dy = (L.y - pl.y) * z, ux = Math.cos(L.a), uy = Math.sin(L.a), t = Math.max(-hw, Math.min(hw, -(dx * ux + dy * uy)));
-      return { L, dx, dy, ux, uy, hw, d: Math.hypot(dx, dy), near: Math.hypot(dx + ux * t, dy + uy * t), far: Math.max(Math.hypot(dx + ux * hw, dy + uy * hw), Math.hypot(dx - ux * hw, dy - uy * hw)) }; };
+      return { L, dx, dy, ux, uy, hw, gap: Math.hypot(Math.max(0, Math.abs(dx * ux + dy * uy) - hw), Math.max(0, Math.abs(dx * uy - dy * ux) - 6.5)), d: Math.hypot(dx, dy), near: Math.hypot(dx + ux * t, dy + uy * t), far: Math.max(Math.hypot(dx + ux * hw, dy + uy * hw), Math.hypot(dx - ux * hw, dy - uy * hw)) }; };
     if (this.n++ % 12 === 0) { const reach = (R - 22) / z, got = new Map();     // the main tree's rule: the nearest label of each street in view, few of them, avenues first;
       // of a street's labels one that lies whole inside the rim and clear of the arrow is taken before one that does not (fit), so a name is cut only when the street has no label that fits
       for (const L of this.names) { const d = Math.hypot(L.x - pl.x, L.y - pl.y); if (d > reach || d < 52 / z) continue; const s = seg(L), fit = s.far <= R - 3 && s.near >= 18 ? 1 : 0, o = got.get(L.t); if (!o || fit > o.fit || (fit === o.fit && d < o.d)) got.set(L.t, { L, d, fit }); }
       this.miniLabels = [...got.values()].sort((a, b) => (b.L.c - a.L.c) || (a.d - b.d)).slice(0, this.pal() === 'night' ? 4 : 5).map((o) => o.L);
-      this.miniMarks = this.marks.filter((m) => { const d = Math.hypot(m.x - pl.x, m.y - pl.y); return !m.area && !m.water && !m.big && d < reach && d > 44 / z; }).sort((a, b) => Math.hypot(a.x - pl.x, a.y - pl.y) - Math.hypot(b.x - pl.x, b.y - pl.y)).slice(0, 2); }
+      this.miniMarks = this.marks.filter((m) => { const d = Math.hypot(m.x - pl.x, m.y - pl.y); return !m.area && !m.water && !m.big && d < reach && d > 44 / z; }).sort((a, b) => Math.hypot(a.x - pl.x, a.y - pl.y) - Math.hypot(b.x - pl.x, b.y - pl.y)).slice(0, 2);
+      if (this.N2) { const got = new Map(), prev = this.miniPrev;
+      // THE RULE (handover-3): the street the player is on and the nearest street across it are always named; avenues are placed first and the two forced names push out what lies
+      // in their way; then the nearest streets, up to 8 (7 at night). A name lies whole inside the rim, its box clear of the arrow's ring, of the job / waypoint pins, of other names
+      // and of a landmark's name. A street's name is tried where it was (so it does not hop), at its blocks' middles, then slid along the street; the player's own street, if too
+      // long for that, rides beside the arrow.
+      let mks = []; for (const m of this.miniMarks) { const q = scr(m.x, m.y), x = q[0] - cx, y = q[1] - cy - (m.park ? 0 : 12); if (Math.hypot(x, q[1] - cy) > R - 26 || (Math.abs(x) < m.t.length * 3.4 + 20 && Math.abs(y) < 26)) continue; mks.push({ m, x, y: y + (m.park ? 0 : 5), w: m.t.length * 3.4 + 9, h: m.park ? 11 : 16 }); }
+      const pins = []; for (const T of [M.target, g.gps && g.gps.target]) if (T) { const q = scr(T.x, T.y), x = q[0] - cx, y = q[1] - cy, d = Math.hypot(x, y); if (d > R - 12) pins.push({ x: x * (R - 12) / d, y: y * (R - 12) / d, w: 8, h: 8 }); else pins.push({ x, y: y - 10, w: 9, h: 13 }); }
+      for (const L of this.names) { const lim = R / z + L.len / 2; if (Math.abs(L.x - pl.x) > lim || Math.abs(L.y - pl.y) > lim) continue; const o = seg(L); o.hl = L.len / 2 * z; o.st = Math.max(-o.hl, Math.min(o.hl, -(o.dx * o.ux + o.dy * o.uy))); o.sd = Math.hypot(o.dx + o.ux * o.st, o.dy + o.uy * o.st); if (o.sd > R - 20) continue;
+        const G = got.get(L.t); if (G) { G.a.push(o); if (o.sd < G.n.sd) G.n = o; } else got.set(L.t, { t: L.t, a: [o], n: o }); }
+      const out = [], pts = (o) => { const a = [], k = Math.ceil(o.hw / 6); for (let i = -k; i <= k; i++) a.push(o.dx + o.ux * o.hw * i / k, o.dy + o.uy * o.hw * i / k); return a; };
+      const hitM = (P, m) => { for (let i = 0; i < P.length; i += 2) if (Math.abs(P[i] * cs + P[i + 1] * sn - m.x) < m.w + 5 && Math.abs(P[i] * sn - P[i + 1] * cs - m.y) < m.h + 5) return true; return false; };
+      const clash = (P, Q) => { for (let i = 0; i < P.length; i += 2) for (let j = 0; j < Q.length; j += 2) if (Math.abs(P[i] - Q[j]) < 15 && Math.abs(P[i + 1] - Q[j + 1]) < 15 && Math.hypot(P[i] - Q[j], P[i + 1] - Q[j + 1]) < 15) return true; return false; };
+      const free = (P, useM) => { for (const m of pins) if (hitM(P, m)) return false; if (useM) for (const m of mks) if (hitM(P, m)) return false; for (const Q of out) if (clash(P, Q.p)) return false; return true; };
+      const onSt = (G, x, y) => { for (const o of G.a) if (Math.abs((x - o.dx) * o.ux + (y - o.dy) * o.uy) <= o.hl + 30 * z && Math.abs((x - o.dx) * o.uy - (y - o.dy) * o.ux) <= 12 * z) return true; return false; };
+      const fit = (o, useM) => { if (o.far > R - 7 || o.gap < 21) return null; const P = pts(o); return free(P, useM) ? { L: o.L, p: P } : null; };
+      const mkL = (G, x, y, rel) => { const n = G.n.L, L = { t: n.t, c: n.c, ave: n.ave, a: n.a, len: n.len, x: pl.x + x / z, y: pl.y + y / z }; if (rel) { L.rx = x / z; L.ry = y / z; } return seg(L); };
+      const place = (G, useM) => { let r; const n = G.n, pv = prev && prev.get(G.t);
+        if (pv && pv.rx === undefined && (r = fit(seg(pv), useM))) return r;
+        for (const o of G.a.slice().sort((p, q) => p.d - q.d).slice(0, 3)) if ((r = fit(o, useM))) return r;
+        const qx = n.dx + n.ux * n.st, qy = n.dy + n.uy * n.st;
+        const hwN = (G.t.length * (n.L.ave ? 7.4 : 6.3) + 8) / 2, S = n.sd < 20 ? [hwN + 22, -hwN - 22] : []; for (let i = 0; i <= 14; i++) S.push((i + 1 >> 1) * 16 * (i & 1 ? 1 : -1));
+        for (const s of S) { const x = qx + n.ux * s, y = qy + n.uy * s; if (Math.hypot(x, y) > R - 7 || !onSt(G, x, y)) continue; const o = mkL(G, x, y); if (!onSt(G, x + n.ux * o.hw, y + n.uy * o.hw) || !onSt(G, x - n.ux * o.hw, y - n.uy * o.hw)) continue; if ((r = fit(o, useM))) return r; }
+        return null; };
+      const put = (G, r) => { if (r) { r.G = G; out.push(r); } return r; }, has = (G) => out.some((Q) => Q.G === G);
+      // the player's street: the nearest stretch within 30 m (at a corner, the one he faces along); the street across: the nearest that is not parallel to it
+      let own = null, cross = null; { let b = 1e9; for (const G of got.values()) { const v = G.n.sd - 5 * z * Math.abs(Math.cos(G.n.L.a - pl.h)); if (G.n.sd < 30 * z && v < b) { b = v; own = G; } } }
+      const byC = [...got.values()].sort((a, b) => (b.n.L.c - a.n.L.c) || (a.n.sd - b.n.sd)), back = [];
+      for (const G of byC) if (G.n.L.ave && G !== own && out.length < 4) put(G, place(G, true));     // avenues first
+      // a forced name: where it is free; else where it would lie with only `keep` in its way, and whatever it then lies across goes (names: tried again after; a landmark's name: dropped)
+      const force = (G, keep) => { let r = place(G, true); if (!r) { const all = out.splice(0); if (keep) out.push(keep); r = place(G, true) || place(G, false); const gone = r ? all.filter((Q) => Q !== keep && clash(r.p, Q.p)) : []; out.length = 0; out.push(...all.filter((Q) => !gone.includes(Q)));
+          if (r) { for (const Q of gone) back.push(Q.G); const hit = mks.filter((m) => hitM(r.p, m)); mks = mks.filter((m) => !hit.includes(m)); this.miniMarks = this.miniMarks.filter((m) => !hit.some((h) => h.m === m)); } } return put(G, r); };
+      let late = null; if (own) { const ro = force(own, null); if (!ro) late = own; for (const G of [...got.values()].filter((G) => G !== own && Math.abs(Math.sin(G.n.L.a - own.n.L.a)) > 0.42).sort((a, b) => a.n.sd - b.n.sd).slice(0, 8)) if (has(G) || force(G, ro)) { cross = G; break; } }
+      for (const G of back) if (!has(G)) put(G, place(G, true));
+      const max = this.pal() === 'night' ? 7 : 8;
+      for (const G of byC) { if (out.length >= max) break; if (G === late || has(G)) continue; put(G, place(G, true)); }
+      // the player's street with a name too long to lie on it clear of the arrow: beside the arrow, along the street, on the side that is free; if neither is, the names in its way go (not the cross street's)
+      if (late) { const n = late.n, qx = n.dx + n.ux * n.st, qy = n.dy + n.uy * n.st, C = []; for (const sd of [1, -1]) for (const s of [0, 16, -16, 32, -32]) { const o = mkL(late, qx + n.ux * s - n.uy * sd * 26, qy + n.uy * s + n.ux * sd * 26, 1); if (o.far <= R - 7 && o.gap >= 19) C.push({ L: o.L, p: pts(o) }); }
+        let r = C.find((c) => free(c.p, true)) || C.find((c) => free(c.p, false)); if (!r && C.length) { const keep = out.filter((Q) => cross && Q.L.t === cross.t); r = C.find((c) => { const all = out.splice(0, out.length, ...keep), ok = free(c.p, false); out.splice(0, out.length, ...all); return ok; }) || C[0]; const P = r.p, all = out.splice(0, out.length); for (const Q of all) { out.length = 0; out.push(Q); if (free(P, false) || (cross && Q.L.t === cross.t)) keep.includes(Q) || keep.push(Q); } out.length = 0; out.push(...keep); }
+        if (r) { const hit = mks.filter((m) => hitM(r.p, m)); this.miniMarks = this.miniMarks.filter((m) => !hit.some((h) => h.m === m)); out.unshift(r); } }
+      this.miniLabels = out.map((o) => o.L); this.miniPrev = new Map(out.map((o) => [o.L.t, o.L])); this.miniOwn = own && own.t; this.miniCross = cross && cross.t; } }
     c.save(); c.shadowBlur = 0; c.beginPath(); c.arc(cx, cy, R - 2, 0, 7); c.clip();
-    for (const L of this.miniLabels) { const q = scr(L.x, L.y); if (Math.hypot(q[0] - cx, q[1] - cy) > R - 22) continue; let a = -L.a + rot; a = Math.atan2(Math.sin(a), Math.cos(a)); if (a > Math.PI / 2) a -= Math.PI; else if (a < -Math.PI / 2) a += Math.PI; this.labelS(c, L.t, q[0], q[1], L.ave ? 12.5 : 11, L.ave ? p.tAve : p.tSt, a, L.ave ? 800 : 600); }
+    for (const L of this.miniLabels) { if (L.rx !== undefined) { L.x = pl.x + L.rx; L.y = pl.y + L.ry; } const q = scr(L.x, L.y); if (this.N2) { const o = seg(L); if (o.far > R - 3 || o.gap < 18) continue; } else if (Math.hypot(q[0] - cx, q[1] - cy) > R - 22) continue; let a = -L.a + rot; a = Math.atan2(Math.sin(a), Math.cos(a)); if (a > Math.PI / 2) a -= Math.PI; else if (a < -Math.PI / 2) a += Math.PI; this.labelS(c, L.t, q[0], q[1], L.ave ? 12.5 : 11, L.ave ? p.tAve : p.tSt, a, L.ave ? 800 : 600); }
     for (const m of this.miniMarks) { const q = scr(m.x, m.y); if (Math.hypot(q[0] - cx, q[1] - cy) > R - 26 || (Math.abs(q[0] - cx) < m.t.length * 3.4 + 20 && Math.abs(q[1] - (m.park ? 0 : 12) - cy) < 26)) continue; if (!m.park) { c.fillStyle = p.dot; c.strokeStyle = '#fff'; c.lineWidth = 1.5; c.beginPath(); c.arc(q[0], q[1], 3.6, 0, 7); c.fill(); c.stroke(); } this.labelS(c, m.t, q[0], q[1] - (m.park ? 0 : 12), 11.5, m.park ? p.tPark : p.tLm, 0, 700); }
     // soft shade at the rim, so the circle reads as a lens
     if (!this.rim || this.rim.R !== R || this.rim.k !== k) { const cv = mk(Math.ceil(2 * R * k), Math.ceil(2 * R * k)), x2 = cv.getContext('2d'); x2.scale(k, k); const gr = x2.createRadialGradient(R, R, R * 0.72, R, R, R); gr.addColorStop(0, 'rgba(0,0,0,0)'); gr.addColorStop(1, 'rgba(0,0,0,0.22)'); x2.fillStyle = gr; x2.fillRect(0, 0, 2 * R, 2 * R); this.rim = { cv, R, k }; }
