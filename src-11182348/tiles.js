@@ -70,6 +70,11 @@ export class Tiles {
   async start(material, start = [-196, -214]) {
     this.material = material; const sx = start[0], sz = -start[1];
     const man = await fetch(this.dir + 'tiles.json').then((r) => { if (!r.ok) throw new Error('no tiles.json'); return r.json(); });
+    /* lead helper trees-rads, Nov 18 (Matt: "Radiators still hovering in the air"): the white louvred boxes are the window air conditioners built into the FULL tiles
+       (wall kind 8). Most sit in a window; some stand in the air beside or between buildings (the tile build put them on a wall of the map that is not drawn there).
+       assets/winac-air.json (lanes/lead/trees-rads/tools/winac_census.py, from the tile files) lists, per tile, the middles of the boxes with no wall or roof face
+       within 0.6 m; their triangles are left out of the tile's mesh when it is made (mesh() below). No list, or ?winac=1 = every box as before. */
+    this.airBoxes = null; if (Q.get('winac') !== '1') try { const r = await fetch('assets/winac-air.json'); if (r.ok) this.airBoxes = (await r.json())[this.dir] || null; } catch (e) {}
     const sets = await Promise.all(man.sets.map((s) => fetch(this.dir + s.dir + 'set.json').then((r) => r.json()).then((j) => Object.assign(j, { dir: this.dir + s.dir, origin: s.origin || j.origin || [0, 0] }))));
     const jobs = []; this.sets = sets; const cm = this.world && this.world.city && this.world.city.meta, own = cm && Array.isArray(cm.sets) && cm.sets.length ? new Set(cm.sets.map((q) => q.set)) : null;     /* the areas of this map, when it names them */
     // uptown (landmarks): with ?hdir=<hero folder> the tiles a footprint of that folder's hero.json touches are pinned here (the uptown test sets have no "pin" in set.json)
@@ -134,6 +139,12 @@ export class Tiles {
   }
   dist(T, x, z) { const b = T.box; return Math.hypot(Math.max(b[0] - x, 0, x - b[2]), Math.max(b[1] - z, 0, z - b[3])); }
   mesh(T, geometry, full) {
+    if (full && this.airBoxes) { const L = this.airBoxes[T.url.slice(this.dir.length).replace(/\.t\.gz$/, '')], k3 = geometry.attributes.uv3, ix = geometry.index, pos = geometry.attributes.position;     /* trees-rads: the air conditioners that stand in the air (see start()) */
+      if (L && k3 && ix && pos) { const src = ix.array, out = new src.constructor(src.length); let k = 0;
+        for (let i = 0; i < src.length; i += 3) { const a = src[i], b = src[i + 1], c = src[i + 2]; let drop = false;
+          if (Math.floor(k3.getX(a) / 64) === 8) { const x = (pos.getX(a) + pos.getX(b) + pos.getX(c)) / 3, y = (pos.getY(a) + pos.getY(b) + pos.getY(c)) / 3, z = (pos.getZ(a) + pos.getZ(b) + pos.getZ(c)) / 3; for (const q of L) { const dx = x - q[0], dy = y - q[1], dz = z - q[2]; if (dx * dx + dy * dy + dz * dz < 0.81) { drop = true; break; } } }
+          if (!drop) { out[k++] = a; out[k++] = b; out[k++] = c; } }
+        if (k < src.length) { geometry.setIndex(new THREE.BufferAttribute(out.slice(0, k), 1)); this.stats.airBoxTris = (this.stats.airBoxTris || 0) + (src.length - k) / 3; } } }
     const m = new THREE.Mesh(geometry, this.material); m.name = T.name; m.userData.tile = full ? 'full' : 'shell'; m.castShadow = full; m.receiveShadow = true;
     m.position.set(T.set.origin[0], 0, T.set.origin[1]); m.matrixAutoUpdate = false; m.updateMatrix(); m.updateMatrixWorld(true);
     { const bs = geometry.boundingSphere, c = bs.center.clone().applyMatrix4(m.matrixWorld); m.userData.c = [c.x, c.z, bs.radius]; }

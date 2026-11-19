@@ -42,7 +42,9 @@ function podMesh(model) {
 export function addRockets(heli, ctx) {
   const g = heli.g, f = heli.f, W = g.world, H = heli.heights;
   const pods = podMesh(heli.model);
-  const puffs = new Puffs(W.scene); puffs.sunDir(W.sunDir);
+  const FX = !(g.P && g.P.get('helifx') === '0');      /* lead lake-helifire, Nov 18 (Matt on the trailer: "shooting from the helicopter looks awful"): the fireball's new shader, soft smoke, no white-out near the camera, a strike on a wall thrown out from it with a scorch, light at the launch; ?helifx=0 = as before */
+  const WALL = { nx: 0, nz: 0, px: 0, pz: 0 };
+  const puffs = new Puffs(W.scene, FX); puffs.sunDir(W.sunDir);
   // the rockets in flight: one instanced mesh (a grey tube with a dark nose), and a glow at each tail
   const geo = new THREE.CylinderGeometry(0.05, 0.05, 1.3, 8); geo.rotateZ(-Math.PI / 2);
   const mesh = new THREE.InstancedMesh(geo, new THREE.MeshStandardMaterial({ color: 0x8a8d86, roughness: 0.45, metalness: 0.6 }), MAX); mesh.frustumCulled = false; mesh.count = 0; mesh.name = 'heliRockets'; W.scene.add(mesh);
@@ -78,10 +80,12 @@ export function addRockets(heli, ctx) {
     r.v.copy(f.vel).addScaledVector(r.d, V0); live.push(r); S.side = -S.side; S.ammo--; S.cool = RATE; S.fired++; if (S.ammo === 0) S.reload = RELOAD;
     // the launch: a puff of smoke thrown back from the tube, a kick on the camera, the whoosh
     for (let i = 0; i < 6; i++) puffs.add(r.p.x, r.p.y, r.p.z, f.vel.x - r.d.x * (4 + i * 3), f.vel.y - r.d.y * (4 + i * 3) + 0.5, f.vel.z - r.d.z * (4 + i * 3), 0.4, 1.8, 1.4, 0, 0.9); puffs.add(r.p.x, r.p.y, r.p.z, f.vel.x, f.vel.y, f.vel.z, 1.6, 0.08, 6, 1);
+    if (FX) { puffs.add(r.p.x, r.p.y, r.p.z, f.vel.x, f.vel.y, f.vel.z, 2.8, 0.1, 5, 1, 0.25); const fx = g.combat && g.combat.fx; if (fx && fx.light && !boomAt.lit && !(fx.lightT > 0.1)) { fx.light.position.copy(r.p); fx.lightI = 36 * (0.25 + 0.75 * (S.day ?? 1)); fx.lightT = 0.12; fx.light.distance = 14; } }      /* the launch: a wider glow for a tenth of a second and the game's flash light on the pod and the cabin side (not while a strike is using that light) */
     heli.cam.shake = Math.min(1, heli.cam.shake + 0.12); boomAt.whoosh(g); return true;
   }
   function explode(r, p, car) {
-    S.booms++; (S.last || (S.last = new THREE.Vector3())).copy(p); const top = H.top(p.x, -p.z, p.y + 1.5); boomAt(g, heli, puffs, p.x, top > p.y - 2.5 && top <= p.y + 0.3 ? top : p.y, p.z, { car, vx: r.v.x, vz: r.v.z, ground: top > p.y - 2.5 && top <= p.y + 0.3 });
+    S.booms++; (S.last || (S.last = new THREE.Vector3())).copy(p); const top = H.top(p.x, -p.z, p.y + 1.5); let wall = null; if (r.wall && !car) { wall = WALL; wall.nx = r.wnx; wall.nz = r.wnz; wall.px = r.wpx; wall.pz = r.wpz; }
+    boomAt(g, heli, puffs, p.x, top > p.y - 2.5 && top <= p.y + 0.3 ? top : p.y, p.z, { car, vx: r.v.x, vz: r.v.z, ground: top > p.y - 2.5 && top <= p.y + 0.3, wall });
   }
   function step(dt) {
     S.t += dt; S.cool = Math.max(0, S.cool - dt);
@@ -102,7 +106,10 @@ export function addRockets(heli, ctx) {
       const n = 3, h = dt / n;
       for (let k = 0; k < n && !hit; k++) {
         r.p.addScaledVector(r.v, h);
-        const top = H.top(r.p.x, -r.p.z, r.p.y + 0.5); if (top > r.p.y) { hit = r.p; if (top - r.p.y < 1.5) r.p.y = top; else r.p.addScaledVector(r.v, -h * 0.7); break; }     // a roof or the street: on it; a wall: just outside it
+        const top = H.top(r.p.x, -r.p.z, r.p.y + 0.5); if (top > r.p.y) { hit = r.p; if (top - r.p.y < 1.5) r.p.y = top; else if (FX && Math.hypot(r.v.x, r.v.z) > 12) {      /* a wall: where the line meets it (halved six times between the last point outside and this one), the way out of it, and the burst set a metre outside */
+          let lo = 0, hi = 1; for (let q = 0; q < 6; q++) { const m = (lo + hi) / 2, mx = r.p.x - r.v.x * h * m, my = r.p.y - r.v.y * h * m, mz = r.p.z - r.v.z * h * m; if (H.top(mx, -mz, my + 0.5) > my) lo = m; else hi = m; }
+          r.p.addScaledVector(r.v, -h * hi); const hl = Math.hypot(r.v.x, r.v.z); r.wall = true; r.wnx = -r.v.x / hl; r.wnz = -r.v.z / hl; r.wpx = r.p.x; r.wpz = r.p.z; r.p.x += r.wnx * 1.0; r.p.z += r.wnz * 1.0; }
+          else r.p.addScaledVector(r.v, -h * 0.7); break; }     // a roof or the street: on it; a wall: just outside it
         if (r.p.y < 3.2 && r.t > 0.08) carsNear(r.p.x, -r.p.z, 3.4, (v) => { if (!hit && Math.hypot(v.x - r.p.x, v.y + r.p.z) < 2.6) { hit = r.p; car = v; } });
       }
       if (r.t < BURN + 0.6 && !(g.P && g.P.get('hrkdbg') === 'nopuff')) { const lp = r.lp || (r.lp = r.p.clone().addScaledVector(r.v, -dt)), L = lp.distanceTo(r.p), n = Math.min(110, Math.ceil(L / 0.5));

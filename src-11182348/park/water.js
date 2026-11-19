@@ -14,7 +14,7 @@ function mirror(game) {
   const world = game.world, R = world.renderer, cam = world.camera, scene = world.scene;
   const rt = new THREE.WebGLRenderTarget(1024, 576, { type: THREE.HalfFloatType, depthBuffer: true }); rt.texture.minFilter = rt.texture.magFilter = THREE.LinearFilter; rt.texture.generateMipmaps = false;
   const vc = new THREE.PerspectiveCamera(), M = new THREE.Matrix4(), plane = new THREE.Plane(), n = new THREE.Vector3(0, 1, 0), P0 = new THREE.Vector3(), cp = new THREE.Vector3(), view = new THREE.Vector3(), rot = new THREE.Matrix4(), look = new THREE.Vector3(), tgt = new THREE.Vector3(), clip = new THREE.Vector4(), q = new THREE.Vector4();
-  const mir = { U: { tMirror: { value: rt.texture }, uMirM: { value: M }, uMirOn: { value: 0 } }, seen: -1e9, level: 0, dist: 1e9, who: null, meshes: new Set(), draws: 0, ms: 0, err: null };
+  const mir = { U: { tMirror: { value: rt.texture }, uMirM: { value: M }, uMirOn: { value: 0 } }, seen: -1e9, level: 0, dist: 1e9, who: null, meshes: new Set(), draws: 0, ms: 0, err: null, frame: 0, seenF: -9, sync: false };
   let fr = 0;
   const off = () => { mir.U.uMirOn.value = 0; if (MAT) MAT.envMapIntensity = 0.32; };
   const draw = () => { requestAnimationFrame(draw); fr++; if (mir.err) return; if (performance.now() - mir.seen > 400) return off(); if ((fr & 1) && mir.U.uMirOn.value) return; once(); };
@@ -32,7 +32,22 @@ function mirror(game) {
       mir.U.uMirOn.value = 1; if (MAT) MAT.envMapIntensity = 0.04; mir.draws++; mir.ms = performance.now() - t0;
     } catch (e) { mir.err = String(e && e.message); off(); console.log('[game] park: mirror failed: ' + mir.err); }
     finally { for (const m of hid) m.visible = true; R.setRenderTarget(old.rt); R.xr.enabled = old.xr; R.shadowMap.autoUpdate = old.sh; R.shadowMap.needsUpdate = old.nu; } };
-  mir.once = once; requestAnimationFrame(draw); return (MIR = mir);
+  mir.once = once;
+  // lead lake-helifire, Nov 18 (Matt on the trailer: "lake is flickering"): the mirror picture was drawn in a frame callback of its own, every second callback,
+  // and switched off after 400 ms of wall clock without a water sheet drawn. A film or a still is stepped and drawn by hand and gets a callback only now and
+  // then, so there the Lake's picture was redrawn at uneven moments and could go from mirror to sky map and back. Now the mirror belongs to the game's own
+  // frame: world.render is wrapped, and just before each frame the sheets are looked at with the camera as it stands (in the scene, in reach, in the view);
+  // if one is, its mirror is drawn (every second DRAWN frame, as before), if none is, the mirror is off. The same for the live loop, a film and a still, and
+  // a sheet coming into view has its mirror on its first frame. ?parkmirrorsync=0 = the callback as before.
+  if (!(Q && Q.get('parkmirrorsync') === '0') && typeof world.render === 'function') { mir.sync = true; const render0 = world.render, pm = new THREE.Matrix4(), fru = new THREE.Frustum();
+    const inScene = (o) => { for (; o; o = o.parent) { if (!o.visible) return false; if (o === scene) return true; } return false; };
+    world.render = function (t, focus) { mir.frame++;
+      if (!mir.err) { try { cam.updateMatrixWorld(); fru.setFromProjectionMatrix(pm.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse)); let best = null, bd = 1e9;
+        for (const m of mir.meshes) { const u = m.userData.mir; if (!u || !inScene(m)) continue; const d = Math.hypot(cam.position.x - u.cx, -cam.position.z - u.cy); if (d - u.rr > u.MD || !fru.intersectsObject(m)) continue; const dd = m === mir.who ? d - 1 : d; if (dd < bd) { bd = dd; best = m; } }
+        if (!best) { if (mir.U.uMirOn.value) off(); } else { mir.who = best; mir.dist = bd; mir.level = best.userData.mir.lv; mir.seen = performance.now(); mir.seenF = mir.frame; if (!((mir.frame & 1) && mir.U.uMirOn.value)) once(); } } catch (e) { mir.err = String(e && e.message); off(); console.log('[game] park: mirror failed: ' + mir.err); } }
+      return render0.call(this, t, focus); }; }
+  else requestAnimationFrame(draw);
+  return (MIR = mir);
 }
 function material(game) {
   if (MAT) return MAT;
@@ -77,7 +92,8 @@ export function build(game, a, corridors = []) {
   const mesh = new THREE.Mesh(geo, material(game)); mesh.position.y = BASE + level - 0.05; mesh.receiveShadow = !!mesh.material.userData.old;      /* a mirror takes no cast shadows */ mesh.name = 'park_water'; group.add(mesh);
   if (MIR) { const lv = mesh.position.y; let cx = 0, cy = 0; for (const p of a.ring) { cx += p[0] / a.ring.length; cy += p[1] / a.ring.length; } MIR.meshes.add(mesh);      /* one mirror plane: that of the water sheet in view whose middle is nearest the camera */
     let rr = 0; for (const p of a.ring) rr = Math.max(rr, Math.hypot(p[0] - cx, p[1] - cy)); const MD = game.P && game.P.has('parkmirrord') ? +game.P.get('parkmirrord') : 60;      /* Nov 16: the mirror's extra scene draw cost 6 fps at the Grand Army Plaza corner (M1 Pro, 38 v 43.5 with ?park=0; 44.5 with ?parkmirror=0) where the Pond lies hidden behind the wall: now only within MD metres of the sheet's reach (?parkmirrord=) */
-    mesh.onBeforeRender = (r, sc, cam) => { const now = performance.now(), d = Math.hypot(cam.position.x - cx, -cam.position.z - cy); if (d - rr > MD) return; if (now - MIR.seen > 300 || d <= MIR.dist + 1 || MIR.who === mesh) { MIR.who = mesh; MIR.dist = d; MIR.level = lv; MIR.seen = now; } }; mesh.addEventListener('removed', () => MIR.meshes.delete(mesh)); }
+    mesh.userData.mir = { cx, cy, rr, MD, lv };      /* lead lake-helifire: what the mirror's own look before each frame needs (mirror()) */
+    if (!MIR.sync) mesh.onBeforeRender = (r, sc, cam) => { const now = performance.now(), d = Math.hypot(cam.position.x - cx, -cam.position.z - cy); if (d - rr > MD) return; if (now - MIR.seen > 300 || d <= MIR.dist + 1 || MIR.who === mesh) { MIR.who = mesh; MIR.dist = d; MIR.level = lv; MIR.seen = now; } }; mesh.addEventListener('removed', () => MIR.meshes.delete(mesh)); }
   const st = game.statics; let segs = 0;
   for (const r of [a.ring].concat(a.holes || [])) for (let i = 0; i < r.length; i++) { const p = r[i], q = r[(i + 1) % r.length], L = Math.hypot(q[0] - p[0], q[1] - p[1]), n = Math.max(1, Math.ceil(L / 1.5));
     for (let k = 0; k < n; k++) { const ax = p[0] + (q[0] - p[0]) * k / n, ay = p[1] + (q[1] - p[1]) * k / n, bx = p[0] + (q[0] - p[0]) * (k + 1) / n, by = p[1] + (q[1] - p[1]) * (k + 1) / n;
@@ -86,4 +102,4 @@ export function build(game, a, corridors = []) {
 }
 
 // mirrorNow(): the mirror picture for the camera as it stands now (a still tool draws frames by hand, outside the frame callbacks)
-export function mirrorNow() { if (MIR && !MIR.err && performance.now() - MIR.seen < 5000) { MIR.once(); return { draws: MIR.draws, ms: +MIR.ms.toFixed(1), on: MIR.U.uMirOn.value, level: MIR.level, err: MIR.err }; } return MIR ? { err: MIR.err, seen: false } : null; }
+export function mirrorNow() { if (MIR && MIR.sync) return { draws: MIR.draws, ms: +MIR.ms.toFixed(1), on: MIR.U.uMirOn.value, level: MIR.level, err: MIR.err, sync: true };      /* drawn with every frame now: nothing to do by hand */ if (MIR && !MIR.err && performance.now() - MIR.seen < 5000) { MIR.once(); return { draws: MIR.draws, ms: +MIR.ms.toFixed(1), on: MIR.U.uMirOn.value, level: MIR.level, err: MIR.err }; } return MIR ? { err: MIR.err, seen: false } : null; }

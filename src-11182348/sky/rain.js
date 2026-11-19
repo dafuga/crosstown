@@ -74,17 +74,25 @@ export function install(game) {
     mat.blending = THREE.CustomBlending; mat.blendEquation = THREE.AddEquation; mat.blendSrc = THREE.OneFactor; mat.blendDst = THREE.OneFactor;
     const m = new THREE.Mesh(geo, mat); m.frustumCulled = false; m.renderOrder = 7; m.matrixAutoUpdate = false; m.name = 'rain_splash'; w.scene.add(m); return m; };
   // the lamps the wet ground draws streaks from (sky/wet.glsl.js WET_U): the nearest street-lamp heads and car lamps in front of the camera
+  // lead, Nov 18 (Matt: "Sidewalk is like glitching. It's like flash"; seen on a MacBook at night in rain, lanes/lead/sidewalk-flash): the list below holds the
+  // WET_NL best-placed lamps and nothing eased a lamp in or out of it, so each time the order changed (the camera turns or moves, a car passes) one streak on the
+  // wet ground went out and another came on at full strength inside one frame. Now each lamp has a place of its own in the list and a strength that moves at most
+  // WFADE_K a second of game time: a lamp that drops out of the best keeps its place until it has faded to nothing (about a third of a second), and only then does
+  // the lamp that took its rank get the place and fade in. ?wetfade=0 = as before.
+  const WFADE = P.get('wetfade') !== '0', WFADE_K = 3, wst = new WeakMap(), wslot = new Array(WET_NL).fill(null); let wT = -1e9;
+  const wof = (o, end) => { let s = wst.get(o); if (!s) wst.set(o, (s = [null, null])); return s[end] || (s[end] = { w: 0, t: 0, on: false, q: null }); };
   const cam0 = new THREE.Vector3(), camV = new THREE.Vector3(), fwd = new THREE.Vector3(), near = []; let lampT = -1e9, lampNear = [], camOk = false, lobeF = WET_NL, lobeT = 0;
-  const wetLights = (N, now) => { const LP = WET_U.uWetLP.value, LC = WET_U.uWetLC.value, cp = w.camera.position; w.camera.getWorldDirection(fwd); near.length = 0;
-    const add = (x, y, z, r, gg, b, rad, wt) => { const dx = x - cp.x, dz = z - cp.z, d = Math.hypot(dx, dz); if (d > 150 || d < 0.5) return; const c = (dx * fwd.x + dz * fwd.z) / d; if (c < 0.15) return; near.push([d * (1 + 2.2 * (1 - c)) * wt, x, y, z, r, gg, b, rad]); };
+  const wetLights = (N, now, tg) => { const LP = WET_U.uWetLP.value, LC = WET_U.uWetLC.value, cp = w.camera.position; w.camera.getWorldDirection(fwd); near.length = 0;
+    const add = (x, y, z, r, gg, b, rad, wt, st) => { const dx = x - cp.x, dz = z - cp.z, d = Math.hypot(dx, dz); if (d > 150 || d < 0.5) return; const c = (dx * fwd.x + dz * fwd.z) / d; if (!(c >= 0.15)) return; near.push([d * (1 + 2.2 * (1 - c)) * wt, x, y, z, r, gg, b, rad, st]); };
     const kit = N && N.kit, lampOn = N ? N.lampOn || 0 : 0, headOn = N ? N.headOn || 0 : 0;
     if (kit && kit.heads && lampOn > 0.01) { if (now - lampT > 600) { lampT = now; lampNear = kit.heads.filter((h) => Math.abs(h[0] - cp.x) < 170 && Math.abs(-h[1] - cp.z) < 170); }
-      const s = TU.lampS * lampOn; for (const h of lampNear) add(h[0], h[2], -h[1], s * h[3], s * 0.9 * h[3], s * 0.74 * h[3], 0.3, 1.25); }
-    if (headOn > 0.01) try { const one = (c) => { if (c.gone) return; const def = c.def || {}, len = (def.len || 4.6) / 2, co = Math.cos(c.h), si = Math.sin(c.h), dk = 0.3 + 0.7 * (N.n || 0), hs = TU.headS * headOn * dk, ts = TU.tailS * headOn * dk * (c.brake ? 1 : 0.45);      /* by day a lamp's streak is weak beside the sky's */
-        add(c.x + co * len, 0.66, -(c.y + si * len), hs, hs * 0.95, hs * 0.86, 0.5, 1); add(c.x - co * len, 0.8, -(c.y - si * len), ts, ts * 0.05, ts * 0.03, 0.5, 1); };
+      const s = TU.lampS * lampOn; for (const h of lampNear) add(h[0], h[2], -h[1], s * h[3], s * 0.9 * h[3], s * 0.74 * h[3], 0.3, 1.25, WFADE ? wof(h, 0) : null); }
+    if (headOn > 0.01) try { const one = (c) => { if (c.gone) return; const def = c.def || {}, len = (def.len || 4.6) / 2; let ch = c.h; if (WFADE) { let s = wst.get(c); if (!s) wst.set(c, (s = [null, null])); if (!(tg - s.ht >= 0 && tg - s.ht < 0.5)) s.h = ch; else { let dh = ch - s.h; dh -= Math.round(dh / 6.2831853) * 6.2831853; const m = 1.5 * (tg - s.ht); s.h += Math.max(-m, Math.min(m, dh)); } s.ht = tg; ch = s.h; }      /* a traffic car's heading can snap a radian for a few frames on a short junction curve (traffic.js: the curve's own tangent): the lamps' places follow it at 1.5 rad a second at most, so their streaks do not jump */
+        const co = Math.cos(ch), si = Math.sin(ch), dk = 0.3 + 0.7 * (N.n || 0), hs = TU.headS * headOn * dk, ts = TU.tailS * headOn * dk * (c.brake ? 1 : 0.45);      /* by day a lamp's streak is weak beside the sky's */
+        add(c.x + co * len, 0.66, -(c.y + si * len), hs, hs * 0.95, hs * 0.86, 0.5, 1, WFADE ? wof(c, 0) : null); add(c.x - co * len, 0.8, -(c.y - si * len), ts, ts * 0.05, ts * 0.03, 0.5, 1, WFADE ? wof(c, 1) : null); };
       for (const c of g.traffic.cars) one(c); if (g.player.vehicle) one(g.player.vehicle); } catch (e) {}
     near.sort((a, b) => a[0] - b[0]); const n = Math.min(WET_NL, near.length);
-    for (let i = 0; i < n; i++) { const q = near[i]; LP[i * 4] = q[1]; LP[i * 4 + 1] = q[2]; LP[i * 4 + 2] = q[3]; LP[i * 4 + 3] = q[7]; LC[i * 4] = q[4]; LC[i * 4 + 1] = q[5]; LC[i * 4 + 2] = q[6]; }
+    if (!WFADE) for (let i = 0; i < n; i++) { const q = near[i]; LP[i * 4] = q[1]; LP[i * 4 + 1] = q[2]; LP[i * 4 + 2] = q[3]; LP[i * 4 + 3] = q[7]; LC[i * 4] = q[4]; LC[i * 4 + 1] = q[5]; LC[i * 4 + 2] = q[6]; }
     /* light, Nov 15 (the weak-GPU check, laptop 3 at 4.67 megapixels where the GPU is the limit: this rain cost 2.8-3.7 ms a frame against about 1 ms
        for the rain before, and the lobes are half of it: 0 lobes 1.6 ms, 1-3 lobes 2.4 ms, 10 lobes 3.5 ms). Once the game's own governor has given up
        picture size or detail to hold the frame rate (world.liveScale under 0.8, or detail under 1: the Safari start too) only the TU.lowN nearest lamps
@@ -94,6 +102,14 @@ export function install(game) {
     const det = w.detail || 1, step = TU.cap === 0 ? 0 : TU.cap === 1 || TU.cap === 2 ? TU.cap : det <= 0.5 ? 2 : ((w.liveScale || 1) < 0.8 || det < 1) ? 1 : 0;
     const want = Math.max(0, Math.min(WET_NL, step === 2 ? TU.floorN : step === 1 ? TU.lowN : WET_NL)), dl = Math.min(0.25, Math.max(0, (now - lobeT) / 1000)) * 6; lobeT = now;
     lobeF += Math.max(-dl, Math.min(dl, want - lobeF)); R.low = step;
+    if (WFADE) {      // want = how many lamps the picture tier draws (above); the count itself needs no easing here: each lamp fades
+      const el = tg - wT, dw = el > 0 && el < 0.5 ? Math.min(0.1, el) * WFADE_K : 1 /* merge lane, Nov 18: when game time stands still (capture stills, a paused game) or on the first call, strengths go straight to their targets: with a fade measured in game time no lamp ever came up there and the wet ground showed no streaks at all */; wT = tg; let top = 0;
+      for (const s of wslot) if (s) s.t = 0;
+      for (let i = 0; i < near.length; i++) { const s = near[i][8]; s.q = near[i]; s.t = i < want ? 1 : 0; }
+      for (let i = 0; i < WET_NL; i++) { const s = wslot[i]; if (!s) continue; s.w += Math.max(-dw, Math.min(dw, s.t - s.w)); if (s.w <= 0 && s.t <= 0) { s.on = false; wslot[i] = null; } }
+      for (let i = 0, f = 0; i < near.length && i < want; i++) { const s = near[i][8]; if (s.on) continue; while (f < WET_NL && wslot[f]) f++; if (f >= WET_NL) break; wslot[f] = s; s.on = true; s.w = 0; }
+      for (let i = 0; i < WET_NL; i++) { const s = wslot[i]; if (!s) { LC[i * 4] = LC[i * 4 + 1] = LC[i * 4 + 2] = 0; continue; } const q = s.q, k = s.w; LP[i * 4] = q[1]; LP[i * 4 + 1] = q[2]; LP[i * 4 + 2] = q[3]; LP[i * 4 + 3] = q[7]; LC[i * 4] = q[4] * k; LC[i * 4 + 1] = q[5] * k; LC[i * 4 + 2] = q[6] * k; top = i + 1; }
+      WET_U.uWetLN.value = top; R.lights = top; return; }
     const nf = Math.min(n, lobeF); WET_U.uWetLN.value = nf; R.lights = Math.ceil(nf); };
   const lit = (u, N, dt) => { const kit = N && N.kit, n = N ? N.n || 0 : 0, fc = w.scene.fog.color, cv = w.renderer.domElement, cam = w.camera;
     u.uT.value = R.t; u.uAmt.value = R.amt; u.uPix.value = 2 * Math.tan((cam.fov || 50) * Math.PI / 360) / Math.max(200, cv.clientHeight || cv.height);
@@ -117,7 +133,7 @@ export function install(game) {
     const N = g.night; if (N && N.tune && !R.fogSet) { R.fogSet = true; if (!P.has('NrainFog')) N.tune.rainFog = 10; }      /* light, rain 2: more mist in the distance (night.js has 7) */
     if (N && N.setRain) N.setRain(R.amt);
     R.t = t; { const cp = w.camera.position; if (camOk && dt > 0.001) { const vx = (cp.x - cam0.x) / dt, vy = (cp.y - cam0.y) / dt, vz = (cp.z - cam0.z) / dt; if (vx * vx + vy * vy + vz * vz < 70 * 70) { const kk = Math.min(1, dt * 6); camV.x += (vx - camV.x) * kk; camV.y += (vy - camV.y) * kk; camV.z += (vz - camV.z) * kk; } else camV.set(0, 0, 0); } cam0.copy(cp); camOk = true; }
-    if (R.patched) try { wetLights(N, now); } catch (e) { fail('lights', e); }
+    if (R.patched) try { wetLights(N, now, t); } catch (e) { fail('lights', e); }
     { const k1 = N && N.kit; if (k1 && k1.pass) k1.pass.u.uWet.value = R.wet; }      // the night kit's lamp pass: a wet road throws lamp light on, away from the eye
     if (R.amt > 0) { if (!R.mesh) { R.mesh = mkMesh(); try { R.splash = mkSplash(); } catch (e) { fail('splash', e); } }
       const u = R.mesh.material.uniforms; R.mesh.visible = true; lit(u, N, dt); u.uCamV.value.copy(camV); u.uShut.value = TU.shut;
