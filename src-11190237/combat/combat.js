@@ -389,7 +389,7 @@ export class Combat {
       const m9 = sc9 ? this.subMuzzle(mz.x, -mz.z) : null, mx9 = m9 ? m9[0] : mz.x, my9 = m9 ? m9[1] : -mz.z, bx = h.x - mx9, by = h.y - my9, bz = h.z - mz.y, bl = Math.hypot(bx, by, bz);
       const bikeHit = g.P.get('bikehit') !== '0';
       if (!sn && bl > (bikeHit ? 1e-6 : 0.6)) { const h2 = this.cast(mx9, my9, mz.y, bx / bl, by / bl, bz / bl, bikeHit ? 0 : 0.05, bikeHit ? bl : bl - 0.25); if (h2.kind !== 'none') h = h2; h.dx = bx / bl; h.dy = by / bl; h.dz = bz / bl; } else { h.dx = dx / L; h.dy = -dz / L; h.dz = dy / L; }
-      if (hfx) this.fx.far = clamp(Math.hypot(h.x - ox, h.y - oy, h.z - oz) / 10, 1, 4);
+      if (hfx) this.fx.far = clamp(Math.hypot(h.x - ox, h.y - oy, h.z - oz) / 16, 1, 14);
       const r2 = this.hit(h, this.HZ && h.kind === 'cop' && h.part === 'head' ? ((this._Wh ||= {})[kind] ||= Object.assign({}, W, { dmg: 500 })) : W, i === 0);      /* an officer's head: down at once with any gun (heatcore's hitCop counts W.dmg x 4 against 100) */ if (i === 0) { this._snR = r2; this._snH = h; } if (r2 === 'ped') anyPed = true; if (r2 === 'kill') { anyPed = true; killed = true; }
       this.shove(mz, h, W);
       this.fx.far = 0; if (hfx) this.fx.heliTracer(mz, _v2.set(h.x, h.z, -h.y), cp9); else

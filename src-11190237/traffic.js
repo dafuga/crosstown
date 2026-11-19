@@ -34,11 +34,29 @@ function fallenHalfLength(person) {
   return 0.85 * (person.scale || 1) * (person.fall || 0);
 }
 
+// Smooth joins (lead's helper traffic-fix, Nov 18; Matt: "cars flash/teleport, especially at the start, at the fork by the Flatiron"; off: ?joinsmooth=0).
+// Four things made a car in traffic snap round or jump sideways in one step, all measured in the game's own traffic run in node (lanes/lead/traffic-fix):
+//  - where two blocks of one street meet and the lane count changes (Broadway 61 m and 75 m from the spawn) the lanes do not line up; the car crossed
+//    the 1.6 m between them on a 'curve' 1.8 m long: its heading went a radian off for nine frames and back. 692 of the 9,682 ways across a node did
+//    that by more than 0.15 rad. Now the step sideways is taken over six times its width each side of the join (up to 16 m) on an S-shaped path, the
+//    heading following the path, and a turn whose two legs do not meet in front of the car is no longer driven backwards (its heading turns evenly);
+//  - a block's centre line is a row of straight pieces: at each corner the lanes off the centre jumped sideways (up to 1.3 m on an outer lane) and the
+//    heading stepped. laneAt takes the lane's place and direction from 4 m behind to 4 m ahead, so the corner is driven as a bend 8 m long;
+//  - on the short link between the two halves of one crossing the curve began behind the car, which jumped up to a metre onto it; it begins at the car;
+//  - a car still easing across from a lane change lost its offset in one step on reaching a join (c.lo = 0); the offset now eases out across it.
+const _la = {};
+function laneAt(R, e, dir, li, s, out) {
+  const ln = dir > 0 ? e.line : e.rev; if (ln.p.length < 3) return R.lanePos(e, dir, li, s, out);
+  const w = Math.min(4, s, ln.len - s); if (!(w > 0.05)) return R.lanePos(e, dir, li, s, out);      // (the window closes toward the block's ends: a lane begins and ends where it did)
+  ln.at(s - w, _la); const ax = _la.x, ay = _la.y; ln.at(s - w / 2, _la); let x = ax + 2 * _la.x, y = ay + 2 * _la.y; ln.at(s + w / 2, _la); x += 2 * _la.x; y += 2 * _la.y; ln.at(s + w, _la); const tx = _la.x - ax, ty = _la.y - ay, l = Math.hypot(tx, ty);
+  ln.at(s, out); out.x = (x + _la.x + 2 * out.x) / 8; out.y = (y + _la.y + 2 * out.y) / 8; if (l > 1e-3) { out.tx = tx / l; out.ty = ty / l; }
+  const off = R.laneOffset(e, dir, li); out.x += out.ty * off; out.y += -out.tx * off; out.h = Math.atan2(out.ty, out.tx); return out;
+}
 const PARKFREE = !(typeof location !== 'undefined' && new URLSearchParams(location.search).get('parkcars') === '1');     /* uptown lane, park lane's word 17:04 Nov 15 */
 export class Traffic {
   constructor(game) {
     this.g = game; this.cars = []; this.rand = rng(1234); this.target = 90; this.heldT = -1e9; this._pg = 1e9; this._mb = null; this._blk = null; this.room = game.P && game.P.get('unstick') === '0' ? 0 : 3.2; this.spawnT = 0; this.busT = 0; this.near = []; this.nearT = 0;
-    this.bodyOn = !(game.P && game.P.get('body') === '0'); this.bod = []; this._dn = []; this._dnT = 0; this._bk = 0; this._be = null; this._pe = { o: null, x: 0, y: 0, ax: 0, ay: 0, t0: -1, cr: 0, k: 0 };
+    this.bodyOn = !(game.P && game.P.get('body') === '0'); this.sm = !(game.P && game.P.get('joinsmooth') === '0'); this.bod = []; this._dn = []; this._dnT = 0; this._bk = 0; this._be = null; this._pe = { o: null, x: 0, y: 0, ax: 0, ay: 0, t0: -1, cr: 0, k: 0 };
   }
   pickType() { const r = this.rand(); if (r < 0.035 && this.g.kit.cars.bus) return 'bus'; return TYPE_MIX[Math.floor(this.rand() * TYPE_MIX.length)]; }
   colorFor(type) {
@@ -116,17 +134,33 @@ export class Traffic {
   }
   // the way a car will cross the junction at the end of its block (decided before it gets there, so others can read its intent)
   planFor(c) {
-    const R = this.g.roads, L = c.e.len, node = R.endNode(c.e, c.dir), nd = R.nodes[node], rEnd = nd.e.length >= 3 ? nd.r : 0.5;
+    const R = this.g.roads, L = c.e.len, node = R.endNode(c.e, c.dir), nd = R.nodes[node], SM = this.sm, LP = SM ? laneAt : (R0, e, dir, li, s, out) => R0.lanePos(e, dir, li, s, out); let rEnd = nd.e.length >= 3 ? nd.r : 0.5;
+    if (SM && c.s > L - rEnd) rEnd = Math.max(0.5, L - c.s);      // (smooth joins) on a block shorter than the junction's reach (the link between the two halves of a crossing) the way across begins where the car is, not behind it: it jumped up to a metre onto its curve
     if (c.nx === undefined) { c.nx = this.chooseNext(c); for (let k = 0; k < 6 && c.avoid && c.nx && c.nx.e === c.avoid; k++) c.nx = this.chooseNext(c); }     // (a car told to avoid a block draws again while the draw is that block)
     const nx = c.nx; if (!nx) return null;
-    const p0 = R.lanePos(c.e, c.dir, c.li, L - rEnd, {}), nn = R.nodes[R.startNode(nx.e, nx.dir)], s1 = Math.min(nx.e.len * 0.5, nn.e.length >= 3 ? nn.r : 0.5), p1 = R.lanePos(nx.e, nx.dir, nx.li, s1, {});
+    const nn = R.nodes[R.startNode(nx.e, nx.dir)]; let s1 = Math.min(nx.e.len * 0.5, nn.e.length >= 3 ? nn.r : 0.5), p0 = LP(R, c.e, c.dir, c.li, L - rEnd, {}), p1 = LP(R, nx.e, nx.dir, nx.li, s1, {});
+    // (smooth joins) a plain join whose lanes do not line up, or where the street bends: the step sideways is taken over six times its width each side of the join, the bend over 30 m a radian (it was 0.5 m each side)
+    if (SM && nd.e.length < 3) { const side = Math.abs(-(p1.x - p0.x) * Math.sin(p0.h) + (p1.y - p0.y) * Math.cos(p0.h)); const bend = Math.abs(wrapPi(p1.h - p0.h)); if (side > 0.2 || bend > 0.05) { const run = Math.min(Math.max(side * 6, bend * 30), 16); rEnd = Math.max(rEnd, Math.min(run, L * 0.4)); s1 = Math.max(s1, Math.min(run, nx.e.len * 0.4)); p0 = LP(R, c.e, c.dir, c.li, L - rEnd, {}); p1 = LP(R, nx.e, nx.dir, nx.li, s1, {}); } }
     // control point: where the two headings meet, or the midpoint when (nearly) straight
     const d0x = Math.cos(p0.h), d0y = Math.sin(p0.h), d1x = Math.cos(p1.h), d1y = Math.sin(p1.h), den = d0x * d1y - d0y * d1x;
-    let cx = (p0.x + p1.x) / 2, cy = (p0.y + p1.y) / 2;
-    if (Math.abs(den) > 0.2) { const tt = ((p1.x - p0.x) * d1y - (p1.y - p0.y) * d1x) / den; if (tt > 0 && tt < 60) { cx = p0.x + d0x * tt; cy = p0.y + d0y * tt; } }
+    let cx = (p0.x + p1.x) / 2, cy = (p0.y + p1.y) / 2, ch = 1;      // ch: no curve through where the two headings meet: the straight line from p0 to p1
+    if (Math.abs(den) > 0.2) { const tt = ((p1.x - p0.x) * d1y - (p1.y - p0.y) * d1x) / den; if (tt > 0 && tt < 60) { const kx = p0.x + d0x * tt, ky = p0.y + d0y * tt; if (!SM || (p1.x - kx) * d1x + (p1.y - ky) * d1y > 0) { cx = kx; cy = ky; ch = 0; } } }      /* (smooth joins: not when the meeting point lies beyond p1: the car drove the second leg tail first) */
+    // (smooth joins) on such a line the heading turns evenly from the one lane's to the other's, and where the lanes are (nearly) parallel the car
+    // moves over on an S: sx, sy = the step sideways, sa = that step over the run (step: curveAt)
+    let h0 = p0.h, dh = 0, sx = 0, sy = 0, sa = 0;
+    if (SM && ch) { dh = wrapPi(p1.h - p0.h); if (Math.abs(dh) < 0.6) { const hm = p0.h + dh / 2, fx = Math.cos(hm), fy = Math.sin(hm), A = (p1.x - p0.x) * fx + (p1.y - p0.y) * fy, S = -(p1.x - p0.x) * fy + (p1.y - p0.y) * fx; if (A > Math.abs(S) * 2) { sx = -fy * S; sy = fx * S; sa = S / A; } } }
     const len = Math.max(1, Math.hypot(cx - p0.x, cy - p0.y) + Math.hypot(p1.x - cx, p1.y - cy)) * 0.93;
     const pts = []; for (let q = 0; q <= 6; q++) { const u = q / 6, a = (1 - u) * (1 - u), b = 2 * u * (1 - u), d = u * u; pts.push(a * p0.x + b * cx + d * p1.x, a * p0.y + b * cy + d * p1.y); }
-    return { node, e: c.e, li: c.li, p0x: p0.x, p0y: p0.y, cx, cy, p1x: p1.x, p1y: p1.y, len, next: nx, s1, sEnt: L - rEnd, vmax: Math.abs(den) > 0.2 ? 5.2 : 11, cls: Math.abs(den) <= 0.2 ? 0 : den < 0 ? 1 : 2, pts, big: nd.e.length >= 3 };
+    return { node, e: c.e, li: c.li, p0x: p0.x, p0y: p0.y, cx, cy, p1x: p1.x, p1y: p1.y, len, next: nx, s1, sEnt: L - rEnd, vmax: Math.abs(den) > 0.2 ? 5.2 : 11, cls: Math.abs(den) <= 0.2 ? 0 : den < 0 ? 1 : 2, pts, big: nd.e.length >= 3, ch: SM ? ch : 0, h0, dh, sx, sy, sa };
+  }
+  // (smooth joins) where a car is on its way across (c.junction, u already set) after rolling ds metres: place and heading. The curve as before; on a
+  // straight line across (ch) the S and the even turn of planFor; a lane offset it brought along eases out as on the block
+  curveAt(c, ds) {
+    const j = c.junction, u = Math.max(0, j.u), a = (1 - u) * (1 - u), b = 2 * u * (1 - u), d = u * u; c.x = a * j.p0x + b * j.cx + d * j.p1x; c.y = a * j.p0y + b * j.cy + d * j.p1y;
+    if (j.ch) { const k = u * u * (3 - 2 * u), w = k - u; c.x += j.sx * w; c.y += j.sy * w; c.h = wrapPi(j.h0 + j.dh * k + Math.atan(j.sa * 6 * u * (1 - u))); }
+    else { const tx = 2 * (1 - u) * (j.cx - j.p0x) + 2 * u * (j.p1x - j.cx), ty = 2 * (1 - u) * (j.cy - j.p0y) + 2 * u * (j.p1y - j.cy); c.h = Math.atan2(ty, tx); }
+    if (c.lo || c.bs) { c.lo += c.bs ? clamp(c.bs - c.lo, -ds * B_TURN, ds * B_TURN) : -Math.sign(c.lo) * Math.min(Math.abs(c.lo), ds * 0.55); if (!c.bs && Math.abs(c.lo) < 0.02) c.lo = 0; c.x += Math.sin(c.h) * c.lo; c.y -= Math.cos(c.h) * c.lo;
+      if (!c.bs && c.lo) c.h += Math.sign(c.lo) * 0.42 * Math.sin(Math.PI * clamp(1 - Math.abs(c.lo) / Math.abs(c.lo0 || 1), 0, 1)); }      // (the nose stays turned the way it was on the block while the offset eases out)
   }
   // must this car hold at the edge of the junction? Yes if its way across meets the way of a car already in the box, or of one about to
   // enter with more right to go (straight before right turn before left turn).
@@ -249,7 +283,7 @@ export class Traffic {
         const o = vl * (2 * i / (n - 1) - 1), dx = dx0 + ux * o, dy = dy0 + uy * o, f = dx * fx + dy * fy; if (f <= 0) continue;
         const clear = Math.abs(-dx * fy + dy * fx) - hw; if (clear >= r + 0.3 || (clear >= r && f < half + 0.2)) continue;     // beside the path, or beside the car itself
         const gp = f - half - (clear < r ? Math.sqrt(r * r - Math.max(0, clear) ** 2) : 0);
-        if (c.junction && gp > 1.5) continue;     // turning: the nose points away from the way across; the arc is looked along in gapAhead
+        if (c.junction && !c.junction.ch && gp > 1.5) continue;     /* (smooth joins: on a straight line across, which may now be 30 m long, the nose does point the way it goes) */     // turning: the nose points away from the way across; the arc is looked along in gapAhead
         if (gp < this._pg) this._pg = gp;
         if (v !== c.pass && gp - room < gap) { gap = gp - room; this._mb = v; }
       }
@@ -360,10 +394,11 @@ export class Traffic {
       for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) { const dx = c.x + fx * cl * j - pv.x - ux * pl * i, dy = c.y + fy * cl * j - pv.y - uy * pl * i, dd = Math.hypot(dx, dy), d = dd - r - cr; if (d < best) { best = d; bx = dx / (dd || 1); by = dy / (dd || 1); } }
       if (best < 6 && -(bx * fx + by * fy) > 0.3) {     // the player's car is in front of this one
         const closing = pv.vx * bx + pv.vy * by;
-        if (closing > 0.3 && closing < 6 && best < 1.0 + closing * 1.3) want = Math.max(want, Math.min(3.2, closing + 0.5));     // (a car coming faster than 6 m/s is a crash, not a manoeuvre)
+        if (closing > 0.3 && closing < (this.rb ? 3.5 : 6) && best < 1.0 + closing * 1.3) want = Math.max(want, Math.min(3.2, closing + 0.5));     // (a car coming faster than 6 m/s is a crash, not a manoeuvre)
         else if (pg < 2.4 && Math.hypot(pv.vx, pv.vy) < 2.5 && Math.abs(Math.sin(pv.h - c.h)) > 0.35) want = Math.max(want, 1.1);
       }
     }
+    if (this.rb && want > 0) { const r0 = c._rv || 0; if (want > r0) want = Math.min(want, r0 + 2.6 * dt); c._rv = want; }      // (real braking: it gathers its speed backwards at 2.6 m/s2; step zeroes _rv when it does not back)
     if (want <= 0 || c.backD > 8) return false;
     let rear = 1e9, fol = null;
     for (const o of this.cars) { if (o === c) continue; const dx = o.x - c.x, dy = o.y - c.y; if (Math.abs(dx) > 16 || Math.abs(dy) > 16) continue; const f = dx * fx + dy * fy; if (f > -0.5) continue;
@@ -433,8 +468,23 @@ export class Traffic {
     return true;
   }
 
+  // Real braking (lead's helper traffic-fix, Nov 18; Matt: "cars stop dead just before he hits them ... let crashes happen"; off: ?realbrake=0).
+  // A car in traffic brakes at 9 m/s2 at most, but the step below also cut its movement to the gap and set its speed to 0 the moment it would touch
+  // one of the player's cars: 5 to 8 m/s gone in one step (200 to 300 m/s2 measured), so a car he drove in front of, or at, froze a hand's width
+  // short and there was no crash, or he hit a car that had stopped by magic. Now, while HE IS DRIVING AND MOVING (over HIT_PV m/s) and the car is
+  // still rolling faster than HIT_V, it gets no such stop: it goes on at the speed its brakes left it and the two bodies meet; game.collideCars and
+  // ram.js then do what they do when he drives into a car (push apart, speed lost, the driver stunned, a hard blow throws the car). Kept as before:
+  // a car creeping up to him (under HIT_V: it stops short as before, its speed running out at its brakes' rate), his car standing still, a car going round his, cars he has left, people, the demo. gapTo: the bare distance from this car's
+  // bumper to one of the player's cars along its nose (gapMine's own test for one car). A standing car backing away from his car coming at it
+  // (backOff) picked up 3.2 m/s in one step: it now gathers that at 2.6 m/s2, and only from a car coming at under BACK_MAX m/s (was 6).
+  gapTo(c, v) {
+    const fx = Math.cos(c.h), fy = Math.sin(c.h), half = c.def.len / 2, hw = c.def.wid / 2, r = v.def.wid / 2, vl = Math.max(0, v.def.len / 2 - r), n = vl > 1.9 * r ? 5 : 3, ux = Math.cos(v.h), uy = Math.sin(v.h); let best = 1e9;
+    for (let i = 0; i < n; i++) { const o = vl * (2 * i / (n - 1) - 1), dx = v.x - c.x + ux * o, dy = v.y - c.y + uy * o, f = dx * fx + dy * fy; if (f <= 0) continue;
+      const clear = Math.abs(-dx * fy + dy * fx) - hw; if (clear >= r + 0.3 || (clear >= r && f < half + 0.2)) continue; const gp = f - half - (clear < r ? Math.sqrt(r * r - Math.max(0, clear) ** 2) : 0); if (gp < best) best = gp; }
+    return best;
+  }
   step(dt, t) {
-    const g = this.g, R = g.roads, px = g.focus.x, py = g.focus.y, pv = g.demo ? null : g.player.vehicle;
+    const g = this.g, R = g.roads, px = g.focus.x, py = g.focus.y, pv = g.demo ? null : g.player.vehicle, RB = this.rb === undefined ? (this.rb = !(g.P && g.P.get('realbrake') === '0')) : this.rb, HIT_V = 1, HIT_PV = 1.5;
     if (this.bodyOn) this.bodies();
     this.spawnT -= dt; if (this.spawnT <= 0 && this.cars.length < this.target) { this.spawnT = 0.25; this.trySpawn(px, py); }
     for (let i = this.cars.length - 1; i >= 0; i--) {
@@ -499,13 +549,14 @@ export class Traffic {
       // last resort against gridlock: a car that has sat behind something on a green for a long time pushes through
       if (c.v < 0.3 && gap < 3 && !atLight && (c.junction || R.signal(R.endNode(c.e, c.dir), c.e, t) === 'g')) { c.wait += dt; if (c.wait > 16) { if (!heldP && t - c.mvT > 16) c.ghost = 2.5; c.wait = c.ghost > 0 ? 0 : 10; } } else c.wait = 0; if (heldP) c.wait = 0;     /* (a car in the queue the player holds up does not count its wait: when the player lets the street go, the cars at the back still stand for some seconds while the queue pulls away, and must not slip through then) */
       c.heldByPlayer = heldP ? 0.6 : Math.max(0, c.heldByPlayer - dt);     /* motion lane: held up by the player, directly or down the queue */     /* a car stuck for 16 s slips through what blocks it so junctions never lock up, but never through the player or the player's cars ("cars drive through my cars") */
-      c.rev = 0; if (c.v > 1.5) c.backD = 0; if (c.v < 1 && (c.backT > 0 || (pv && Math.abs(c.x - pv.x) < 12 && Math.abs(c.y - pv.y) < 12)) && this.backOff(c, dt, pg)) c.v = 0;
-      let ds = c.v * dt; if (pg < 1e8 && ds > pg - 0.05) { ds = Math.max(0, pg - 0.05); if (pg < 0.25) c.v = 0; }     // never into the body of one of the player's cars
+      c.rev = 0; if (c.v > 1.5) c.backD = 0; if (c.v < 1 && (c.backT > 0 || (pv && Math.abs(c.x - pv.x) < 12 && Math.abs(c.y - pv.y) < 12)) && this.backOff(c, dt, pg)) c.v = 0; else c._rv = 0;
+      let ds = c.v * dt; if (pg < 1e8 && ds > pg - 0.05 && !(RB && pv && c.v > HIT_V && c.stun < 1e8 && c.pass !== pv && Math.hypot(pv.vx, pv.vy) > HIT_PV && this.gapTo(c, pv) <= pg + 0.01)) { ds = Math.max(0, pg - 0.05); if (pg < 0.25 && !(RB && c.v <= HIT_V)) c.v = 0; }     // never into the body of one of the player's cars (real braking: unless he is driving it and both are moving: that is a crash)
       c.spin += ds / c.def.radius;
       const ph = c.h;
       if (c.junction) {
         const j = c.junction; j.u += ds / j.len;
-        if (j.u >= 1) { c.avoid = null; c.e = j.next.e; c.dir = j.next.dir; c.li = j.next.li; c.s = j.s1 + (j.u - 1) * j.len; c.junction = null; c.plan = null; c.nx = undefined; c.v0 = (c.e.ave ? 11.5 : 8) * (0.85 + this.rand() * 0.3); R.lanePos(c.e, c.dir, c.li, c.s, c); if (c.lo) { c.x += Math.sin(c.h) * c.lo; c.y -= Math.cos(c.h) * c.lo; } }
+        if (j.u >= 1) { c.avoid = null; c.e = j.next.e; c.dir = j.next.dir; c.li = j.next.li; c.s = j.s1 + (j.u - 1) * j.len; c.junction = null; c.plan = null; c.nx = undefined; c.v0 = (c.e.ave ? 11.5 : 8) * (0.85 + this.rand() * 0.3); if (this.sm) laneAt(R, c.e, c.dir, c.li, c.s, c); else R.lanePos(c.e, c.dir, c.li, c.s, c); if (c.lo) { c.x += Math.sin(c.h) * c.lo; c.y -= Math.cos(c.h) * c.lo; } }
+        else if (this.sm) this.curveAt(c, ds);
         else { const u = j.u, a = (1 - u) * (1 - u), b = 2 * u * (1 - u), d = u * u; c.x = a * j.p0x + b * j.cx + d * j.p1x; c.y = a * j.p0y + b * j.cy + d * j.p1y;
           const tx = 2 * (1 - u) * (j.cx - j.p0x) + 2 * u * (j.p1x - j.cx), ty = 2 * (1 - u) * (j.cy - j.p0y) + 2 * u * (j.p1y - j.cy); c.h = Math.atan2(ty, tx);
           if (c.lo || c.bs) { c.lo += c.bs ? clamp(c.bs - c.lo, -ds * B_TURN, ds * B_TURN) : -Math.sign(c.lo) * Math.min(Math.abs(c.lo), ds * 0.55); if (!c.bs && Math.abs(c.lo) < 0.02) c.lo = 0; c.x += Math.sin(c.h) * c.lo; c.y -= Math.cos(c.h) * c.lo; } }      // (only a car going round a person in the junction has an offset here)
@@ -513,9 +564,9 @@ export class Traffic {
         c.s += ds; const L = c.e.len;
         if (!c.plan && c.s >= L - 12) c.plan = this.planFor(c);
         if (c.s >= L - 0.5 && !c.plan) { c.dead = true; continue; }
-        if (c.plan && c.s >= c.plan.sEnt) { c.junction = c.plan; c.junction.u = (c.s - c.plan.sEnt) / c.plan.len; if (!c.bd) c.lo = 0; }
+        if (c.plan && c.s >= c.plan.sEnt) { c.junction = c.plan; c.junction.u = (c.s - c.plan.sEnt) / c.plan.len; if (this.sm) this.curveAt(c, 0); else if (!c.bd) c.lo = 0; }      /* (smooth joins: placed on the curve in this step, and the lane offset is kept) */
         else {
-          R.lanePos(c.e, c.dir, c.li, c.s, c);
+          if (this.sm) laneAt(R, c.e, c.dir, c.li, c.s, c); else R.lanePos(c.e, c.dir, c.li, c.s, c);
           if (c.bs) {   // easing out round a person in the lane
             const d = clamp(c.bs - c.lo, -ds * B_TURN, ds * B_TURN); c.lo += d; c.x += Math.sin(c.h) * c.lo; c.y -= Math.cos(c.h) * c.lo; c.h -= Math.sign(c.bs) * 0.42 * Math.sin(Math.PI * clamp(c.lo / c.bs, 0, 1));
           } else if (c.lo) {   // sliding across from the lane it left
