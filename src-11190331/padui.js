@@ -65,8 +65,8 @@ export function install(game) {
     return armed ? 'armed' : 'foot'; };
   const hook = () => !!(game.grapple && game.grapple.on);
   const ROWS = {
-    foot: () => [['ls', 'Walk'], ['l3', 'Run'], ['a', 'Jump'], ['y', 'Get in'], ['b', 'Gun'], hook() && ['du', 'Hook'], ['dd', 'Light'], ['back', 'Map'], ['start', 'Menu']],
-    armed: () => [['lt', 'Aim'], ['rt', 'Fire'], ['x', 'Reload'], ['lb rb', 'Weapon'], ['b', 'Put away'], ['a', 'Jump'], ['y', 'Get in'], hook() && ['du', 'Hook'], ['back', 'Map']],
+    foot: () => [['ls', 'Walk'], ['l3', 'Run'], game.melee && game.melee.on && ['rt', 'Punch'],      /* gameplay/melee */ ['a', 'Jump'], ['y', 'Get in'], ['b', 'Gun'], hook() && ['du', 'Hook'], ['dd', 'Light'], ['back', 'Map'], ['start', 'Menu']],
+    armed: () => [['lt', 'Aim'], ['rt', 'Fire'], game.melee && game.melee.on && ['r3', 'Strike'],      /* gameplay/melee */ ['x', 'Reload'], ['lb rb', 'Weapon'], ['b', 'Put away'], ['a', 'Jump'], ['y', 'Get in'], hook() && ['du', 'Hook'], ['back', 'Map']],
     scope: () => [['lt', 'Scope'], ['rt', 'Fire'], ['dud', 'Zoom'], ['x', 'Reload']],
     car: () => [['rt', 'Gas'], ['lt', 'Brake'], ['ls', 'Steer'], game.combat && game.combat.DRIVEFIRE && game.combat.DRIVEPAD && ['rb', 'Fire'],      /* gameplay/takeover 3 */ ['a', 'Handbrake'], game.__horn && game.__horn.on && ['l3', 'Horn'],      /* gameplay/horn */ ['y', 'Get out'], ['dlr', 'Radio'], ['back', 'Map']],
     heli: () => [['ls', 'Tilt'], ['lb rb', 'Turn'], ['rt', 'Up'], ['lt', 'Down'], ['x', 'Engine'], game.heli && game.heli.rockets && !game.heli.rockets.dead && ['a', 'Rocket'], ['r3', 'View'], ['du', 'Stability'], ['y', 'Get out'], ['back', 'Map']],
@@ -145,6 +145,7 @@ export function install(game) {
         const idle = window.__startScreen || menuUp() || formUp() || quiet || !extra, pl = game.player;
         for (const i of [8, 11, 12, 13, 17]) { const d = down(gp, i), e = d && !was[i]; was[i] = d ? 1 : 0; if (!e || idle || !std) continue;
           if (i === 8) { if (!game.paused || mapUp()) { fired.map++; tap('Tab'); } continue; }
+          if (i === 11 && game.melee && game.melee.on && !game.paused && where() === 'armed') { tap('KeyE'); continue; }      /* gameplay/melee: R3 with a gun out on foot is the blow with the gun (full screen stays on R3 everywhere else) */
           if (i === 17 || (i === 11 && !has17 && !flying())) { fired.full++; full('pad'); continue; }
           if (i === 11 || game.paused || mapUp() || !pl) continue;
           if (scoped()) { fired.zoom++; wheel(i === 12 ? -100 : 100); continue; }

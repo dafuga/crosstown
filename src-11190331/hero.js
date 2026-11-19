@@ -202,12 +202,14 @@ function heroPrune(world, polys, state, list) {
       const from = o.userData.heroKit, mine = from === undefined ? kitX.concat(polys) : polys.slice(from); o.userData.heroKit = polys.length; if (!mine.length) continue; let k = 0;
       o.userData.items.forEach((q, i) => { if (i < o.count && mine.some((P) => { const b = box(P); return q[0] > b[0] && q[0] < b[2] && q[1] > b[1] && q[1] < b[3] && inP(q[0], q[1], P); })) { o.setMatrixAt(i, zero); k++; } });
       if (k) { o.instanceMatrix.needsUpdate = true; world.heroKit = (world.heroKit || 0) + k; } } };
-  let ticks = 0, total = 0, doneAt = 0, id = 0; const tick = () => {
+  const SL = new URLSearchParams(location.search).get('heroslice') !== '0'; let ticks = 0, total = 0, doneAt = 0, id = 0; const tick = () => { const dead = performance.now() + 3; let more = false;
     if (KIT) kitTick();
     for (const name of ['storefronts', 'dressing']) { const g = world.scene.getObjectByName(name); if (!g) continue;
-      g.traverse((o) => { if (!o.isInstancedMesh) return; const from = o.userData.heroPruned === true ? polys.length : o.userData.heroPruned || 0; if (from >= polys.length) return; o.userData.heroPruned = polys.length; const mine = polys.slice(from); let k = 0;
-        for (let i = 0; i < o.count; i++) { o.getMatrixAt(i, m); p.setFromMatrixPosition(m); if (p.y < 30 && mine.some((P) => { const b = box(P); return p.x > b[0] && p.x < b[2] && -p.z > b[1] && -p.z < b[3] && hit(p.x, -p.z, P); })) { o.setMatrixAt(i, zero); k++; } }
+      g.traverse((o) => { if (!o.isInstancedMesh) return; const from = o.userData.heroPruned === true ? polys.length : o.userData.heroPruned || 0; if (from >= polys.length) return; if (SL && performance.now() > dead) { more = true; return; }     /* lead fast-start, Nov 19: 3 ms a turn (a landmark that landed walked every street-floor instance of the city at once: 40 to 80 ms); a mesh keeps its place (hpI) and its target (hpTo). ?heroslice=0 = at once */ const to = SL ? (o.userData.hpTo || (o.userData.hpTo = polys.length)) : polys.length; if (!SL) o.userData.heroPruned = to; const mine = polys.slice(from, to); let k = 0, i = SL ? o.userData.hpI || 0 : 0;
+        for (; i < o.count; i++) { if (SL && (i & 255) === 255 && performance.now() > dead) break; o.getMatrixAt(i, m); p.setFromMatrixPosition(m); if (p.y < 30 && mine.some((P) => { const b = box(P); return p.x > b[0] && p.x < b[2] && -p.z > b[1] && -p.z < b[3] && hit(p.x, -p.z, P); })) { o.setMatrixAt(i, zero); k++; } }
+        if (SL) { if (i < o.count) { o.userData.hpI = i; more = true; } else { o.userData.hpI = 0; o.userData.hpTo = 0; o.userData.heroPruned = to; } }
         if (k) { o.instanceMatrix.needsUpdate = true; total += k; } }); }
+    if (SL && more && id) { ticks--;     /* an extra turn, not one of the loop's counted seconds */ setTimeout(tick, 30); }
     ticks++; if (state.done && !doneAt) doneAt = ticks;
     if (ticks > 300 && doneAt && ticks > doneAt + 30) { clearInterval(id); id = 0; console.log('[game] hero prune: ' + total + ' street-floor instances removed'); }
   };

@@ -13,6 +13,22 @@ import { makeCards } from './cards.js';
 let CARDS = null;      // the painted tree cards (cards.js); null with ?parkcards=0 = the old dithered crown shells
 
 const NEAR_R = 46, NEAR_N = 48, PER = 6;
+/* lead helper trees-rads, Nov 19 (Matt: "Trees flicker/change as you approach ... no visible swap"; second version, after merge's batch-30 critic refused the first):
+   a park tree changed whole, in one frame, from its painted card to the leaf model when it came into the near pool. The pool, and how a tree in it is drawn, are
+   EXACTLY as before. Only for PX_T seconds after a tree joins the pool its card stays and dissolves pixel by pixel while the model's sprays and twigs come one by one;
+   a tree that leaves stays that long while the reverse happens (12 leavers at most; more, or a camera that jumped over 20 m between two pool updates, change at once as before).
+   The start time rides in the instance colour: green + 2 * (q + 1), q = 1/32 s steps mod 4096; a card going is marked red + 4, a card coming red + 8; sprays going blue + 4.
+   `?parkx=0` = as before. */
+const PARKX = typeof location === 'undefined' || new URLSearchParams(location.search).get('parkx') !== '0', PKX = { value: 0 }, PX_T = 0.9, PX_Q = 32, PX_M = 4096, PX_OUT = 12;
+const pxNow = () => (performance.now() / 1000 * PX_Q) % PX_M, pxAge = (q) => ((pxNow() - q + PX_M) % PX_M) / PX_Q;
+export const PX_GLSL = `float pkxF(float g_) { float q_ = floor(g_ / 2.0) - 1.0; return clamp(mod(uPkT - q_ + ${PX_M}.0, ${PX_M}.0) / ${(PX_Q * PX_T).toFixed(1)}, 0.0, 1.0); }`;
+const PX_V = PARKX ? `
+          #ifdef USE_INSTANCING_COLOR
+            if (instanceColor.g >= 2.0) { float f_ = pkxF(instanceColor.g); vColor.g = instanceColor.g - 2.0 * floor(instanceColor.g / 2.0);      // parkx: a tree that has just joined (or is leaving) the pool
+              if (instanceColor.b >= 4.0) { vColor.b = instanceColor.b - 4.0; f_ = 1.0 - f_; }
+              if (fract(aLeaf.r * 173.3 + 0.37) > f_) gl_Position = vec4(2.0, 2.0, 2.0, 1.0); }
+          #endif
+          ` : '';
 const hash = (x, y) => { const v = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return v - Math.floor(v); };
 let KIT = null, KITP = null;
 // Near trees, Nov 17 (two rounds of blind critics: "leaves are flat triangular chips, no twigs", and the street layer's trees beside them read better).
@@ -44,8 +60,8 @@ async function kit(game) {
     let SPR = null, leafM = null, twigM = null, barkT = null;
     if (LEAF2) try { SPR = await (await fetch(TD + 'sprays.json')).json(); leafM = {};
       const kinds = [...new Set(names.slice(0, PER).map((n) => SPECIES[n].spray).filter((k) => k && SPR[k]))];
-      const CVP = 'attribute vec4 aLeaf; attribute vec3 aCrown; varying vec4 vLeaf; varying vec3 vCrown;', CFP = 'varying vec4 vLeaf; varying vec3 vCrown;';
-      const cut = (map, key, o) => { const m = lit(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, metalness: 0, side: THREE.DoubleSide, map, alphaTest: 0.36 }), game.world.shared, Object.assign({ key, night: 1.6      /* handoff-9: the sprays' dark twig and leaf colours come up at night (mat.js) */, vpars: CVP, pars: CFP,
+      const CVP = 'attribute vec4 aLeaf; attribute vec3 aCrown; varying vec4 vLeaf; varying vec3 vCrown;' + (PARKX ? ' uniform float uPkT; ' + PX_GLSL : ''), CFP = 'varying vec4 vLeaf; varying vec3 vCrown;';
+      const cut = (map, key, o) => { const m = lit(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, metalness: 0, side: THREE.DoubleSide, map, alphaTest: 0.36 }), game.world.shared, Object.assign({ key: key + (PARKX ? 'x2' : ''), uniforms: { uPkT: PKX }, night: 1.6      /* handoff-9: the sprays' dark twig and leaf colours come up at night (mat.js) */, vpars: CVP, pars: CFP,
         nbody: 'normal = normalize(vNormal);      // a card is lit by its place in the crown (the generator leans its normal outward), the same from both of its sides\n' }, o)); m.alphaToCoverage = true; m.shadowSide = THREE.DoubleSide; return m; };
       await Promise.all(kinds.map(async (k) => { const c = await tex(TD + 'spray_' + k + '_c.webp', game.world); c.wrapS = c.wrapT = THREE.ClampToEdgeWrapping; const M = SPR[k].mean, ml = (0.3 * M[0] + 0.6 * M[1] + 0.1 * M[2]).toFixed(4);
         // the scans are summer green: the picture keeps its light and dark (veins, twigs, the leaf's own shading) and takes the tree's November colour
@@ -55,13 +71,13 @@ async function kit(game) {
             { float fu_ = 0.62 + 0.38 * fract(sin(dot(instanceMatrix[3].xz, vec2(12.9898, 78.233))) * 43758.5453);      // how much of its leaf a tree still has, by its place
               if (fract(aLeaf.r * 61.7) > fu_) gl_Position = vec4(2.0, 2.0, 2.0, 1.0); }
           #endif
-          `,
+          ` + PX_V,
           body: `vec3 tx = diffuseColor.rgb; float lm = dot(tx, vec3(0.3, 0.6, 0.1)) / ${ml};
              diffuseColor.rgb = clamp(mix(vec3(lm), vec3(tx.r / ${M[0].toFixed(4)}, tx.g / ${M[1].toFixed(4)}, lm), 0.6), 0.0, 1.8);
              float dep = clamp(length(vCrown) * 1.6, 0.0, 1.0), thru = max(0.0, dot(normalize(vWPos - cameraPosition), uSunDir));
              diffuseColor.rgb *= (0.55 + 0.6 * vLeaf.r) * mix(0.42, 1.0, smoothstep(0.25, 0.95, dep)) * mix(vec3(1.0), vec3(1.3, 1.05, 0.5), vLeaf.g);      // brightness per spray, the crown's inside in its own shade, older yellower sprays
              diffuseColor.rgb *= 1.0 + 0.7 * thru * thru * vec3(1.0, 0.9, 0.45);      // leaves between the eye and the sun glow` }); }));
-      twigM = cut(twigAtlas(game.world), 'twig2', { spec: 0.15, vbody: 'vLeaf = aLeaf; vCrown = aCrown;',
+      twigM = cut(twigAtlas(game.world), 'twig2', { spec: 0.15, vbody: 'vLeaf = aLeaf; vCrown = aCrown;' + PX_V,
         body: `float dd = distance(cameraPosition, vWPos); diffuseColor.a = min(1.0, diffuseColor.a * (1.0 + ${TWIG.includes('a') ? 'dd * 0.1' : 'min(dd, 12.0) * 0.08'}));      // far off a twig is thinner than a pixel: it keeps some weight (capped at 2 times: uncapped, a card 25 m off filled in as a leaf-sized blob)
              diffuseColor.rgb = ${TWIG.includes('c') ? 'vec3(1.0)' : 'vec3(0.036, 0.029, 0.023)'} * vec3(0.7 + 0.5 * hash21(floor(vWPos.xz * 3.0) + floor(vWPos.y * 3.0))) * mix(0.6, 1.0, smoothstep(0.25, 0.95, clamp(length(vCrown) * 1.6, 0.0, 1.0)));` });
       const [bc, bn] = await Promise.all([tex(TD + 'ph_barkbrown02_diff.webp', game.world), tex(TD + 'ph_barkbrown02_nor.webp', game.world, false)]); for (const t of [bc, bn]) t.repeat.set(1, 0.55);      // the generator's bark v runs 0.55 m per unit; u is whole turns of the trunk
@@ -113,7 +129,7 @@ async function kit(game) {
              float inner = gl_FrontFacing ? 1.0 : 0.55, rim = abs(dot(normalize(vWN), normalize(cameraPosition - vWPos))), lump = vnoise(vLoc.xz * 4.0 + vLoc.y * 3.0);
              if (hv > ${dens} * inner * mix(1.0, 1.25, smoothstep(40.0, 300.0, dd)) * smoothstep(0.02, ${rim}, rim + (lump - 0.5) * 0.5)) discard;      // thin and ragged towards the outline: sky shows through the edge of a crown
              diffuseColor.rgb *= (0.7 + 0.45 * fract(hv * 7.31)) * (0.75 + 0.5 * lump) * mix(0.5, 1.05, smoothstep(-0.6, 0.8, vLoc.y)) * (gl_FrontFacing ? 1.0 : 0.6);` });
-    if (typeof location === 'undefined' || new URLSearchParams(location.search).get('parkcards') !== '0') CARDS = await makeCards(game);
+    if (typeof location === 'undefined' || new URLSearchParams(location.search).get('parkcards') !== '0') CARDS = await makeCards(game, PARKX ? { u: PKX, glsl: PX_GLSL } : null);
     KIT = { V, bark, leaf, twigM, crownGeo: cg, crownLeaf: crown('0.86', 'crownL', '0.55'), crownBare: crown('0.20', 'crownB', '0.9'), names };
     console.log('[game] park: tree kit: ' + V.map((v) => v.name + ' ' + v.tris.full + '/' + v.tris.low + '/' + v.tris.leaves).join(', '));
     return KIT; })();
@@ -143,6 +159,8 @@ const variant = (K, t) => K.V[(t.sp + Math.floor(hash(t.x, t.y) * 3)) % K.V.leng
 const woodM = (K, t, z) => { const v = variant(K, t), sy = t.h / v.H, sx = Math.min(sy * 1.35, Math.max(sy * 0.7, t.r / v.R)); _e.set(0, hash(t.y, t.x) * 6.283, 0); _q.setFromEuler(_e); _v.set(t.x, z, -t.y); _s.set(sx, sy, sx); return _m.compose(_v, _q, _s); };
 const crownM = (t, z) => { if (CARDS) { _e.set(0, hash(t.x, t.y) * 6.283, 0); _q.setFromEuler(_e); _v.set(t.x, z, -t.y); const w = Math.max(t.r, t.h * 0.2) * CARDS.SX * 1.08; _s.set(w, t.h * CARDS.SY, w); return _m.compose(_v, _q, _s); } const ch = t.h * 0.62, cy = z + t.h - ch * 0.5; _e.set(0, hash(t.x, t.y) * 6.283, 0); _q.setFromEuler(_e); _v.set(t.x, cy, -t.y); _s.set(t.r * 1.05, ch * 0.5, t.r * 1.05); return _m.compose(_v, _q, _s); };
 
+// a card's own instance colour (as crowns() sets it)
+const cardCol = (t, out) => (t.leaf >= LEAFED ? autumn(t, out).multiplyScalar(0.55) : out.setRGB(0.17, 0.15, 0.135).multiplyScalar(0.8 + 0.4 * hash(t.x, t.y)));
 // crowns(game, trees) -> group with two instanced meshes (leafed, bare); each tree gets .ci = [mesh, index]
 export async function crowns(game, trees) {
   const K = await kit(game), T = game.terrain, g = new THREE.Group(); g.name = 'park_crowns';
@@ -163,20 +181,31 @@ export async function mid(game, trees) {
 
 // the near pool: one per game. update(cx, cy, lists) with lists = the tree arrays of the near chunks
 export function nearPool(game, parent) {
-  const P = { on: new Set(), meshes: null, n: 0 };
+  const P = { on: new Set(), meshes: null, n: 0, out: new Set(), cx: 1e9, cy: 1e9 }, PX = PARKX && typeof requestAnimationFrame !== 'undefined', CAP = NEAR_N + (PX ? PX_OUT : 0);
+  if (PX) { const tk = () => { PKX.value = pxNow(); requestAnimationFrame(tk); }; requestAnimationFrame(tk); }
+  const card = (t, mode) => { if (!t.ci || !t.ci[0].parent) return; const im = t.ci[0], k = t.ci[1]; im.setMatrixAt(k, mode === 'off' ? ZERO : crownM(t, t.z)); im.instanceMatrix.needsUpdate = true;      // parkx: mode 'off' | 'plain' | 'go' | 'come'
+    if (im.instanceColor && mode !== 'off') { cardCol(t, _c); if (mode !== 'plain') { _c.r += mode === 'go' ? 4 : 8; _c.g += 2 * (t.pq + 1); } im.setColorAt(k, _c); im.instanceColor.needsUpdate = true; } };
+  const mark = (t, c) => { if (t.px === 1 || t.px === 3) { c.g += 2 * (t.pq + 1); if (t.px === 3) c.b += 4; } return c; };
   P.update = async (cx, cy, lists) => { const K = await kit(game);
-    if (!P.meshes) { P.meshes = K.V.map((v) => { const w = new THREE.InstancedMesh(v.full, K.bark, NEAR_N), l = new THREE.InstancedMesh(v.leaves, v.leafMat || K.leaf, NEAR_N), b = v.twigs && K.twigM ? new THREE.InstancedMesh(v.twigs, K.twigM, NEAR_N) : null, f = v.fine ? new THREE.InstancedMesh(v.fine, K.bark, NEAR_N) : null; for (const m of [w, l, b, f]) { if (!m) continue; m.count = 0; m.castShadow = m !== b && m !== f; m.receiveShadow = true; m.frustumCulled = false; parent.add(m); } w.name = 'park_near_wood'; l.name = 'park_near_leaves'; if (b) b.name = 'park_near_twigs'; if (f) f.name = 'park_near_fine'; return { w, l, b, f }; }); }
+    if (!P.meshes) { P.meshes = K.V.map((v) => { const w = new THREE.InstancedMesh(v.full, K.bark, CAP), l = new THREE.InstancedMesh(v.leaves, v.leafMat || K.leaf, CAP), b = v.twigs && K.twigM ? new THREE.InstancedMesh(v.twigs, K.twigM, CAP) : null, f = v.fine ? new THREE.InstancedMesh(v.fine, K.bark, CAP) : null; for (const m of [w, l, b, f]) { if (!m) continue; m.count = 0; m.castShadow = m !== b && m !== f; m.receiveShadow = true; m.frustumCulled = false; parent.add(m); } w.name = 'park_near_wood'; l.name = 'park_near_leaves'; if (b) b.name = 'park_near_twigs'; if (f) f.name = 'park_near_fine'; return { w, l, b, f }; }); }
     const cand = []; for (const L of lists) for (const t of L) { const d = (t.x - cx) * (t.x - cx) + (t.y - cy) * (t.y - cy); if (d < NEAR_R * NEAR_R && t.wi) cand.push([d, t]); }
     cand.sort((a, b) => a[0] - b[0]); const now = new Set(cand.slice(0, NEAR_N).map((c) => c[1]));
-    let same = now.size === P.on.size; if (same) for (const t of now) if (!P.on.has(t)) { same = false; break; } if (same) return;
-    for (const t of P.on) if (!now.has(t)) { if (t.ci && t.ci[0].parent) { t.ci[0].setMatrixAt(t.ci[1], crownM(t, t.z)); t.ci[0].instanceMatrix.needsUpdate = true; } if (t.wi && t.wi[0].parent) { t.wi[0].setMatrixAt(t.wi[1], woodM(K, t, t.z)); t.wi[0].instanceMatrix.needsUpdate = true; } }
+    const PXC = PX && !!CARDS, jump = Math.hypot(cx - P.cx, cy - P.cy) > 20, q0 = Math.floor(pxNow()); P.cx = cx; P.cy = cy; let chg = false;
+    if (PXC) {      // parkx: hand-overs that have run their time; trees back in the pool; (with a jump: everything at once, as before)
+      for (const t of [...P.out]) if (now.has(t) || jump || pxAge(t.pq) >= PX_T) { P.out.delete(t); chg = true; if (!now.has(t)) { t.px = 0; card(t, 'plain'); if (t.wi && t.wi[0].parent) { t.wi[0].setMatrixAt(t.wi[1], woodM(K, t, t.z)); t.wi[0].instanceMatrix.needsUpdate = true; } } }
+      for (const t of P.on) if (t.px === 1 && (jump || pxAge(t.pq) >= PX_T)) { t.px = 2; card(t, 'off'); chg = true; } }
+    let same = !chg && now.size === P.on.size; if (same) for (const t of now) if (!P.on.has(t)) { same = false; break; } if (same) return;
+    if (PXC) for (const t of P.on) if (!now.has(t)) { if (jump || P.out.size >= PX_OUT) { t.px = 0; card(t, 'plain'); if (t.wi && t.wi[0].parent) { t.wi[0].setMatrixAt(t.wi[1], woodM(K, t, t.z)); t.wi[0].instanceMatrix.needsUpdate = true; } } else { t.px = 3; t.pq = q0; card(t, 'come'); P.out.add(t); } }
+    if (!PXC) for (const t of P.on) if (!now.has(t)) { if (t.ci && t.ci[0].parent) { t.ci[0].setMatrixAt(t.ci[1], crownM(t, t.z)); t.ci[0].instanceMatrix.needsUpdate = true; } if (t.wi && t.wi[0].parent) { t.wi[0].setMatrixAt(t.wi[1], woodM(K, t, t.z)); t.wi[0].instanceMatrix.needsUpdate = true; } }
     for (const m of P.meshes) { m.w.count = 0; m.l.count = 0; if (m.b) m.b.count = 0; if (m.f) m.f.count = 0; }
-    for (const t of now) { const vi = K.V.indexOf(variant(K, t)), m = P.meshes[vi]; woodM(K, t, t.z); m.w.setMatrixAt(m.w.count++, _m); if (m.f) m.f.setMatrixAt(m.f.count++, _m);
-      if (t.leaf >= LEAFED) { m.l.setMatrixAt(m.l.count, _m); m.l.setColorAt(m.l.count++, autumn(t, _c)); }
-      else if (m.b) { m.b.setMatrixAt(m.b.count, _m); m.b.setColorAt(m.b.count++, (TWIG.includes('c') ? _c.setRGB(0.070, 0.058, 0.049).multiplyScalar(TWIG.includes('k') ? 0.3 : 1) : _c.setRGB(1, 1, 1)).multiplyScalar(0.8 + 0.4 * hash(t.x, t.y))); }      // a bare tree's fine twigs
-      if (!P.on.has(t)) { if ((CARDS || t.leaf >= LEAFED) && t.ci) { t.ci[0].setMatrixAt(t.ci[1], ZERO);      /* a near tree is its model: its card (or leafed shell) is not drawn */ t.ci[0].instanceMatrix.needsUpdate = true; } t.wi[0].setMatrixAt(t.wi[1], ZERO); t.wi[0].instanceMatrix.needsUpdate = true; } }
+    if (PXC) for (const t of now) if (!P.on.has(t)) { if (jump) { t.px = 2; card(t, 'off'); } else { t.px = 1; t.pq = q0; card(t, 'go'); } }      // parkx: a tree that joins keeps its card for PX_T seconds
+    const draw = PXC && P.out.size ? [...now, ...P.out] : now;
+    for (const t of draw) { const vi = K.V.indexOf(variant(K, t)), m = P.meshes[vi]; woodM(K, t, t.z); m.w.setMatrixAt(m.w.count++, _m); if (m.f) m.f.setMatrixAt(m.f.count++, _m);
+      if (t.leaf >= LEAFED) { m.l.setMatrixAt(m.l.count, _m); m.l.setColorAt(m.l.count++, mark(t, autumn(t, _c))); }
+      else if (m.b) { m.b.setMatrixAt(m.b.count++, _m); (TWIG.includes('c') ? _c.setRGB(0.070, 0.058, 0.049).multiplyScalar(TWIG.includes('k') ? 0.3 : 1) : _c.setRGB(1, 1, 1)).multiplyScalar(0.8 + 0.4 * hash(t.x, t.y)); m.b.setColorAt(m.b.count - 1, mark(t, _c)); }      // a bare tree's fine twigs
+      if (!P.on.has(t) && !P.out.has(t)) { if (!PXC && (CARDS || t.leaf >= LEAFED) && t.ci) { t.ci[0].setMatrixAt(t.ci[1], ZERO);      /* a near tree is its model: its card (or leafed shell) is not drawn */ t.ci[0].instanceMatrix.needsUpdate = true; } t.wi[0].setMatrixAt(t.wi[1], ZERO); t.wi[0].instanceMatrix.needsUpdate = true; } }
     for (const m of P.meshes) { m.w.instanceMatrix.needsUpdate = true; if (m.f) m.f.instanceMatrix.needsUpdate = true; m.l.instanceMatrix.needsUpdate = true; if (m.l.instanceColor) m.l.instanceColor.needsUpdate = true; if (m.b) { m.b.instanceMatrix.needsUpdate = true; if (m.b.instanceColor) m.b.instanceColor.needsUpdate = true; } }
     P.on = now; P.n = now.size; };
-  P.forget = (trees) => { for (const t of trees) P.on.delete(t); };
+  P.forget = (trees) => { for (const t of trees) { P.on.delete(t); P.out.delete(t); t.px = 0; } };
   return P;
 }

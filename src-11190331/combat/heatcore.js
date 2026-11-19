@@ -647,7 +647,7 @@ export class Heat {
       if (cv) this.go(k, cv, px, py); }
     /* the challenge, and the arrest of someone unarmed who stands still for it */
     if (this.level <= 2 && this.level > 0 && k.see && (k.dist < 26 || k.onT > 4) && !this.chal) { this.chal = { t0: this.t }; this.shout(c.slot !== 'unarmed' ? 'POLICE! Drop the weapon! Drop it NOW!' : 'POLICE! Stay where you are! Hands!', 2); }
-    if (this.level <= 2 && this.level > 0 && this.chal && !this.dead && (pl.vehicle ? this.t - (this.violT ?? -99) > 25 : c.slot === 'unarmed') && k.see && this.t - this.lastShotT > 5) {
+    if (this.level <= 2 && this.level > 0 && this.chal && !this.dead && (pl.vehicle ? this.t - (this.violT ?? -99) > 25 : c.slot === 'unarmed') && k.see && this.t - this.lastShotT > 5 && this.t - (this.lastCopHitT ?? -99) > 3 /* gameplay/melee: not in the three seconds after an officer was struck: a punch at one star had him cuffed in the same step (handover-3) */) {
       const ride = g.subway?.ride, officerRide = k.sub?.ride;
       const canReach = g.P.get('copsubway') === '0' || (ride
         ? officerRide?.in && officerRide.t === ride.t &&

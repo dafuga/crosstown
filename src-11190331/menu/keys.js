@@ -25,7 +25,7 @@ export const ACTIONS = [
   { code: 'Digit2', group: 'Weapons', label: 'Carbine' },
   { code: 'Digit3', group: 'Weapons', label: 'SMG', also: 'also at the wheel' },
   { code: 'Digit4', group: 'Weapons', label: 'Shotgun' },
-  { code: 'KeyE', group: 'Helicopter', label: 'Start the engine' },
+  { code: 'KeyE', group: 'Helicopter', label: 'Start the engine', also: 'on foot: punch, or strike with the gun in hand' },
   { code: 'KeyC', group: 'Helicopter', label: 'Next camera' },
   { code: 'KeyT', group: 'Helicopter', label: 'Stability help on / off' },
   { code: 'KeyG', group: 'Move', label: 'Horn (at the wheel: hold, or tap)', also: 'car, truck, bus, motorcycle · helicopter: mouse flies / mouse looks' },
@@ -49,7 +49,7 @@ export const ACTIONS = [
   { code: 'Backslash', group: 'Camera and system', label: 'Full screen' },
 ];
 // read from the mouse, not rebindable (combat/combat.js, game.js, fly.js)
-export const MOUSE = [['Mouse', 'Look around'], ['Left button', 'Fire'], ['Right button', 'Aim'], ['Wheel', 'Next / previous weapon · fly camera speed']];
+export const MOUSE = [['Mouse', 'Look around'], ['Left button', 'Fire · punch with the gun put away'], ['Right button', 'Aim'], ['Wheel', 'Next / previous weapon · fly camera speed']];
 const NO_BIND = /^(Escape|MetaLeft|MetaRight|OSLeft|OSRight|ContextMenu|Unidentified|)$/;
 const NAMES = { Space: 'Space', ShiftLeft: 'Left Shift', ShiftRight: 'Right Shift', ControlLeft: 'Left Ctrl', ControlRight: 'Right Ctrl', AltLeft: 'Left Alt', AltRight: 'Right Alt', Enter: 'Enter', Tab: 'Tab', Backspace: 'Backspace', CapsLock: 'Caps Lock',
   ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Backslash: '\\', BracketLeft: '[', BracketRight: ']', Minus: '-', Equal: '=', Comma: ',', Period: '.', Slash: '/', Semicolon: ';', Quote: "'", Backquote: '`',

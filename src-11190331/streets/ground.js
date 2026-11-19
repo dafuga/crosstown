@@ -16,6 +16,8 @@ const upSide = async (game) => { if (game.__parkside) return game.__parkside; co
   return (game.__parkside = { hex: false, bench: false, wall: false, wallH: 1.3, segs: [], strips: [], byExt: new Map(), inStrip: () => false, report: { segs: 0 } }); };
 import { waterOf, cutBlocks, landBase, waterInit } from './water.js';     /* tiles lane: the water of a city that lists it (city.water) */
 import { WET_DECL, WET_MAIN, WET_U } from '../sky/wet.glsl.js';     /* progress/night: wet roads in the rain */
+/* merge2 round 29 (Nov 19): the tar seals round asphalt patches are dull, not glossy: glossy, they mirrored the sky as thin blue lines in tree shade ('blue vector-like outlines round the asphalt patches', audits 19 and 28). ?tardull=0 = as before */
+const TARDULL = (() => { try { return new URLSearchParams(location.search).get('tardull') !== '0'; } catch (e) { return true; } })();
 
 const CURB = 0.15, FLAG = 1.22, D2R = Math.PI / 180;
 const RAMP_HW = 0.9, RAMP_FL = 0.5, RAMP_DEP = 1.35, RAMP_LOW = 0.022, KERB_W = 0.18, BAND_W = 1.1;
@@ -1344,7 +1346,7 @@ const FS_ROAD = /* glsl */`
   float fleck = step(0.955, fh.x) * gut * fleckFade * step(length(fract(m * 13.0) - 0.5), 0.2 + 0.25 * fh.y);
   col = mix(col, mix(vec3(0.20, 0.15, 0.09), vec3(0.36, 0.36, 0.34), step(0.7, fh.z)), fleck);
   diffuseColor.rgb = col;
-  gRough = clamp((rgh - 0.28 * oil - 0.42 * tar + 0.06 * gut) * (0.72 + 0.4 * asN.b / 0.66), 0.3, 1.0); gSpec = clamp(0.5 + 0.5 * max(tar, oil) + (0.93 - rgh) * 1.5, 0.3, 1.0);
+  gRough = clamp((rgh - 0.28 * oil - ${TARDULL ? '0.10' : '0.42'} * tar + 0.06 * gut) * (0.72 + 0.4 * asN.b / 0.66), 0.3, 1.0); gSpec = clamp(0.5 + 0.5 * max(${TARDULL ? '0.25 * tar' : 'tar'}, oil) + (0.93 - rgh) * 1.5, 0.3, 1.0);
   gNrm = vec3(asN.xy * 2.0 - 1.0, 0.0); gNrm.z = sqrt(max(0.0, 1.0 - dot(gNrm.xy, gNrm.xy)));
   gNs = 1.3 * (1.0 - 0.7 * tar) * (1.0 - 0.5 * oil) * (1.0 - 0.3 * clamp(polish, 0.0, 1.0));
 `;
