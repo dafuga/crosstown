@@ -10,6 +10,7 @@
 // in under its own length; above that it is capped at what the tyres hold. Both tyres are on the ground by construction: there is no pitch
 // freedom at all (no wheelie, no stoppie whatever the throttle or brake); s.pitch is a 1.5 degree squat/dive of the sprung body for the eye.
 /* lead, Nov 16 (Matt: 'top speed of the cars and the motorbike is too slow'): with the pedal down the air drag is cut and the top-speed term raised, so a sedan runs out at about 119 km/h (was 77), the sports car 224 (141), the motorbike 198 (130); off the pedal the old drag stands, so lift-off, braking and cornering are as they were. ?topspeed=0 = as it was; off on the public site unless ?topspeed=1. */
+import { FC } from '../move/fastcars.js';
 const _TSQ = (() => { try { const q = new URLSearchParams(location.search).get('topspeed'); return q === '0' ? 0 : q ? 1 : 1; } catch (e) { return 0; } })();
 export const TUNE = {
   top: 62, acc: 12.5, brake: 14.5, rev: 1.4,          // m/s, m/s2 (the sports car: 56, 9.6)
@@ -76,7 +77,7 @@ function one(s, dt, inp, env) {
   const c = Math.cos(s.h), sn = Math.sin(s.h); let vf = s.vx * c + s.vy * sn, vs = s.vx * sn - s.vy * c;      // forward, rightward
   // ---- along: throttle, brakes, drag. Quick off the line.
   let acc = 0; const thr = cl(inp.throttle || 0, 0, 1), brk = cl(inp.brake || 0, 0, 1);
-  const tsOn = _TSQ && thr > 0 && vf > 0, tsTop = T.top * (_TSQ ? 1.16 : 1);
+  const tsOn = _TSQ && thr > 0 && vf > 0, tsTop = T.top * (_TSQ ? (FC.on ? 1.42 : 1.16) : 1);     /* gameplay lane, Nov 18 (move/fastcars.js): the bike runs out at about 137 mph instead of 119; ?fastcars=0 */
   if (thr > 0) acc += vf < -0.3 ? 10 * thr : thr * T.acc * Math.max(0, 1 - (vf / tsTop) ** 2) * (vf < 10 ? 1.22 : 1);
   if (brk > 0) { if (vf > 0.5) acc -= T.brake * brk; else acc -= brk * 3.2 * Math.max(0, 1 + vf / T.rev); }      // at a standstill the brake paddles it backwards at walking pace
   acc -= (tsOn ? 0.04 : 0.10) * vf + (tsOn ? 0.001 : 0.0036) * vf * Math.abs(vf) + (thr === 0 && brk === 0 ? Math.sign(vf) * Math.min(0.9, Math.abs(vf) / dt) : 0);

@@ -26,6 +26,7 @@
 // handling.js (traffic, parked and loose cars, the autopilot, wrecks, patrol cars, the ambulance, the fire engine, motorcycles).
 // FOR OTHERS: game.drift = { on, TUNE, LOOSE, state(v) -> { on, angle (rad, + = nose left of travel), k (0..1 how hard it slides) } }; v.slip is
 // the sideways speed in a slide, as before (the tyre squeal in sfx/ already follows it).
+import { fcOf, fcDrive, fcDrag } from './fastcars.js';
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v)), lerp = (a, b, t) => a + (b - a) * t, wrapPi = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 
 // how loose each class is, 0..1
@@ -57,8 +58,9 @@ export function slide(D, v, dt, inp, g, below) {
   const st = S.st, dir = sig0 >= 0 ? 1 : -1, into = Math.max(0, st * dir), against = Math.max(0, -st * dir);
   // ---- along the car: the lead's formulas (game.js Vehicle.step), with the lever's own drag and some pull lost to wheelspin at an angle
   let acc = 0; const tsOn = _TSQ && thr > 0 && vf > 0, tsTop = sp.top * (_TSQ ? 1.15 : 1);
-  if (thr > 0) acc += thr * sp.acc * Math.max(0, 1 - (vf / tsTop) ** 2) * (vf < 8 ? 1.15 : 1) * (1 - (T.spinK + T.spinUp * clamp((L - 0.8) / 0.2, 0, 1)) * Math.min(1, Math.abs(Math.sin(sig0)) * 1.3));     /* the loosest cars spin their wheels more at an angle: the sports car's power does not carry it wide out of a corner */
-  acc -= (tsOn ? 0.05 : 0.12) * vf + (tsOn ? 0.0012 : 0.0042) * vf * Math.abs(vf) + (thr === 0 && brk === 0 ? Math.sign(vf) * 0.5 : 0);
+  const fc = fcOf(v, inp, g);     /* gameplay lane, Nov 18: quicker cars (move/fastcars.js; ?fastcars=0) */
+  if (thr > 0) acc += (fc ? fcDrive(fc, v, vf, thr) : thr * sp.acc * Math.max(0, 1 - (vf / tsTop) ** 2) * (vf < 8 ? 1.15 : 1)) * (1 - (T.spinK + T.spinUp * clamp((L - 0.8) / 0.2, 0, 1)) * Math.min(1, Math.abs(Math.sin(sig0)) * 1.3));     /* the loosest cars spin their wheels more at an angle: the sports car's power does not carry it wide out of a corner */
+  acc -= fc ? fcDrag(fc, vf, thr, brk) : (tsOn ? 0.05 : 0.12) * vf + (tsOn ? 0.0012 : 0.0042) * vf * Math.abs(vf) + (thr === 0 && brk === 0 ? Math.sign(vf) * 0.5 : 0);
   vf = Math.max(0, vf + acc * dt);
   // the brake pedal and the lever slow the car along the way it is GOING, not along the way it points: a braked car in a slide loses its sideways speed with
   // its forward speed (taken off the forward part only, a hard brake left the car crabbing sideways at a right angle to its nose)

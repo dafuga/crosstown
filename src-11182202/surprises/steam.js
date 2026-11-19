@@ -88,7 +88,7 @@ export function install(game, kit) {
       for (const v of list) emit(v, dt, v._d < 30 ? 1 : v._d < 60 ? 0.5 : 0.25, wet);
       ps.step(dt, field);
     }
-    kit.light(1.0, L3); const n = g.night ? g.night.n || 0 : 0, k = lerp(0.86, 0.5, n); ps.draw([L3[0] * k, L3[1] * k, L3[2] * k]);
+    kit.light(1.0, L3); const n = g.night ? g.night.n || 0 : 0, sn = P.get('steamnight') !== '0', k = lerp(0.86, sn ? 1.3 : 0.5, n); ps.draw([L3[0] * k * (sn ? lerp(1, 1.06, n) : 1), L3[1] * k * (sn ? lerp(1, 0.96, n) : 1), L3[2] * k * (sn ? lerp(1, 0.82, n) : 1)]);      /* merge2 round 26 (Nov 18): at night the steam is lit like the lamp-lit street round it (brighter, warm) instead of at half the scene light: it drew darker than the lit windows behind it and 'reads as soot smoke' (round 25 critic). ?steamnight=0 = as before */
     if (!hiss && kit.audio() && list[0] && list[0]._d < 30) hiss = mkHiss();
     if (voice) { const v = list[0]; if (v) voice.at(v.x, v.y, 0.3, dt); else voice.off(); }
     S.ms = S.ms * 0.95 + (performance.now() - t0) * 0.05;
