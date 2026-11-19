@@ -401,7 +401,51 @@ export async function buildCockpit(ctx, model) {
     for (const [n, m] of [['cabin', built || fixed], ['dial faces', prints], ['needles', inst], ['screens', screens], ['controls', moving]]) { if (!m.visible) miss.push(n + ' (hidden)'); const k = m.isMesh ? m : m.children[0]; if (k && cam && !k.layers.test(cam.layers)) miss.push(n + ' (off the camera\'s layer)'); }
     for (let p = root; p; p = p.parent) if (!p.visible) miss.push((p.name || p.type) + ' (hidden above the cabin)');
     chk.last = miss; if (miss.length) { chk.fails++; console.log('[heli] cockpit self-check: missing ' + miss.join(', ') + '; rebuilding'); rebuild(view, !!chk.err); } return miss; };
+  // ---- lead smallfix, Nov 18 (Matt: 'pressing C for cockpit view freezes the screen for a bit'). The seat view shows things nothing has drawn before: the built
+  // cabin's five meshes with twelve pictures (one 4096 and eleven 2048 squares), the moving controls at full detail, the door's trim skin, the glass's inner
+  // face and the cabin's own sun map; the first press of C handed all of it to the graphics card inside one frame. Here the same work is done ahead, a piece
+  // every fourth frame, from the moment he starts to get in (or is seated): 1. the programs are linked side by side without stopping the page (they are there
+  // already when the load's compile-ahead saw the aircraft); 2. the pictures go to the card one at a time; 3. the sun map is drawn once; 4. each mesh is drawn
+  // once, alone, into a 32-pixel picture of the game's own kind through a camera on a layer of its own, so its buffers and its pipeline exist. Nothing shown
+  // changes: every switch thrown is put back inside the same step. It stops at once if the eye is already inside. Nothing runs before he gets in, so the load and a walk
+  // past the aircraft cost nothing; the price is that a pilot who never presses C now holds the cabin's pictures on the card too (about 320 MB with their
+  // smaller copies). ?cabwarm=0 = as before (the first press does it all).
+  const WARM = { on: !!R && !(game && game.P && game.P.get('cabwarm') === '0'), st: 0, q: null, fr: 0, ms: 0, worst: 0, steps: 0, tex: 0, draws: 0, t0: 0, wait: 0, note: '' }, WL = 29; api.warm = WARM;
+  api.warmState = () => ({ on: WARM.on, st: WARM.st, steps: WARM.steps, tex: WARM.tex, draws: WARM.draws, ms: +WARM.ms.toFixed(1), worst: +WARM.worst.toFixed(1), took: WARM.took, note: WARM.note });
+  const warmParts = () => [built, moving, liner, wglass].concat(built ? [] : [fixed, glass]).filter(Boolean);
+  const warmShown = (fn) => { const L = [root].concat(warmParts()), was = L.map((o) => o.visible); for (const o of L) o.visible = true; try { return fn(); } finally { for (let i = 0; i < L.length; i++) L[i].visible = was[i]; } };
+  const warmPlan = (f) => { const q = [], seen = new Set(), meshes = []; for (const p of warmParts()) p.traverse((o) => { if (o.isMesh) meshes.push(o); });
+    const tex = (t) => { if (!t || !t.isTexture || seen.has(t) || !t.image || !(t.version > 0)) return; seen.add(t); q.push(() => { const pr = R.properties.get(t); if (pr.__version === t.version) return; R.initTexture(t); WARM.tex++; }); };
+    for (const m of meshes) for (const mt of [].concat(m.material || [])) for (const k of ['map', 'aoMap', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'alphaMap', 'lightMap']) tex(mt && mt[k]); tex(tGrain); tex(tDust);
+    q.push(() => { if (!(liner && heli.root && ctx.shared && ctx.shared.uSunDir)) return; warmShown(() => { sun.prime(R); sun.render(R, heli.root, f.pos, ctx.shared.uSunDir.value, sunSkip); }); sun.off(); });
+    let rt = null, cam = null; const cb = world.composer && world.composer.readBuffer;
+    if (cb) for (const m of meshes) q.push(() => {
+      if (!rt) { rt = WARM.rt = new THREE.WebGLRenderTarget(32, 32, { type: cb.texture.type, samples: cb.samples }); if (cb.depthTexture) { rt.depthTexture = new THREE.DepthTexture(32, 32); rt.depthTexture.format = cb.depthTexture.format; rt.depthTexture.type = cb.depthTexture.type; }
+        cam = new THREE.PerspectiveCamera(); cam.layers.set(WL); { const cl = world.camera.layers; world.scene.traverse((o) => { if (o.isLight && o.layers.test(cl)) o.layers.enable(WL); }); }      /* the lamps the game's camera counts, no others: the same set the cabin pass has, so the same programs */ }
+      const sm = R.shadowMap, old = R.getRenderTarget(), au = sm.autoUpdate, nu = sm.needsUpdate, ac = R.autoClear, lm = m.layers.mask, fc = m.frustumCulled, vis = [];
+      for (let o = m; o && o !== world.scene; o = o.parent) { vis.push(o, o.visible); o.visible = true; }
+      try { const c = world.camera; cam.position.copy(c.position); cam.quaternion.copy(c.quaternion); cam.fov = c.fov; cam.aspect = c.aspect; cam.near = 0.1; cam.far = 40; cam.updateProjectionMatrix(); cam.updateMatrixWorld();
+        m.layers.set(WL); m.frustumCulled = false; sm.autoUpdate = false; sm.needsUpdate = false; R.autoClear = true; R.setRenderTarget(rt); R.render(world.scene, cam); WARM.draws++; }
+      finally { R.setRenderTarget(old); sm.autoUpdate = au; sm.needsUpdate = nu; R.autoClear = ac; m.layers.mask = lm; m.frustumCulled = fc; for (let i = 0; i < vis.length; i += 2) vis[i].visible = vis[i + 1]; } });
+    q.push(() => { if (rt) { try { if (rt.depthTexture) rt.depthTexture.dispose(); rt.dispose(); } catch (e) {} WARM.rt = null; } });
+    return q; };
+  const warmEnd = (note) => { WARM.st = 9; WARM.q = null; WARM.note = note; WARM.took = +((performance.now() - WARM.t0) / 1000).toFixed(2); if (WARM.rt) { try { if (WARM.rt.depthTexture) WARM.rt.depthTexture.dispose(); WARM.rt.dispose(); } catch (e) {} WARM.rt = null; }
+    console.log('[heli] cockpit made ready ahead (' + note + '): ' + WARM.steps + ' steps over ' + WARM.took + ' s, ' + WARM.tex + ' pictures, ' + WARM.draws + ' draws, ' + WARM.ms.toFixed(0) + ' ms of page time in all, longest step ' + WARM.worst.toFixed(1) + ' ms; ?cabwarm=0 = off'); };
+  const warmTick = (f, view) => {
+    if (WARM.st === 9) return; if (view.inside) { if (WARM.st > 0) warmEnd('the eye went in first'); else WARM.st = 9; return; }
+    try {
+      if (WARM.st === 0) { if (!(view.piloted || (heli.busy && heli.busy.kind === 'in'))) return; WARM.st = 1; WARM.t0 = performance.now(); WARM.wait = 0;
+        const t = performance.now(), old = R.getRenderTarget(), go = () => { if (WARM.st === 1) WARM.st = 2; };
+        try { if (world.composer) R.setRenderTarget(world.composer.readBuffer); R.compileAsync(root, world.camera, world.scene).then(go, go); } finally { R.setRenderTarget(old); }
+        const d = performance.now() - t; WARM.ms += d; WARM.worst = Math.max(WARM.worst, d); WARM.steps++; return; }
+      if (WARM.st === 1) { if ((WARM.wait += view.dt || 0.016) > 6) WARM.st = 2; return; }      // linking: waited for, six seconds at most
+      if (!WARM.q) WARM.q = warmPlan(f);
+      if (++WARM.fr % 4) return; const step = WARM.q.shift(); if (!step) return warmEnd('all of it');
+      const t = performance.now(); step(); const d = performance.now() - t; WARM.ms += d; WARM.worst = Math.max(WARM.worst, d); WARM.steps++;
+    } catch (e) { warmEnd('stopped by a fault: ' + (e && e.message)); }
+  };
   function update(f, dt, view) {
+    if (WARM.on) warmTick(f, view);
     { let eyeIn = !!view.inside; if (!eyeIn && view.camera && view.dist < 3) { root.worldToLocal(_sp.copy(view.camera.position)); eyeIn = _sp.x > -0.5 && _sp.x < 2.3 && Math.abs(_sp.z) < 0.74 && _sp.y > 0.75 && _sp.y < 2.0; } setKey(eyeIn); setAO(eyeIn); uCabAmb.value = eyeIn ? 1 : api.ambOutside;      // any eye within the cabin, the pilot's or a free camera's
       if (R) { if (eyeIn && !chk.was) { chk.inT = 0; chk.next = 1; chk.probe = 0; chk.err = 0; chk.tries = 0; sun.prime(R); sun.off(); }      // entering: the sun map is cleared again and redrawn this frame
         chk.was = eyeIn;

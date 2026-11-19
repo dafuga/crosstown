@@ -60,12 +60,16 @@ function applyPose(rig, o, pose, CM, CQ, w = 1) {
 // Riding: hips on the seat, feet on the pegs (the left one down at a stop), hands on the grips (they turn with the bars), trunk leant to the
 // bars, head level and looking into the turn. In the bike's own (leaning) frame, so he leans with it.
 function grip(v, side, out) { _v.set(GRIP[0], GRIP[1], side * GRIP[2]).sub(_v2.set(...PIVOT)).applyAxisAngle(_v3.set(...AXIS), v.steer || 0).add(_v2); return out.copy(_v); }
+// gameplay/takeover bike: where he touches a taken bicycle (riders/ridermodel.js BIKE: saddle, crank, bar), in the same frame. gear = crank turns per wheel turn.
+const BKP = { seat: [-0.27, 0.9], pitch: 0.4, crank: [-0.05, 0.3, 0.17, 0.15], hand: [0.27, 1.08, 0.27], gear: 0.42, R: 0.33 };
 function ridePose(v, o, R, dz = 0) {
   const sp = Math.abs(v.vf || 0), lm = Math.max(0.1, leanMax(sp)), k = clamp(v.lean / lm, -1, 1), tuck = clamp(sp / 45, 0, 1), ank = R ? R.ankleH : 0.085;
   o.hip.set(SEAT[0] - 0.02 * tuck, SEAT[1], 0.03 * k * -1); o.rootY = 0; o.yaw = 0; o.pitch = RIDE_PITCH + 0.2 * tuck - clamp((v.acc || 0) * 0.006, -0.08, 0.08); o.roll = -0.16 * k; o.sit = 1; o.splay = 0.55;
   o.fL.set(PEG[0], PEG[1] + ank, -PEG[2]); o.fR.set(PEG[0], PEG[1] + ank, PEG[2]); o.yawL = 0.12; o.yawR = -0.12; o.pitL = o.pitR = -0.12;
+  if (v.bike) { const B = BKP, a = -((v.bike.odo || 0) / B.R) * B.gear, C = B.crank; o.hip.x = B.seat[0]; o.hip.y = B.seat[1]; o.pitch = B.pitch; o.splay = 0.2; o.yawL = o.yawR = 0;      /* on the saddle, more upright, each foot round the crank as the wheels turn */
+    o.fL.set(C[0] + C[2] * Math.cos(a), C[1] + ank + C[2] * Math.sin(a), -C[3]); o.fR.set(C[0] - C[2] * Math.cos(a), C[1] + ank - C[2] * Math.sin(a), C[3]); }
   const dn = 1 - ss(sp, 0.5, 2.4); if (dn > 0) { const z = -0.46, y = (ank + 0.01 + dz + 0.46 * Math.sin(v.lean)) / Math.cos(v.lean); _v.set(-0.12, y, z); o.fL.lerp(_v, dn); o.fL.y += 0.07 * Math.sin(Math.PI * dn) * (dn < 1 ? 1 : 0); o.pitL *= 1 - dn; o.yawL = lerp(o.yawL, 0.3, dn); }
-  grip(v, -1, o.hL.p); grip(v, 1, o.hR.p); for (const h of [o.hL, o.hR]) { h.p.x -= 0.07; h.p.y += 0.02; h.w = 1; h.curl = 0.9; } o.hL.f.set(0.9, -0.28, 0.12).normalize(); o.hR.f.set(0.9, -0.28, -0.12).normalize(); o.hL.n.set(0.2, -1, 0).normalize(); o.hR.n.set(-0.2, 1, 0).normalize();
+  grip(v, -1, o.hL.p); grip(v, 1, o.hR.p); for (const h of [o.hL, o.hR]) { h.p.x -= 0.07; h.p.y += 0.02; h.w = 1; h.curl = 0.9; } if (v.bike) { o.hL.p.set(BKP.hand[0], BKP.hand[1], -BKP.hand[2]); o.hR.p.set(BKP.hand[0], BKP.hand[1], BKP.hand[2]); } o.hL.f.set(0.9, -0.28, 0.12).normalize(); o.hR.f.set(0.9, -0.28, -0.12).normalize(); o.hL.n.set(0.2, -1, 0).normalize(); o.hR.n.set(-0.2, 1, 0).normalize();
   o.look.set(1, 0.02, -0.75 * k - 0.6 * clamp(v.steer || 0, -0.5, 0.5) * (1 - ss(sp, 1, 6))).normalize(); o.lookW = 0.85; return o;
 }
 // Getting on from the LEFT, u seconds in (run backwards it is getting off). In the bike's UPRIGHT frame (x ahead, z right, y up from the road
@@ -135,6 +139,7 @@ export function install(game) {
   const g = game, pl = g.player, P = g.P, st = g.statics;
   const M = (g.moto = { on: true, def: DEF, bikes: [], phys: stepBike, tune: TUNE, stats: { mounts: 0, offs: 0, throws: 0, bumps: 0, lifts: 0, getups: 0, deaths: 0, placed: 0, noway: 0 }, errs: {}, fall: null, camK: 0, camRoll: 0, wantOff: false, rig: null, WR: null, model: null, posed: false, pose: newPose(), prev: newPose(), xf: 1, last: null, log: [] });
   M.err = (k, e) => { if (M.errs[k]) return; M.errs[k] = String(e && (e.stack || e.message) || e); console.log('[moto] ' + k + ': ' + M.errs[k]); };
+  M.bkp = BKP;
   M.setPhysics = (fn) => { M.phys = fn || stepBike; };
   M.env = { g: 9.81, resolve: (x, y, r, o) => st.resolve(x, y, r, o), onSidewalk: (x, y) => st.onSidewalk(x, y) };
   if (g.kit && g.kit.cars && !g.kit.cars.moto) g.kit.cars.moto = DEF;
@@ -166,6 +171,7 @@ export function install(game) {
       const v = this, ridden = pl.vehicle === v; _I.rider = ridden;
       if (ridden) { _I.steer = inp.steer || 0; _I.throttle = inp.throttle || 0; _I.brake = inp.brake || 0; _I.handbrake = !!inp.handbrake; if (M.wantOff) { _I.throttle = 0; _I.steer = 0; _I.brake = v.vf > 0.3 ? 1 : 0; _I.handbrake = true; } }
       else { _I.steer = 0; _I.throttle = 0; _I.brake = 0; _I.handbrake = false; }
+      if (v.bike && ridden && !M.wantOff && _I.throttle > 0) { const top = v.bike.top || 8.5, sp = v.vf || 0; _I.throttle = sp >= top ? 0 : _I.throttle * Math.min(0.26, (top - sp) * 0.2); if (sp > top + 0.4) _I.brake = Math.max(_I.brake, 0.12); }      /* gameplay/takeover bike: a bicycle is pedalled: 8.5 m/s, an e-bike 11 */
       v.pvx = v.vx; v.pvy = v.vy;
       if (!ridden && !v.down && (v.held === null || v.held === undefined) && v.stand < 0.5) v.down = v.lean >= 0 ? 1 : -1;      // nobody holds it and the stand is up: it goes over
       if (!ridden && !v.down && !v.keep && Math.hypot(v.vx, v.vy) > 1.7) { v.down = Math.random() < 0.5 ? 1 : -1; v.stand = 0; }      // knocked by a car
@@ -191,8 +197,8 @@ export function install(game) {
     PK.slots.push(s); const k = Math.floor(x / 80) + ',' + Math.floor(y / 80); if (!PK.grid.has(k)) PK.grid.set(k, []); PK.grid.get(k).push(s); M.bikes.push(s); M.nearT = 0; return s;
   }
   function dropSlot(s) { PK.take(s); const i = M.bikes.indexOf(s); if (i >= 0) M.bikes.splice(i, 1); M.nearT = 0; }
-  function fromSlot(s) { dropSlot(s); const v = new MotoVehicle(DEF, s.x, s.y, s.h, s.color); v.lean = s.lean; v.down = s.down; v.stand = s.stand; v.steer = s.steer; v.spin = s.spin; v.zf = s.zf; v.zr = s.zr; v.z = (s.zf + s.zr) / 2; v.roll = -v.lean; v.vseed = s.vseed; if (v.down) v.def = DEF_DOWN; g.vehicles.push(v); return v; }
-  function toSlot(v) { const i = g.vehicles.indexOf(v); if (i >= 0) g.vehicles.splice(i, 1); return addSlot(v.x, v.y, v.h, v.color, { lean: v.lean, down: v.down, steer: v.steer, spin: v.spin, zf: v.zf, zr: v.zr }); }
+  function fromSlot(s) { dropSlot(s); const v = new MotoVehicle(DEF, s.x, s.y, s.h, s.color); v.lean = s.lean; v.down = s.down; v.stand = s.stand; v.steer = s.steer; v.spin = s.spin; v.zf = s.zf; v.zr = s.zr; v.z = (s.zf + s.zr) / 2; v.roll = -v.lean; v.vseed = s.vseed; if (v.down) v.def = DEF_DOWN; if (s.bike) v.bike = s.bike; g.vehicles.push(v); return v; }
+  function toSlot(v) { const i = g.vehicles.indexOf(v); if (i >= 0) g.vehicles.splice(i, 1); const s = addSlot(v.x, v.y, v.h, v.color, { lean: v.lean, down: v.down, steer: v.steer, spin: v.spin, zf: v.zf, zr: v.zr }); if (v.bike) s.bike = v.bike; return s; }
   M.spawn = (x, y, h, color = PAINTS[0], o) => addSlot(x, y, h, color, o); M.fromSlot = fromSlot; M.toSlot = toSlot;
   // at the kerb among the parked cars: in some of the gaps between two cars of a row, one to three bikes, rear wheel to the kerb. Laid out per
   // 80 m square as the player comes within reach, so both map areas (and parked rows built late) get theirs.
@@ -422,7 +428,7 @@ export function install(game) {
       if (M.xf < 1) M.xf = Math.min(1, M.xf + dt / 0.3);
       if (M.fall) { wrapDie(); if (M.fall.dead) afterDeath(); else if (!pl.busy || !pl.busy.moto) { const H = g.combat && g.combat.heat; if (H && H.dead) { M.fall.dead = true; M.stats.deaths++; } else pl.busy = { moto: true, kind: M.fall.up ? 'getup' : 'fall', v: M.fall.v, t: M.fall.up ? T_UP : 0, z: kerb(pl.x, pl.y) }; } }
       if (!v && !pl.busy && M.camK > 0) M.camK = Math.max(0, M.camK - dt * 2.5);
-      for (let i = 0; i < g.vehicles.length; i++) { const o = g.vehicles[i]; if (o.type === 'moto' && !o.moto) { const s = o.loosed, n = new MotoVehicle(DEF, o.x, o.y, o.h, o.color); n.loosed = s; n.vx = o.vx; n.vy = o.vy; if (s && s.moto) { n.lean = s.lean; n.down = s.down; n.stand = s.stand; n.steer = s.steer; const j = M.bikes.indexOf(s); if (j >= 0) M.bikes.splice(j, 1); M.nearT = 0; } else n.stand = 1; g.vehicles[i] = n; } }
+      for (let i = 0; i < g.vehicles.length; i++) { const o = g.vehicles[i]; if (o.type === 'moto' && !o.moto) { const s = o.loosed, n = new MotoVehicle(DEF, o.x, o.y, o.h, o.color); n.loosed = s; n.vx = o.vx; n.vy = o.vy; if (s && s.bike) n.bike = s.bike; if (s && s.moto) { n.lean = s.lean; n.down = s.down; n.stand = s.stand; n.steer = s.steer; const j = M.bikes.indexOf(s); if (j >= 0) M.bikes.splice(j, 1); M.nearT = 0; } else n.stand = 1; g.vehicles[i] = n; } }
       M.parkT = (M.parkT || 0) - dt; if (M.parkT <= 0) { M.parkT = 0.7; layOut(); }
     } catch (e) { M.err('step', e); }
   };
@@ -486,6 +492,7 @@ export function install(game) {
   const CAP = 72, LS = new THREE.Matrix4(), TF = new THREE.Matrix4().makeTranslation(0.74, 0.31, 0), TR = new THREE.Matrix4().makeTranslation(-0.70, 0.31, 0), SCR = new THREE.Matrix4().makeScale(1, 1, 1.35), TS = new THREE.Matrix4().makeTranslation(-0.05, 0.30, -0.13);
   const SD = V3(0.101, -0.815, -0.572).normalize(), SU = V3(-0.985, -0.12, -0.12).normalize(), QD = new THREE.Quaternion().setFromUnitVectors(V3(0, -1, 0), SD), QU = new THREE.Quaternion().setFromUnitVectors(V3(0, -1, 0), SU), nearL = [];
   function put(o, lean, steer, spin, stand, zf, zr, color) {
+    if (o.bike) return;      /* gameplay/takeover bike: a taken bicycle is drawn by riders/takebike.js */
     const D = M.model, i = D.n; if (i >= CAP) return; D.n++;
     _e.set(-lean, o.h, Math.atan2(zf - zr, TUNE.wb), 'YZX'); _q.setFromEuler(_e); _mb.compose(_v.set(o.x, (zf + zr) / 2 + liftOf(lean), -o.y), _q, ONE);
     D.body.setMatrixAt(i, _mb); _col.set(color); D.body.setColorAt(i, _col); D.fork.setColorAt(i, _col);
